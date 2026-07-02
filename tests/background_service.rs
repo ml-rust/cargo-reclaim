@@ -8,9 +8,10 @@ use cargo_reclaim::{
     BackgroundServiceOptions, BackgroundServicePaths, BackgroundServiceSleeper,
     BackgroundServiceState, BackgroundServiceStatus, PersistedTimestamp,
     PlatformBackgroundServiceCycleRunner, load_config_from_path, read_background_run_log,
-    read_background_service_state, run_background_service_with_runtime,
-    write_background_service_state,
+    read_background_service_state, refresh_background_service_state,
+    run_background_service_with_runtime, write_background_service_state,
 };
+use fs2::FileExt;
 
 #[test]
 fn service_lock_rejects_second_instance_while_held() -> Result<(), Box<dyn Error>> {
@@ -20,9 +21,12 @@ fn service_lock_rejects_second_instance_while_held() -> Result<(), Box<dyn Error
     let paths = BackgroundServicePaths::new(temp.path().join("state"), temp.path().join("logs"));
     fs::create_dir_all(&paths.state_dir)?;
     let _lock = OpenOptions::new()
+        .read(true)
         .write(true)
-        .create_new(true)
+        .create(true)
+        .truncate(false)
         .open(&paths.lock_path)?;
+    _lock.try_lock_exclusive()?;
     let mut clock = FakeClock::new([1_000, 1_001]);
     let mut sleeper = FakeSleeper::default();
     let mut runner = PlatformBackgroundServiceCycleRunner;
@@ -46,6 +50,38 @@ fn service_lock_rejects_second_instance_while_held() -> Result<(), Box<dyn Error
         error,
         BackgroundServiceError::AlreadyRunning { .. }
     ));
+    Ok(())
+}
+
+#[test]
+fn service_lock_recovers_dead_pid_lock() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("background_service_stale_lock")?;
+    let config_path = write_config(temp.path(), "[background]\ncheck_every = \"1s\"\n")?;
+    let config = load_config_from_path(&config_path)?;
+    let paths = BackgroundServicePaths::new(temp.path().join("state"), temp.path().join("logs"));
+    fs::create_dir_all(&paths.state_dir)?;
+    fs::write(&paths.lock_path, r#"{"schema_version":1,"pid":0}"#)?;
+    let mut clock = FakeClock::new([1_000, 1_001]);
+    let mut sleeper = FakeSleeper::default();
+    let mut runner = PlatformBackgroundServiceCycleRunner;
+
+    let summary = run_background_service_with_runtime(
+        BackgroundServiceOptions {
+            config_path,
+            state_dir: paths.state_dir.clone(),
+            log_dir: paths.log_dir,
+            mode: None,
+            max_cycles: Some(1),
+        },
+        &config,
+        &mut clock,
+        &mut sleeper,
+        &mut runner,
+    )?;
+
+    assert_eq!(summary.cycles_completed, 1);
+    assert_eq!(summary.state.status, BackgroundServiceStatus::Stopped);
+    assert!(!paths.lock_path.exists());
     Ok(())
 }
 
@@ -179,6 +215,37 @@ fn state_read_reports_missing_and_existing_state() -> Result<(), Box<dyn Error>>
 
     assert_eq!(read_background_service_state(&state_path)?, Some(state));
     Ok(())
+}
+
+#[test]
+fn running_state_with_dead_pid_refreshes_to_stale() {
+    let state = BackgroundServiceState {
+        schema_version: 1,
+        status: BackgroundServiceStatus::Running,
+        pid: Some(0),
+        started_at: Some(PersistedTimestamp {
+            unix_seconds: 10,
+            nanoseconds: 0,
+        }),
+        last_run_id: Some("scheduler-test".to_owned()),
+        last_run_at: None,
+        next_run_at: Some(PersistedTimestamp {
+            unix_seconds: 20,
+            nanoseconds: 0,
+        }),
+        consecutive_failures: 0,
+        last_problem: None,
+    };
+
+    let refreshed = refresh_background_service_state(state);
+
+    assert_eq!(refreshed.status, BackgroundServiceStatus::Stale);
+    assert_eq!(refreshed.pid, None);
+    assert_eq!(refreshed.next_run_at, None);
+    assert_eq!(
+        refreshed.last_problem.as_deref(),
+        Some("service pid is not running")
+    );
 }
 
 #[derive(Default)]

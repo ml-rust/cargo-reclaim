@@ -19,6 +19,7 @@ pub use service::{
     BackgroundServiceResult, BackgroundServiceRunSummary, BackgroundServiceSleeper,
     BackgroundServiceState, BackgroundServiceStatus, DEFAULT_BACKGROUND_CHECK_EVERY,
     PlatformBackgroundServiceCycleRunner, SystemBackgroundServiceClock,
-    ThreadBackgroundServiceSleeper, read_background_service_state, run_background_service,
-    run_background_service_with_runtime, write_background_service_state,
+    ThreadBackgroundServiceSleeper, read_background_service_state,
+    refresh_background_service_state, run_background_service, run_background_service_with_runtime,
+    write_background_service_state,
 };

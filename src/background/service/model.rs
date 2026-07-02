@@ -188,6 +188,7 @@ pub enum BackgroundServiceStatus {
     Running,
     Stopped,
     Unknown,
+    Stale,
     Error,
 }
 

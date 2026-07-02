@@ -6,7 +6,8 @@ use std::process::ExitCode;
 use cargo_reclaim::{
     BackgroundServiceOptions, BackgroundServicePaths, BackgroundServiceState,
     BackgroundServiceStatus, ReclaimConfig, SchedulerPlatform, default_log_dir, default_state_dir,
-    load_config_from_path, read_background_service_state, run_background_service,
+    load_config_from_path, read_background_service_state, refresh_background_service_state,
+    run_background_service,
 };
 
 use super::super::{CliError, OutputFormat, inline_config_path, next_path, next_value};
@@ -189,6 +190,7 @@ fn run_status(
     let config = load_config_from_path(&command.config_path)?;
     let paths = service_paths(&config);
     let state = read_background_service_state(&paths.state_path)?
+        .map(refresh_background_service_state)
         .unwrap_or_else(BackgroundServiceState::missing);
     match command.output_format {
         OutputFormat::Terminal => write_status_terminal(output, &state)?,
@@ -277,6 +279,7 @@ fn status_label(status: BackgroundServiceStatus) -> &'static str {
         BackgroundServiceStatus::Running => "running",
         BackgroundServiceStatus::Stopped => "stopped",
         BackgroundServiceStatus::Unknown => "unknown",
+        BackgroundServiceStatus::Stale => "stale",
         BackgroundServiceStatus::Error => "error",
     }
 }

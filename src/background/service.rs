@@ -2,13 +2,14 @@ mod model;
 mod request;
 
 use std::fs::{self, File, OpenOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::active_process::platform_active_observation_provider;
 use crate::config::ReclaimConfig;
 use crate::persistence::PersistedTimestamp;
+use fs2::FileExt;
 
 use super::{BackgroundRunReport, BackgroundRunRequest, run_background_cleanup_cycle};
 use request::{BackgroundCycleRequestContext, scheduler_mode_from_config};
@@ -167,6 +168,22 @@ pub fn read_background_service_state(
     }
 }
 
+pub fn refresh_background_service_state(state: BackgroundServiceState) -> BackgroundServiceState {
+    if state.status != BackgroundServiceStatus::Running {
+        return state;
+    }
+
+    let Some(pid) = state.pid else {
+        return stale_service_state(state, "service state is running without a pid");
+    };
+
+    match process_liveness(pid) {
+        ProcessLiveness::Alive => state,
+        ProcessLiveness::Dead => stale_service_state(state, "service pid is not running"),
+        ProcessLiveness::Unknown => state,
+    }
+}
+
 pub fn write_background_service_state(
     path: impl AsRef<Path>,
     state: &BackgroundServiceState,
@@ -190,7 +207,8 @@ pub fn write_background_service_state(
 }
 
 struct ServiceLock {
-    path: std::path::PathBuf,
+    path: PathBuf,
+    _file: File,
 }
 
 impl ServiceLock {
@@ -201,23 +219,34 @@ impl ServiceLock {
                 source,
             })?;
         }
-        match OpenOptions::new().write(true).create_new(true).open(path) {
-            Ok(file) => {
-                write_lock_file(file, path)?;
+        if path.exists() && !path.is_file() {
+            return Err(BackgroundServiceError::StaleLock {
+                lock_path: path.to_path_buf(),
+            });
+        }
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|source| BackgroundServiceError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                write_lock_file(&file, path)?;
                 Ok(Self {
                     path: path.to_path_buf(),
+                    _file: file,
                 })
             }
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
-                if path.is_file() {
-                    Err(BackgroundServiceError::AlreadyRunning {
-                        lock_path: path.to_path_buf(),
-                    })
-                } else {
-                    Err(BackgroundServiceError::StaleLock {
-                        lock_path: path.to_path_buf(),
-                    })
-                }
+            Err(source) if source.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(BackgroundServiceError::AlreadyRunning {
+                    lock_path: path.to_path_buf(),
+                })
             }
             Err(source) => Err(BackgroundServiceError::Io {
                 path: path.to_path_buf(),
@@ -233,15 +262,74 @@ impl Drop for ServiceLock {
     }
 }
 
-fn write_lock_file(file: File, path: &Path) -> BackgroundServiceResult<()> {
+fn write_lock_file(mut file: &File, path: &Path) -> BackgroundServiceResult<()> {
     let state = serde_json::json!({
         "schema_version": BACKGROUND_SERVICE_STATE_SCHEMA_VERSION,
         "pid": std::process::id(),
     });
-    serde_json::to_writer(file, &state).map_err(|source| BackgroundServiceError::Serialize {
+    file.set_len(0)
+        .map_err(|source| BackgroundServiceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    use std::io::{Seek, Write};
+    file.rewind().map_err(|source| BackgroundServiceError::Io {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    serde_json::to_writer(&mut file, &state).map_err(|source| {
+        BackgroundServiceError::Serialize {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    file.write_all(b"\n")
+        .map_err(|source| BackgroundServiceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.sync_all()
+        .map_err(|source| BackgroundServiceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+enum ProcessLiveness {
+    Alive,
+    Dead,
+    Unknown,
+}
+
+fn process_liveness(pid: u32) -> ProcessLiveness {
+    if pid == 0 {
+        return ProcessLiveness::Dead;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if Path::new("/proc").join(pid.to_string()).exists() {
+            ProcessLiveness::Alive
+        } else {
+            ProcessLiveness::Dead
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        ProcessLiveness::Unknown
+    }
+}
+
+fn stale_service_state(mut state: BackgroundServiceState, problem: &str) -> BackgroundServiceState {
+    state.status = BackgroundServiceStatus::Stale;
+    state.pid = None;
+    state.next_run_at = None;
+    state.last_problem = Some(problem.to_owned());
+    state
 }
 
 fn ensure_service_dirs(paths: &BackgroundServicePaths) -> BackgroundServiceResult<()> {

@@ -33,8 +33,9 @@ pub use background::{
     BackgroundSkippedProject, BackgroundTriggerReasonSummary, BackgroundTriggerSummary,
     DEFAULT_BACKGROUND_CHECK_EVERY, PlatformBackgroundServiceCycleRunner,
     SystemBackgroundServiceClock, ThreadBackgroundServiceSleeper, append_background_run_log_record,
-    read_background_run_log, read_background_service_state, run_background_cleanup_cycle,
-    run_background_service, run_background_service_with_runtime, write_background_service_state,
+    read_background_run_log, read_background_service_state, refresh_background_service_state,
+    run_background_cleanup_cycle, run_background_service, run_background_service_with_runtime,
+    write_background_service_state,
 };
 pub use cargo_home::{
     CARGO_HOME_PERSISTED_PLAN_SCHEMA_VERSION, CARGO_HOME_PLAN_SCHEMA_VERSION,

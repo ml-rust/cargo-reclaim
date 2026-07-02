@@ -58,12 +58,60 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(missing_document["status"], "unknown");
 
     fs::create_dir_all(temp.path().join("state"))?;
+    let pid = std::process::id();
+    fs::write(
+        temp.path().join("state/service-state.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "status": "running",
+            "pid": pid,
+            "started_at": {"unix_seconds": 10, "nanoseconds": 0},
+            "last_run_id": "scheduler-status-test",
+            "last_run_at": {"unix_seconds": 20, "nanoseconds": 0},
+            "next_run_at": {"unix_seconds": 30, "nanoseconds": 0},
+            "consecutive_failures": 0,
+            "last_problem": null,
+        }))?,
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "service", "status", "--config"])
+        .arg(&config_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["status"], "running");
+    assert_eq!(document["pid"], pid);
+    assert_eq!(document["last_run_id"], "scheduler-status-test");
+
+    let terminal = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "service", "status", "--config"])
+        .arg(&config_path)
+        .output()?;
+    assert!(terminal.status.success());
+    let stdout = String::from_utf8(terminal.stdout)?;
+    assert!(stdout.contains("cargo-reclaim scheduler service: running"));
+    assert!(stdout.contains(&format!("pid: {pid}")));
+    assert!(stdout.contains("last run: scheduler-status-test"));
+    Ok(())
+}
+
+#[test]
+fn service_status_json_reports_dead_running_pid_as_stale() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_service_stale_status")?;
+    let config_path = write_config(
+        temp.path(),
+        "[scheduler]\nstate_dir = \"state\"\nlog_dir = \"logs\"\n",
+    )?;
+    fs::create_dir_all(temp.path().join("state"))?;
     fs::write(
         temp.path().join("state/service-state.json"),
         r#"{
   "schema_version": 1,
   "status": "running",
-  "pid": 4242,
+  "pid": 0,
   "started_at": {"unix_seconds": 10, "nanoseconds": 0},
   "last_run_id": "scheduler-status-test",
   "last_run_at": {"unix_seconds": 20, "nanoseconds": 0},
@@ -81,19 +129,10 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
 
     assert!(output.status.success());
     let document: Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(document["status"], "running");
-    assert_eq!(document["pid"], 4242);
-    assert_eq!(document["last_run_id"], "scheduler-status-test");
-
-    let terminal = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
-        .args(["scheduler", "service", "status", "--config"])
-        .arg(&config_path)
-        .output()?;
-    assert!(terminal.status.success());
-    let stdout = String::from_utf8(terminal.stdout)?;
-    assert!(stdout.contains("cargo-reclaim scheduler service: running"));
-    assert!(stdout.contains("pid: 4242"));
-    assert!(stdout.contains("last run: scheduler-status-test"));
+    assert_eq!(document["status"], "stale");
+    assert_eq!(document["pid"], Value::Null);
+    assert_eq!(document["next_run_at"], Value::Null);
+    assert_eq!(document["last_problem"], "service pid is not running");
     Ok(())
 }
 
