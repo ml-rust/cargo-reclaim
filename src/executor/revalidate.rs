@@ -44,6 +44,29 @@ pub(super) fn revalidate_entry(entry: &PersistedPlanEntry) -> ApplyEntryResult {
     }
 }
 
+pub(super) fn delete_revalidated_entry(entry: ApplyEntryResult) -> ApplyEntryResult {
+    if entry.status != ApplyEntryStatus::WouldDelete {
+        return entry;
+    }
+
+    match remove_path(Path::new(&entry.path)) {
+        Ok(()) => ApplyEntryResult::new(
+            entry.path,
+            entry.planned_action,
+            ApplyEntryStatus::Deleted,
+            entry.size_bytes,
+            "deleted revalidated path",
+        ),
+        Err(reason) => ApplyEntryResult::new(
+            entry.path,
+            entry.planned_action,
+            ApplyEntryStatus::DeleteFailed,
+            entry.size_bytes,
+            reason,
+        ),
+    }
+}
+
 fn revalidate_snapshot(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
     let path = Path::new(&snapshot.path);
     let metadata = fs::symlink_metadata(path).map_err(|error| {
@@ -81,6 +104,27 @@ fn revalidate_snapshot(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("delete_failed: failed to read path metadata: {error}"))?;
+
+    if metadata.file_type().is_symlink() {
+        return Err("delete_failed: path is now a symlink".to_string());
+    }
+
+    if metadata.is_file() {
+        return fs::remove_file(path)
+            .map_err(|error| format!("delete_failed: failed to remove file: {error}"));
+    }
+
+    if metadata.is_dir() {
+        return fs::remove_dir_all(path)
+            .map_err(|error| format!("delete_failed: failed to remove directory: {error}"));
+    }
+
+    Err("delete_failed: path kind is not removable".to_string())
 }
 
 fn measure_size(path: &Path, metadata: &Metadata) -> Result<u64, String> {

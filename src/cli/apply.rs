@@ -1,10 +1,12 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::SystemTime;
 
 use cargo_reclaim::{
-    ApplyEntryStatus, ApplyReport, load_plan_from_path, validate_persisted_plan_for_apply,
+    ApplyEntryStatus, ApplyReport, execute_persisted_plan_apply, load_plan_from_path,
+    validate_persisted_plan_for_apply,
 };
 
 use super::{CliError, OutputFormat, next_path};
@@ -13,6 +15,7 @@ use super::{CliError, OutputFormat, next_path};
 pub(super) struct ApplyCommand {
     pub(super) plan_path: PathBuf,
     pub(super) output_format: OutputFormat,
+    pub(super) execute: bool,
 }
 
 pub(super) fn parse_apply_command(
@@ -20,6 +23,7 @@ pub(super) fn parse_apply_command(
 ) -> Result<ApplyCommand, CliError> {
     let mut plan_path = None;
     let mut output_format = OutputFormat::Terminal;
+    let mut execute = false;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -31,6 +35,7 @@ pub(super) fn parse_apply_command(
 
         match arg_text {
             "--json" => output_format = OutputFormat::Json,
+            "--yes" => execute = true,
             "--plan" => plan_path = Some(next_plan_path(&mut args)?),
             value if value.starts_with("--plan=") => {
                 plan_path = Some(validate_plan_path(PathBuf::from(
@@ -62,13 +67,27 @@ pub(super) fn parse_apply_command(
     Ok(ApplyCommand {
         plan_path,
         output_format,
+        execute,
     })
 }
 
-pub(super) fn run_apply(command: &ApplyCommand, output: &mut impl Write) -> Result<(), CliError> {
+pub(super) fn run_apply(
+    command: &ApplyCommand,
+    output: &mut impl Write,
+) -> Result<ExitCode, CliError> {
     let document = load_plan_from_path(&command.plan_path)?;
-    let report = validate_persisted_plan_for_apply(&document, SystemTime::now())?;
-    write_apply_report(output, &report, command.output_format)
+    let report = if command.execute {
+        execute_persisted_plan_apply(&document, SystemTime::now())?
+    } else {
+        validate_persisted_plan_for_apply(&document, SystemTime::now())?
+    };
+    let exit_code = if report.totals.failed_count == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
+    write_apply_report(output, &report, command.output_format)?;
+    Ok(exit_code)
 }
 
 fn next_plan_path(args: &mut impl Iterator<Item = OsString>) -> Result<PathBuf, CliError> {
@@ -95,8 +114,16 @@ fn write_apply_report(
         return Ok(());
     }
 
-    writeln!(output, "cargo-reclaim apply validation")?;
-    writeln!(output, "validation only; no files were deleted or modified")?;
+    if report.dry_run {
+        writeln!(output, "cargo-reclaim apply validation")?;
+        writeln!(output, "validation only; no files were deleted or modified")?;
+    } else {
+        writeln!(output, "cargo-reclaim apply execution")?;
+        writeln!(
+            output,
+            "execution mode; only freshly revalidated delete entries were removed"
+        )?;
+    }
     writeln!(output, "plan id: {}", report.plan_id.as_str())?;
     writeln!(output, "entries: {}", report.totals.entry_count)?;
     writeln!(
@@ -110,6 +137,9 @@ fn write_apply_report(
         "would delete bytes: {}",
         report.totals.would_delete_bytes
     )?;
+    writeln!(output, "deleted: {}", report.totals.applied_count)?;
+    writeln!(output, "deleted bytes: {}", report.totals.applied_bytes)?;
+    writeln!(output, "delete failures: {}", report.totals.failed_count)?;
     writeln!(output, "skipped: {}", report.totals.skipped_count)?;
     writeln!(output, "stale skips: {}", report.totals.stale_skip_count)?;
 
@@ -143,15 +173,18 @@ fn write_apply_json_report(output: &mut impl Write, report: &ApplyReport) -> Res
         .collect::<Vec<_>>();
     let document = serde_json::json!({
         "command": "apply",
-        "dry_run": true,
+        "dry_run": report.dry_run,
         "plan_id": report.plan_id.as_str(),
         "totals": {
             "entry_count": report.totals.entry_count,
             "delete_candidate_count": report.totals.delete_candidate_count,
             "would_delete_count": report.totals.would_delete_count,
+            "applied_count": report.totals.applied_count,
+            "failed_count": report.totals.failed_count,
             "skipped_count": report.totals.skipped_count,
             "stale_skip_count": report.totals.stale_skip_count,
             "would_delete_bytes": report.totals.would_delete_bytes,
+            "applied_bytes": report.totals.applied_bytes,
         },
         "entries": entries,
     });
@@ -163,7 +196,9 @@ fn write_apply_json_report(output: &mut impl Write, report: &ApplyReport) -> Res
 fn apply_status_label(status: ApplyEntryStatus) -> &'static str {
     match status {
         ApplyEntryStatus::WouldDelete => "would_delete",
+        ApplyEntryStatus::Deleted => "deleted",
         ApplyEntryStatus::NotPlannedForDeletion => "not_planned_for_deletion",
         ApplyEntryStatus::SkipStalePlan => "skip_stale_plan",
+        ApplyEntryStatus::DeleteFailed => "delete_failed",
     }
 }

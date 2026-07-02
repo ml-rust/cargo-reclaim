@@ -62,10 +62,7 @@ fn run_with_args(
             )?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Apply(command) => {
-            run_apply(&command, stdout)?;
-            Ok(ExitCode::SUCCESS)
-        }
+        Command::Apply(command) => run_apply(&command, stdout),
     }
 }
 

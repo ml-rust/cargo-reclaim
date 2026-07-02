@@ -12,7 +12,8 @@ pub mod scanner;
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use error::{ReclaimError, ReclaimResult};
 pub use executor::{
-    ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, validate_persisted_plan_for_apply,
+    ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, execute_persisted_plan_apply,
+    validate_persisted_plan_for_apply,
 };
 pub use integration::{build_plan_from_roots, build_plan_from_scan_items};
 pub use inventory::{
