@@ -10,12 +10,17 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "cargo-reclaim")?;
     writeln!(
         output,
-        "Usage: cargo-reclaim <scan|plan> [ROOT ...] [OPTIONS]"
+        "Usage: cargo-reclaim <scan|plan|apply|edit-plan> [OPTIONS]"
     )?;
     writeln!(output)?;
     writeln!(output, "Commands:")?;
     writeln!(output, "  scan    Build a read-only dry-run plan for roots")?;
     writeln!(output, "  plan    Build a read-only dry-run plan for roots")?;
+    writeln!(output, "  apply   Validate or execute a persisted plan")?;
+    writeln!(
+        output,
+        "  edit-plan  Edit explicit entries in a persisted plan"
+    )?;
     writeln!(output)?;
     writeln!(output, "Options:")?;
     writeln!(

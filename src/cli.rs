@@ -11,10 +11,12 @@ use cargo_reclaim::{
 };
 
 mod apply;
+mod edit_plan;
 mod output;
 mod persistence;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
+use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
 use output::{write_help, write_plan};
 use persistence::{SavePlanContext, SavePlanRequest, parse_duration, save_plan};
 
@@ -72,6 +74,7 @@ fn run_with_args(
             Ok(ExitCode::SUCCESS)
         }
         Command::Apply(command) => run_apply(&command, stdout),
+        Command::EditPlan(command) => run_edit_plan(&command, stdout),
     }
 }
 
@@ -80,6 +83,7 @@ enum Command {
     Help,
     Plan(PlanCommand),
     Apply(ApplyCommand),
+    EditPlan(EditPlanCommand),
 }
 
 #[derive(Debug)]
@@ -119,8 +123,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "scan" => parse_plan_command(PlanMode::Scan, args),
         "plan" => parse_plan_command(PlanMode::Plan, args),
         "apply" => parse_apply_command(args).map(Command::Apply),
+        "edit-plan" => parse_edit_plan_command(args).map(Command::EditPlan),
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `scan`, `plan`, or `help`"
+            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, or `help`"
         ))),
     }
 }
@@ -432,6 +437,7 @@ enum CliError {
     Io(io::Error),
     Json(serde_json::Error),
     Persistence(cargo_reclaim::PlanPersistenceError),
+    PlanEdit(cargo_reclaim::PlanEditError),
 }
 
 impl std::fmt::Display for CliError {
@@ -443,6 +449,7 @@ impl std::fmt::Display for CliError {
             Self::Io(error) => error.fmt(formatter),
             Self::Json(error) => error.fmt(formatter),
             Self::Persistence(error) => error.fmt(formatter),
+            Self::PlanEdit(error) => error.fmt(formatter),
         }
     }
 }
@@ -458,6 +465,13 @@ impl CliError {
             | Self::Io(_)
             | Self::Json(_)
             | Self::Persistence(_) => ExitCode::FAILURE,
+            Self::PlanEdit(error) => match error {
+                cargo_reclaim::PlanEditError::NoEdits
+                | cargo_reclaim::PlanEditError::ConflictingEdit { .. }
+                | cargo_reclaim::PlanEditError::EntryNotFound { .. }
+                | cargo_reclaim::PlanEditError::AmbiguousEntryPath { .. } => ExitCode::from(2),
+                cargo_reclaim::PlanEditError::Persistence(_) => ExitCode::FAILURE,
+            },
         }
     }
 }
@@ -489,6 +503,12 @@ impl From<serde_json::Error> for CliError {
 impl From<cargo_reclaim::PlanPersistenceError> for CliError {
     fn from(error: cargo_reclaim::PlanPersistenceError) -> Self {
         Self::Persistence(error)
+    }
+}
+
+impl From<cargo_reclaim::PlanEditError> for CliError {
+    fn from(error: cargo_reclaim::PlanEditError) -> Self {
+        Self::PlanEdit(error)
     }
 }
 

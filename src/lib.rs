@@ -6,6 +6,7 @@ pub mod integration;
 pub mod inventory;
 pub mod model;
 pub mod persistence;
+pub mod plan_edit;
 pub mod planner;
 pub mod policy;
 pub mod scanner;
@@ -37,6 +38,7 @@ pub use persistence::{
     PlanPersistenceError, PlanPersistenceResult, SavePlanOptions, ensure_plan_usable,
     load_plan_from_path, persist_plan, save_plan_to_path,
 };
+pub use plan_edit::{PlanEditError, PlanEditReport, PlanEditRequest, edit_persisted_plan};
 pub use planner::{
     PlannerCandidate, PlannerOptions, build_plan, build_plan_with_options, plan_candidate,
     plan_candidate_with_options,
