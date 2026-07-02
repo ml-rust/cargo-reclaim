@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use cargo_reclaim::{
     InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions,
-    build_plan_from_roots_with_options,
+    build_plan_from_roots_with_options, load_config_from_path,
 };
 
 mod apply;
@@ -16,7 +16,7 @@ mod persistence;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
 use output::{write_help, write_plan};
-use persistence::{SavePlanRequest, parse_duration, save_plan};
+use persistence::{SavePlanContext, SavePlanRequest, parse_duration, save_plan};
 
 pub fn run() -> ExitCode {
     match run_with_args(env::args_os().skip(1), &mut io::stdout()) {
@@ -50,12 +50,16 @@ fn run_with_args(
             if let Some(request) = command.save_plan.as_ref() {
                 save_plan(
                     &plan,
-                    command.mode,
-                    command.policy,
-                    &command.scanner_options,
-                    &command.inventory_options,
-                    &command.planner_options,
-                    request,
+                    SavePlanContext {
+                        mode: command.mode,
+                        policy: command.policy,
+                        scanner_options: &command.scanner_options,
+                        inventory_options: &command.inventory_options,
+                        planner_options: &command.planner_options,
+                        config_path: command.config_path.as_deref(),
+                        config_version: command.config_version,
+                        request,
+                    },
                 )?;
             }
             write_plan(
@@ -85,6 +89,8 @@ struct PlanCommand {
     policy: PolicyKind,
     output_format: OutputFormat,
     save_plan: Option<SavePlanRequest>,
+    config_path: Option<PathBuf>,
+    config_version: Option<u16>,
     scanner_options: ScannerOptions,
     inventory_options: InventoryOptions,
     planner_options: PlannerOptions,
@@ -124,18 +130,26 @@ fn parse_plan_command(
     args: impl IntoIterator<Item = OsString>,
 ) -> Result<Command, CliError> {
     let mut roots = Vec::new();
-    let mut policy = PolicyKind::Balanced;
+    let mut policy = None;
     let mut output_format = OutputFormat::Terminal;
     let mut save_plan = None;
     let mut expires_in = None;
+    let mut config_path = None;
     let mut scanner_options = ScannerOptions::default();
-    let mut inventory_options = InventoryOptions::default();
     let mut planner_options = PlannerOptions::default();
+    let mut cli_follow_symlinks = false;
+    let mut cli_allow_name_only_targets = false;
+    let mut cli_cross_filesystems = false;
+    let mut cli_recent_write_keep_window = false;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
         if let Some(ignore_path) = inline_ignore_path(&arg)? {
             scanner_options.ignored_paths.push(ignore_path);
+            continue;
+        }
+        if let Some(path) = inline_config_path(&arg)? {
+            config_path = Some(path);
             continue;
         }
 
@@ -152,31 +166,42 @@ fn parse_plan_command(
             }
             "--policy" => {
                 let value = next_value(&mut args, "--policy")?;
-                policy = parse_policy(&value)?;
+                policy = Some(parse_policy(&value)?);
             }
             value if value.starts_with("--policy=") => {
-                policy = parse_policy(&value["--policy=".len()..])?;
+                policy = Some(parse_policy(&value["--policy=".len()..])?);
+            }
+            "--config" => {
+                config_path = Some(next_path(&mut args, "--config")?);
             }
             "--ignore" => {
                 scanner_options
                     .ignored_paths
                     .push(next_path(&mut args, "--ignore")?);
             }
-            "--allow-name-only-targets" => scanner_options.allow_name_only_targets = true,
+            "--allow-name-only-targets" => {
+                scanner_options.allow_name_only_targets = true;
+                cli_allow_name_only_targets = true;
+            }
             "--follow-symlinks" => {
                 scanner_options.follow_symlinks = true;
-                inventory_options.follow_symlinks = true;
+                cli_follow_symlinks = true;
             }
-            "--cross-filesystems" => scanner_options.cross_filesystems = true,
+            "--cross-filesystems" => {
+                scanner_options.cross_filesystems = true;
+                cli_cross_filesystems = true;
+            }
             "--keep-recent-writes" => {
                 planner_options.recent_write_keep_window = Some(parse_duration(&next_value(
                     &mut args,
                     "--keep-recent-writes",
                 )?)?);
+                cli_recent_write_keep_window = true;
             }
             value if value.starts_with("--keep-recent-writes=") => {
                 planner_options.recent_write_keep_window =
                     Some(parse_duration(&value["--keep-recent-writes=".len()..])?);
+                cli_recent_write_keep_window = true;
             }
             "--json" => output_format = OutputFormat::Json,
             "--save-plan" => {
@@ -216,11 +241,89 @@ fn parse_plan_command(
         }
     }
 
+    let config = config_path
+        .as_ref()
+        .map(load_config_from_path)
+        .transpose()?;
+    let config_version = config.as_ref().map(|config| config.version);
+
     if roots.is_empty() {
-        roots.push(PathBuf::from("."));
+        if let Some(config_roots) = config
+            .as_ref()
+            .filter(|config| !config.roots.is_empty())
+            .map(|config| config.roots.clone())
+        {
+            roots = config_roots;
+        } else {
+            roots.push(PathBuf::from("."));
+        }
     }
-    if let Some(expires_in) = expires_in {
-        let Some(save_plan) = save_plan.as_mut() else {
+
+    let policy = match policy {
+        Some(policy) => policy,
+        None => config
+            .as_ref()
+            .and_then(|config| config.policy.as_deref())
+            .map(parse_policy)
+            .transpose()?
+            .unwrap_or_default(),
+    };
+    if let Some(config) = config {
+        let mut ignored_paths = config.ignored_paths;
+        ignored_paths.extend(scanner_options.ignored_paths);
+        scanner_options.ignored_paths = ignored_paths;
+        if !cli_follow_symlinks && let Some(follow_symlinks) = config.scanner.follow_symlinks {
+            scanner_options.follow_symlinks = follow_symlinks;
+        }
+        if !cli_allow_name_only_targets
+            && let Some(allow_name_only_targets) = config.scanner.allow_name_only_targets
+        {
+            scanner_options.allow_name_only_targets = allow_name_only_targets;
+        }
+        if !cli_cross_filesystems && let Some(cross_filesystems) = config.scanner.cross_filesystems
+        {
+            scanner_options.cross_filesystems = cross_filesystems;
+        }
+        if !cli_recent_write_keep_window {
+            planner_options.recent_write_keep_window = config.recent_write_keep_window;
+        }
+    }
+    let inventory_options = InventoryOptions {
+        follow_symlinks: scanner_options.follow_symlinks,
+    };
+
+    finish_plan_command(FinishPlanCommand {
+        mode,
+        roots,
+        policy,
+        output_format,
+        save_plan,
+        expires_in,
+        config_path,
+        config_version,
+        scanner_options,
+        inventory_options,
+        planner_options,
+    })
+}
+
+struct FinishPlanCommand {
+    mode: PlanMode,
+    roots: Vec<PathBuf>,
+    policy: PolicyKind,
+    output_format: OutputFormat,
+    save_plan: Option<SavePlanRequest>,
+    expires_in: Option<std::time::Duration>,
+    config_path: Option<PathBuf>,
+    config_version: Option<u16>,
+    scanner_options: ScannerOptions,
+    inventory_options: InventoryOptions,
+    planner_options: PlannerOptions,
+}
+
+fn finish_plan_command(mut command: FinishPlanCommand) -> Result<Command, CliError> {
+    if let Some(expires_in) = command.expires_in {
+        let Some(save_plan) = command.save_plan.as_mut() else {
             return Err(CliError::Usage(
                 "`--expires-in` requires `--save-plan`".to_string(),
             ));
@@ -229,14 +332,16 @@ fn parse_plan_command(
     }
 
     Ok(Command::Plan(PlanCommand {
-        mode,
-        roots,
-        policy,
-        output_format,
-        save_plan,
-        scanner_options,
-        inventory_options,
-        planner_options,
+        mode: command.mode,
+        roots: command.roots,
+        policy: command.policy,
+        output_format: command.output_format,
+        save_plan: command.save_plan,
+        config_path: command.config_path,
+        config_version: command.config_version,
+        scanner_options: command.scanner_options,
+        inventory_options: command.inventory_options,
+        planner_options: command.planner_options,
     }))
 }
 
@@ -262,15 +367,26 @@ fn next_path(
 }
 
 fn inline_ignore_path(arg: &OsString) -> Result<Option<PathBuf>, CliError> {
+    inline_path(arg, "--ignore=", "--ignore")
+}
+
+fn inline_config_path(arg: &OsString) -> Result<Option<PathBuf>, CliError> {
+    inline_path(arg, "--config=", "--config")
+}
+
+fn inline_path(
+    arg: &OsString,
+    prefix: &'static str,
+    option: &'static str,
+) -> Result<Option<PathBuf>, CliError> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
-        const PREFIX: &[u8] = b"--ignore=";
         let bytes = arg.as_os_str().as_bytes();
-        if let Some(path) = bytes.strip_prefix(PREFIX) {
+        if let Some(path) = bytes.strip_prefix(prefix.as_bytes()) {
             if path.is_empty() {
-                return Err(CliError::Usage("--ignore requires a value".to_string()));
+                return Err(CliError::Usage(format!("{option} requires a value")));
             }
             return Ok(Some(PathBuf::from(std::ffi::OsString::from_vec(
                 path.to_vec(),
@@ -283,10 +399,10 @@ fn inline_ignore_path(arg: &OsString) -> Result<Option<PathBuf>, CliError> {
         if let Some(value) = arg
             .as_os_str()
             .to_str()
-            .and_then(|value| value.strip_prefix("--ignore="))
+            .and_then(|value| value.strip_prefix(&format!("{option}=")))
         {
             if value.is_empty() {
-                return Err(CliError::Usage("--ignore requires a value".to_string()));
+                return Err(CliError::Usage(format!("{option} requires a value")));
             }
             return Ok(Some(PathBuf::from(value)));
         }
@@ -312,6 +428,7 @@ fn parse_policy(value: &str) -> Result<PolicyKind, CliError> {
 enum CliError {
     Usage(String),
     Reclaim(ReclaimError),
+    Config(cargo_reclaim::ConfigError),
     Io(io::Error),
     Json(serde_json::Error),
     Persistence(cargo_reclaim::PlanPersistenceError),
@@ -322,6 +439,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Usage(message) => formatter.write_str(message),
             Self::Reclaim(error) => error.fmt(formatter),
+            Self::Config(error) => error.fmt(formatter),
             Self::Io(error) => error.fmt(formatter),
             Self::Json(error) => error.fmt(formatter),
             Self::Persistence(error) => error.fmt(formatter),
@@ -335,9 +453,11 @@ impl CliError {
     fn exit_code(&self) -> ExitCode {
         match self {
             Self::Usage(_) => ExitCode::from(2),
-            Self::Reclaim(_) | Self::Io(_) | Self::Json(_) | Self::Persistence(_) => {
-                ExitCode::FAILURE
-            }
+            Self::Reclaim(_)
+            | Self::Config(_)
+            | Self::Io(_)
+            | Self::Json(_)
+            | Self::Persistence(_) => ExitCode::FAILURE,
         }
     }
 }
@@ -351,6 +471,12 @@ impl From<ReclaimError> for CliError {
 impl From<io::Error> for CliError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<cargo_reclaim::ConfigError> for CliError {
+    fn from(error: cargo_reclaim::ConfigError) -> Self {
+        Self::Config(error)
     }
 }
 
@@ -419,10 +545,113 @@ mod tests {
     }
 
     #[test]
+    fn parse_plan_merges_config_with_cli_precedence() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TestTemp::new("cli_parse_config")?;
+        let config_path = temp.path.join("reclaim.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+version = 1
+roots = ["configured-root"]
+ignore = ["configured-root/target"]
+
+[policy]
+mode = "observe"
+
+[scanner]
+follow_symlinks = true
+allow_name_only_targets = true
+cross_filesystems = true
+
+[planner]
+recent_write_keep_window = "2h"
+"#,
+        )?;
+
+        let Command::Plan(command) = parse_args([
+            OsString::from("plan"),
+            OsString::from("--config"),
+            config_path.clone().into_os_string(),
+            OsString::from("--policy=aggressive"),
+            OsString::from("--ignore"),
+            OsString::from("cli-ignore"),
+            OsString::from("--keep-recent-writes=30m"),
+            OsString::from("cli-root"),
+        ])?
+        else {
+            panic!("expected plan command");
+        };
+
+        assert_eq!(command.roots, [PathBuf::from("cli-root")]);
+        assert_eq!(command.policy, PolicyKind::Aggressive);
+        assert_eq!(command.config_path.as_deref(), Some(config_path.as_path()));
+        assert_eq!(command.config_version, Some(1));
+        assert_eq!(
+            command.scanner_options.ignored_paths,
+            [
+                temp.path.join("configured-root/target"),
+                PathBuf::from("cli-ignore")
+            ]
+        );
+        assert!(command.scanner_options.follow_symlinks);
+        assert!(command.inventory_options.follow_symlinks);
+        assert!(command.scanner_options.allow_name_only_targets);
+        assert!(command.scanner_options.cross_filesystems);
+        assert_eq!(
+            command
+                .planner_options
+                .recent_write_keep_window
+                .expect("cli keep window")
+                .as_secs(),
+            30 * 60
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_plan_uses_config_roots_when_cli_roots_are_absent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TestTemp::new("cli_parse_config_roots")?;
+        let config_path = temp.path.join("reclaim.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+version = 1
+roots = ["configured-root"]
+
+[policy]
+mode = "conservative"
+"#,
+        )?;
+
+        let Command::Plan(command) = parse_args([
+            OsString::from("scan"),
+            OsString::from("--config"),
+            config_path.into_os_string(),
+        ])?
+        else {
+            panic!("expected plan command");
+        };
+
+        assert_eq!(command.roots, [temp.path.join("configured-root")]);
+        assert_eq!(command.policy, PolicyKind::Conservative);
+        Ok(())
+    }
+
+    #[test]
     fn parse_rejects_apply_flags_on_dry_run_commands() {
         let error = parse_args(["plan", "--apply"].map(OsString::from)).unwrap_err();
 
         assert!(error.to_string().contains("dry-run plan"));
+    }
+
+    #[test]
+    fn parse_rejects_missing_config_value() {
+        let error = parse_args(["plan", "--config"].map(OsString::from)).unwrap_err();
+        assert!(error.to_string().contains("--config requires a value"));
+
+        let error = parse_args(["scan", "--config="].map(OsString::from)).unwrap_err();
+        assert!(error.to_string().contains("--config requires a value"));
     }
 
     #[test]
@@ -459,5 +688,30 @@ mod tests {
             b"target-\xFF"
         );
         Ok(())
+    }
+
+    struct TestTemp {
+        path: PathBuf,
+    }
+
+    impl TestTemp {
+        fn new(name: &str) -> Result<Self, Box<dyn std::error::Error>> {
+            let unique = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "cargo_reclaim_{name}_{}_{}",
+                std::process::id(),
+                unique
+            ));
+            std::fs::create_dir(&path)?;
+            Ok(Self { path })
+        }
+    }
+
+    impl Drop for TestTemp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }

@@ -1,4 +1,5 @@
 pub mod classifier;
+pub mod config;
 pub mod error;
 pub mod executor;
 pub mod integration;
@@ -10,6 +11,7 @@ pub mod policy;
 pub mod scanner;
 
 pub use classifier::{Classifier, classify_target_relative_path};
+pub use config::{ConfigError, ReclaimConfig, load_config_from_path, parse_config};
 pub use error::{ReclaimError, ReclaimResult};
 pub use executor::{
     ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, execute_persisted_plan_apply,

@@ -46,6 +46,10 @@ pub struct SavePlanOptions {
 pub struct PlanInvocation {
     pub command: PlanCommandKind,
     pub policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_version: Option<u16>,
     pub scanner_options: PersistedScannerOptions,
     pub inventory_options: PersistedInventoryOptions,
     #[serde(default)]
@@ -63,10 +67,18 @@ impl PlanInvocation {
         Self {
             command,
             policy: policy_label(policy).to_string(),
+            config_path: None,
+            config_version: None,
             scanner_options: PersistedScannerOptions::from_options(scanner_options),
             inventory_options: PersistedInventoryOptions::from_options(inventory_options),
             planner_options: PersistedPlannerOptions::from_options(planner_options),
         }
+    }
+
+    pub fn with_config(mut self, path: &Path, version: u16) -> Self {
+        self.config_path = Some(path_string(path));
+        self.config_version = Some(version);
+        self
     }
 }
 

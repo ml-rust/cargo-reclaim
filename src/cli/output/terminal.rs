@@ -20,6 +20,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "Options:")?;
     writeln!(
         output,
+        "  --config <path>              Load scan/plan defaults from a TOML config file"
+    )?;
+    writeln!(
+        output,
         "  --policy <kind>              observe, conservative, balanced, aggressive, custom"
     )?;
     writeln!(

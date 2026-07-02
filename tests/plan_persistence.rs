@@ -9,6 +9,7 @@ use cargo_reclaim::{
     PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence,
     ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
 };
+use serde_json::json;
 
 #[test]
 fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn Error>> {
@@ -118,6 +119,31 @@ fn rejects_expired_incompatible_and_mutated_documents() -> Result<(), Box<dyn Er
         ensure_plan_usable(&document, created_at),
         Err(PlanPersistenceError::PlanIdMismatch { .. })
     ));
+    Ok(())
+}
+
+#[test]
+fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Error>> {
+    let invocation: PlanInvocation = serde_json::from_value(json!({
+        "command": "plan",
+        "policy": "balanced",
+        "scanner_options": {
+            "follow_symlinks": false,
+            "allow_name_only_targets": false,
+            "cross_filesystems": false,
+            "ignored_paths": []
+        },
+        "inventory_options": {
+            "follow_symlinks": false
+        }
+    }))?;
+
+    assert_eq!(invocation.config_path, None);
+    assert_eq!(invocation.config_version, None);
+    assert_eq!(
+        invocation.planner_options.recent_write_keep_window_seconds,
+        None
+    );
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use cargo_reclaim::{
@@ -29,6 +29,18 @@ impl SavePlanRequest {
     }
 }
 
+#[derive(Debug)]
+pub(super) struct SavePlanContext<'a> {
+    pub mode: PlanMode,
+    pub policy: PolicyKind,
+    pub scanner_options: &'a ScannerOptions,
+    pub inventory_options: &'a InventoryOptions,
+    pub planner_options: &'a PlannerOptions,
+    pub config_path: Option<&'a Path>,
+    pub config_version: Option<u16>,
+    pub request: &'a SavePlanRequest,
+}
+
 pub(super) fn parse_duration(value: &str) -> Result<Duration, CliError> {
     let Some((number, suffix)) = value.split_at_checked(value.len().saturating_sub(1)) else {
         return Err(CliError::Usage("duration must not be empty".to_string()));
@@ -57,20 +69,12 @@ pub(super) fn parse_duration(value: &str) -> Result<Duration, CliError> {
     Ok(Duration::from_secs(seconds))
 }
 
-pub(super) fn save_plan(
-    plan: &Plan,
-    mode: PlanMode,
-    policy: PolicyKind,
-    scanner_options: &ScannerOptions,
-    inventory_options: &InventoryOptions,
-    planner_options: &PlannerOptions,
-    request: &SavePlanRequest,
-) -> Result<(), CliError> {
+pub(super) fn save_plan(plan: &Plan, context: SavePlanContext<'_>) -> Result<(), CliError> {
     let created_at = SystemTime::now();
     let expires_at = created_at
-        .checked_add(request.expires_in)
+        .checked_add(context.request.expires_in)
         .ok_or_else(|| CliError::Usage("plan expiry duration is too large".to_string()))?;
-    let command = match mode {
+    let command = match context.mode {
         PlanMode::Plan => PlanCommandKind::Plan,
         PlanMode::Scan => {
             return Err(CliError::Usage(
@@ -78,13 +82,17 @@ pub(super) fn save_plan(
             ));
         }
     };
-    let invocation = PlanInvocation::new(
+    let mut invocation = PlanInvocation::new(
         command,
-        policy,
-        scanner_options,
-        inventory_options,
-        planner_options,
+        context.policy,
+        context.scanner_options,
+        context.inventory_options,
+        context.planner_options,
     );
+    if let (Some(config_path), Some(config_version)) = (context.config_path, context.config_version)
+    {
+        invocation = invocation.with_config(config_path, config_version);
+    }
     let document = persist_plan(
         plan,
         SavePlanOptions {
@@ -94,7 +102,7 @@ pub(super) fn save_plan(
             invocation,
         },
     )?;
-    save_plan_to_path(&request.path, &document)?;
+    save_plan_to_path(&context.request.path, &document)?;
     Ok(())
 }
 

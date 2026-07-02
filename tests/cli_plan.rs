@@ -321,6 +321,47 @@ fn save_plan_records_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn save_plan_records_config_provenance() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_save_config_plan")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let config_path = temp.path().join("reclaim.toml");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+roots = ["."]
+
+[policy]
+mode = "observe"
+"#,
+    )?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .output()?;
+
+    assert!(output.status.success());
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(persisted["invocation"]["policy"], "observe");
+    assert_eq!(
+        persisted["invocation"]["config_path"],
+        config_path.display().to_string()
+    );
+    assert_eq!(persisted["invocation"]["config_version"], 1);
+    Ok(())
+}
+
+#[test]
 fn json_output_can_be_combined_with_save_plan() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_json_save_plan")?;
     write_manifest(temp.path())?;
