@@ -14,11 +14,26 @@ const DESELECT_REASON: &str = "explicitly preserved by selection";
 pub struct PlanEditRequest {
     pub select: Vec<String>,
     pub deselect: Vec<String>,
+    pub select_indices: Vec<usize>,
+    pub deselect_indices: Vec<usize>,
 }
 
 impl PlanEditRequest {
     pub fn new(select: Vec<String>, deselect: Vec<String>) -> Result<Self, PlanEditError> {
-        if select.is_empty() && deselect.is_empty() {
+        Self::new_with_indices(select, deselect, Vec::new(), Vec::new())
+    }
+
+    pub fn new_with_indices(
+        select: Vec<String>,
+        deselect: Vec<String>,
+        select_indices: Vec<usize>,
+        deselect_indices: Vec<usize>,
+    ) -> Result<Self, PlanEditError> {
+        if select.is_empty()
+            && deselect.is_empty()
+            && select_indices.is_empty()
+            && deselect_indices.is_empty()
+        {
             return Err(PlanEditError::NoEdits);
         }
 
@@ -29,7 +44,32 @@ impl PlanEditRequest {
             });
         }
 
-        Ok(Self { select, deselect })
+        if select_indices
+            .iter()
+            .chain(deselect_indices.iter())
+            .any(|index| *index == 0)
+        {
+            return Err(PlanEditError::EntryNotFound {
+                path: "entry index 0".to_string(),
+            });
+        }
+
+        let selected_indices = select_indices.iter().collect::<HashSet<_>>();
+        if let Some(index) = deselect_indices
+            .iter()
+            .find(|index| selected_indices.contains(index))
+        {
+            return Err(PlanEditError::ConflictingEdit {
+                path: format!("entry index {}", index),
+            });
+        }
+
+        Ok(Self {
+            select,
+            deselect,
+            select_indices,
+            deselect_indices,
+        })
     }
 }
 
@@ -49,9 +89,24 @@ pub fn edit_persisted_plan(
     ensure_plan_usable(document, now)?;
 
     let path_index = build_path_index(&document.body.plan.entries);
-    let selected_indices = resolve_paths(&path_index, &request.select)?;
-    let deselected_indices = resolve_paths(&path_index, &request.deselect)?;
+    let mut selected_indices = resolve_paths(&path_index, &request.select)?;
+    let mut deselected_indices = resolve_paths(&path_index, &request.deselect)?;
     drop(path_index);
+    selected_indices.extend(resolve_entry_indices(
+        document.body.plan.entries.len(),
+        &request.select_indices,
+    )?);
+    deselected_indices.extend(resolve_entry_indices(
+        document.body.plan.entries.len(),
+        &request.deselect_indices,
+    )?);
+    dedupe_positions(&mut selected_indices);
+    dedupe_positions(&mut deselected_indices);
+    reject_conflicting_positions(
+        &document.body.plan.entries,
+        &selected_indices,
+        &deselected_indices,
+    )?;
 
     let selected_count = apply_paths(
         &mut document.body.plan.entries,
@@ -113,6 +168,53 @@ fn resolve_paths(
         }
     }
     Ok(resolved)
+}
+
+fn resolve_entry_indices(
+    entry_count: usize,
+    indices: &[usize],
+) -> Result<Vec<usize>, PlanEditError> {
+    let mut resolved = Vec::with_capacity(indices.len());
+    for &index in indices {
+        if index == 0 {
+            return Err(PlanEditError::EntryNotFound {
+                path: format!("entry index {index}"),
+            });
+        }
+        if index > entry_count {
+            return Err(PlanEditError::EntryNotFound {
+                path: format!("entry index {index}"),
+            });
+        }
+        resolved.push(index - 1);
+    }
+    Ok(resolved)
+}
+
+fn reject_conflicting_positions(
+    entries: &[PersistedPlanEntry],
+    selected_indices: &[usize],
+    deselected_indices: &[usize],
+) -> Result<(), PlanEditError> {
+    let selected = selected_indices.iter().copied().collect::<HashSet<_>>();
+    for &index in deselected_indices {
+        if selected.contains(&index) {
+            let entry = entries
+                .get(index)
+                .ok_or_else(|| PlanEditError::EntryNotFound {
+                    path: format!("entry index {}", index.saturating_add(1)),
+                })?;
+            return Err(PlanEditError::ConflictingEdit {
+                path: entry.snapshot.path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn dedupe_positions(indices: &mut Vec<usize>) {
+    let mut seen = HashSet::with_capacity(indices.len());
+    indices.retain(|index| seen.insert(*index));
 }
 
 fn apply_paths(
@@ -279,6 +381,116 @@ mod tests {
         .expect_err("unknown path should fail");
 
         assert!(matches!(error, PlanEditError::EntryNotFound { .. }));
+        assert_eq!(document, original);
+        Ok(())
+    }
+
+    #[test]
+    fn edits_matching_persisted_entry_indices_and_recomputes_body_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+        let original_id = document.id.clone();
+
+        let report = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_indices(Vec::new(), Vec::new(), vec![1], vec![2])?,
+            created_at,
+        )?;
+
+        assert_ne!(document.id, original_id);
+        assert_eq!(document.id, PlanId::from_body(&document.body)?);
+        assert!(document.body.interactive_selection_modified);
+        assert_eq!(report.selected_count, 1);
+        assert_eq!(report.deselected_count, 1);
+        assert_eq!(document.body.plan.entries[0].action, "delete");
+        assert_eq!(document.body.plan.entries[0].policy_reason, SELECT_REASON);
+        assert_eq!(document.body.plan.entries[1].action, "preserve");
+        assert_eq!(document.body.plan.entries[1].policy_reason, DESELECT_REASON);
+        Ok(())
+    }
+
+    #[test]
+    fn dedupes_same_action_entry_indices_before_reporting() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+
+        let report = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_indices(
+                vec!["target/debug/incremental".to_string()],
+                Vec::new(),
+                vec![1],
+                Vec::new(),
+            )?,
+            created_at,
+        )?;
+
+        assert_eq!(report.selected_count, 1);
+        assert_eq!(document.body.plan.entries[0].action, "delete");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unmatched_persisted_entry_indices_without_partial_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+        let original = document.clone();
+
+        let error = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_indices(Vec::new(), Vec::new(), vec![3], Vec::new())?,
+            created_at,
+        )
+        .expect_err("unmatched index should fail");
+
+        assert!(matches!(error, PlanEditError::EntryNotFound { .. }));
+        assert_eq!(document, original);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_zero_persisted_entry_indices_without_partial_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let document = document(created_at, expires_at)?;
+        let original = document.clone();
+
+        let error = PlanEditRequest::new_with_indices(Vec::new(), Vec::new(), vec![0], Vec::new())
+            .expect_err("zero index should fail");
+
+        assert!(matches!(error, PlanEditError::EntryNotFound { .. }));
+        assert_eq!(document, original);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_cross_action_entry_conflicts_without_partial_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+        let original = document.clone();
+
+        let error = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_indices(
+                vec!["target/debug/incremental".to_string()],
+                Vec::new(),
+                Vec::new(),
+                vec![1],
+            )?,
+            created_at,
+        )
+        .expect_err("same entry conflict should fail");
+
+        assert!(matches!(error, PlanEditError::ConflictingEdit { .. }));
         assert_eq!(document, original);
         Ok(())
     }

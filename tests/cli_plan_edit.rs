@@ -120,6 +120,39 @@ fn edit_plan_deselects_without_deleting_on_apply_validation() -> Result<(), Box<
 }
 
 #[test]
+fn edit_plan_selects_and_deselects_persisted_entry_indices() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_indices")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-index", "1", "--deselect-index=2", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(stdout["selected_count"], 1);
+    assert_eq!(stdout["deselected_count"], 1);
+
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(after["interactive_selection_modified"], true);
+    assert_eq!(after["plan"]["entries"][0]["action"], "delete");
+    assert_eq!(
+        after["plan"]["entries"][0]["policy_reason"],
+        "explicitly selected for deletion"
+    );
+    assert_eq!(after["plan"]["entries"][1]["action"], "preserve");
+    assert_eq!(
+        after["plan"]["entries"][1]["policy_reason"],
+        "explicitly preserved by selection"
+    );
+    assert_eq!(after["plan"]["totals"]["delete_candidate_count"], 1);
+    assert_eq!(after["plan"]["totals"]["preserved_count"], 1);
+    Ok(())
+}
+
+#[test]
 fn edit_plan_rejects_missing_plan_last_yes_and_no_edits() -> Result<(), Box<dyn Error>> {
     for args in [
         vec!["edit-plan"],
@@ -141,6 +174,79 @@ fn edit_plan_rejects_missing_plan_last_yes_and_no_edits() -> Result<(), Box<dyn 
         assert_eq!(output.status.code(), Some(2));
     }
 
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_invalid_entry_indices_without_rewriting_plan() -> Result<(), Box<dyn Error>> {
+    for (name, args) in [
+        ("out_of_range", vec!["--select-index", "3"]),
+        ("zero", vec!["--select-index", "0"]),
+        ("non_numeric", vec!["--select-index", "abc"]),
+        ("missing", vec!["--select-index"]),
+        ("deselect_zero", vec!["--deselect-index", "0"]),
+    ] {
+        let temp = TestTemp::new(&format!("cli_edit_plan_invalid_index_{name}"))?;
+        let plan_path = write_two_entry_plan(&temp)?;
+        let before = fs::read(&plan_path)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args(["edit-plan", "--plan"])
+            .arg(&plan_path)
+            .args(args)
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(fs::read(&plan_path)?, before);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_cross_action_entry_conflicts_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_index_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+    let before_json: Value = serde_json::from_slice(&before)?;
+    let entry_path = before_json["plan"]["entries"][0]["snapshot"]["path"]
+        .as_str()
+        .expect("persisted path")
+        .to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select"])
+        .arg(entry_path)
+        .args(["--deselect-index", "1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cannot be both selected and deselected"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_cross_action_index_conflicts_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_index_index_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-index", "1", "--deselect-index", "1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cannot be both selected and deselected"));
     Ok(())
 }
 
@@ -275,7 +381,26 @@ fn edit_plan_list_rejects_edit_flags_without_rewriting_plan() -> Result<(), Box<
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(fs::read(&plan_path)?, before);
     let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("`--list` cannot be combined with `--select` or `--deselect`"));
+    assert!(stderr.contains("`--list` cannot be combined with edit flags"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_list_rejects_index_edit_flags_without_rewriting_plan() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_list_index_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--list", "--select-index", "1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("`--list` cannot be combined with edit flags"));
     Ok(())
 }
 

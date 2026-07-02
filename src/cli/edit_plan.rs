@@ -33,6 +33,8 @@ pub(super) fn parse_edit_plan_command(
     let mut plan_path = None;
     let mut select = Vec::new();
     let mut deselect = Vec::new();
+    let mut select_indices = Vec::new();
+    let mut deselect_indices = Vec::new();
     let mut list = false;
     let mut output_format = OutputFormat::Terminal;
 
@@ -69,11 +71,37 @@ pub(super) fn parse_edit_plan_command(
                 select.push(required_inline_value(value, "--select")?.to_string());
                 index += 1;
             }
+            "--select-index" => {
+                index =
+                    collect_index_values(&args, index + 1, "--select-index", &mut select_indices)?;
+            }
+            value if value.starts_with("--select-index=") => {
+                select_indices.push(parse_index_value(
+                    required_inline_value(value, "--select-index")?,
+                    "--select-index",
+                )?);
+                index += 1;
+            }
             "--deselect" => {
                 index = collect_edit_values(&args, index + 1, "--deselect", &mut deselect)?;
             }
             value if value.starts_with("--deselect=") => {
                 deselect.push(required_inline_value(value, "--deselect")?.to_string());
+                index += 1;
+            }
+            "--deselect-index" => {
+                index = collect_index_values(
+                    &args,
+                    index + 1,
+                    "--deselect-index",
+                    &mut deselect_indices,
+                )?;
+            }
+            value if value.starts_with("--deselect-index=") => {
+                deselect_indices.push(parse_index_value(
+                    required_inline_value(value, "--deselect-index")?,
+                    "--deselect-index",
+                )?);
                 index += 1;
             }
             "--last" | "last" => {
@@ -106,14 +134,23 @@ pub(super) fn parse_edit_plan_command(
     };
 
     let operation = if list {
-        if !select.is_empty() || !deselect.is_empty() {
+        if !select.is_empty()
+            || !deselect.is_empty()
+            || !select_indices.is_empty()
+            || !deselect_indices.is_empty()
+        {
             return Err(CliError::Usage(
-                "`--list` cannot be combined with `--select` or `--deselect`".to_string(),
+                "`--list` cannot be combined with edit flags".to_string(),
             ));
         }
         EditPlanOperation::List
     } else {
-        EditPlanOperation::Edit(PlanEditRequest::new(select, deselect)?)
+        EditPlanOperation::Edit(PlanEditRequest::new_with_indices(
+            select,
+            deselect,
+            select_indices,
+            deselect_indices,
+        )?)
     };
 
     Ok(EditPlanCommand {
@@ -160,6 +197,40 @@ fn collect_edit_values(
 
     if values.len() == start_len {
         return Err(CliError::Usage(format!("{option} requires a value")));
+    }
+    Ok(index)
+}
+
+fn collect_index_values(
+    args: &[OsString],
+    mut index: usize,
+    option: &'static str,
+    values: &mut Vec<usize>,
+) -> Result<usize, CliError> {
+    let start_len = values.len();
+    while index < args.len() {
+        let value = arg_text(&args[index])?;
+        if value.starts_with('-') {
+            break;
+        }
+        values.push(parse_index_value(&value, option)?);
+        index += 1;
+    }
+
+    if values.len() == start_len {
+        return Err(CliError::Usage(format!("{option} requires a value")));
+    }
+    Ok(index)
+}
+
+fn parse_index_value(value: &str, option: &'static str) -> Result<usize, CliError> {
+    let index = value.parse::<usize>().map_err(|_| {
+        CliError::Usage(format!("{option} requires a positive 1-based entry index"))
+    })?;
+    if index == 0 {
+        return Err(CliError::Usage(format!(
+            "{option} requires a positive 1-based entry index"
+        )));
     }
     Ok(index)
 }
@@ -394,7 +465,40 @@ mod tests {
         };
         assert_eq!(request.select, ["target/a", "target/b"]);
         assert_eq!(request.deselect, ["target/c"]);
+        assert!(request.select_indices.is_empty());
+        assert!(request.deselect_indices.is_empty());
         assert_eq!(command.output_format, OutputFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_explicit_plan_and_multiple_index_values() -> Result<(), CliError> {
+        let command = parse_edit_plan_command(
+            [
+                "edit-plan",
+                "--plan",
+                "plan.json",
+                "--select-index",
+                "1",
+                "2",
+                "--deselect-index=3",
+            ]
+            .into_iter()
+            .skip(1)
+            .map(OsString::from),
+        )?;
+
+        assert_eq!(command.plan_path, PathBuf::from("plan.json"));
+        let request = match command.operation {
+            EditPlanOperation::Edit(request) => request,
+            EditPlanOperation::List => {
+                return Err(CliError::Usage("expected edit operation".into()));
+            }
+        };
+        assert!(request.select.is_empty());
+        assert!(request.deselect.is_empty());
+        assert_eq!(request.select_indices, [1, 2]);
+        assert_eq!(request.deselect_indices, [3]);
         Ok(())
     }
 
@@ -420,7 +524,7 @@ mod tests {
     #[test]
     fn rejects_list_with_edits() {
         let error = parse_edit_plan_command(
-            ["--plan", "plan.json", "--list", "--select", "target"].map(OsString::from),
+            ["--plan", "plan.json", "--list", "--select-index", "1"].map(OsString::from),
         )
         .expect_err("list with edits should fail");
         assert!(matches!(error, CliError::Usage(_)));
