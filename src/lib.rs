@@ -39,7 +39,9 @@ pub use cargo_home::{
 };
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use config::{
-    BackgroundConfig, BackgroundMode, ConfigError, PolicyThresholdConfig, ReclaimConfig,
+    BackgroundConfig, BackgroundMode, CARGO_CONFIG_RECOMMEND_SCHEMA_VERSION, CargoConfigOutputDir,
+    CargoConfigRecommendReport, CargoConfigRecommendRequest, CargoConfigRecommendation,
+    ConfigError, PolicyThresholdConfig, ReclaimConfig, build_cargo_config_recommend_report,
     load_config_from_path, parse_config,
 };
 pub use error::{ReclaimError, ReclaimResult};

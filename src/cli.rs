@@ -10,6 +10,7 @@ use cargo_reclaim::{
 };
 
 mod apply;
+mod cargo_config;
 mod cargo_home;
 mod edit_plan;
 mod output;
@@ -18,6 +19,7 @@ mod plan;
 mod scheduler;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
+use cargo_config::{CargoConfigCommand, parse_cargo_config_command, run_cargo_config_command};
 use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_command};
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
 use output::write_help;
@@ -53,6 +55,7 @@ fn run_with_args(
         Command::Apply(command) => run_apply(&command, stdout),
         Command::EditPlan(command) => run_edit_plan(&command, stdout),
         Command::SchedulerPreview(command) => run_scheduler_preview(&command, stdout),
+        Command::CargoConfig(command) => run_cargo_config_command(&command, stdout),
         Command::CargoHome(command) => run_cargo_home_command(&command, stdout),
     }
 }
@@ -64,6 +67,7 @@ enum Command {
     Apply(ApplyCommand),
     EditPlan(EditPlanCommand),
     SchedulerPreview(SchedulerPreviewCommand),
+    CargoConfig(CargoConfigCommand),
     CargoHome(CargoHomeCommand),
 }
 
@@ -106,9 +110,10 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "apply" => parse_apply_command(args).map(Command::Apply),
         "edit-plan" => parse_edit_plan_command(args).map(Command::EditPlan),
         "scheduler" => parse_scheduler_command(args).map(Command::SchedulerPreview),
+        "cargo-config" => parse_cargo_config_command(args).map(Command::CargoConfig),
         "cargo-home" => parse_cargo_home_command(args).map(Command::CargoHome),
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-home`, or `help`"
+            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, or `help`"
         ))),
     }
 }
