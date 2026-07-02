@@ -136,7 +136,7 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
         systemd
             .artifacts
             .iter()
-            .all(|artifact| artifact.kind != GeneratedArtifactKind::SystemdTimer)
+            .any(|artifact| artifact.kind == GeneratedArtifactKind::SystemdTimer)
     );
     let service = systemd
         .artifacts
@@ -146,6 +146,14 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
     assert!(service.contents.contains("Type=simple"));
     assert!(service.contents.contains("Restart=on-failure"));
     assert!(!service.contents.contains("Type=oneshot"));
+    let timer = systemd
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == GeneratedArtifactKind::SystemdTimer)
+        .expect("systemd timer");
+    assert!(timer.contents.contains("OnCalendar=*-*-* 03:00:00"));
+    assert!(timer.contents.contains("Persistent=true"));
+    assert!(timer.contents.contains("Unit=cargo-reclaim.service"));
 
     let launchd = generate_scheduler_artifacts(request(SchedulerPlatform::Launchd))?;
     assert!(
@@ -254,7 +262,7 @@ fn systemd_install_plan_writes_artifacts_and_registers_service()
         &plan.steps,
         GeneratedArtifactKind::SystemdService
     ));
-    assert!(!has_write_step(
+    assert!(has_write_step(
         &plan.steps,
         GeneratedArtifactKind::SystemdTimer
     ));
@@ -274,7 +282,8 @@ fn systemd_install_plan_writes_artifacts_and_registers_service()
             "--user",
             "enable",
             "--now",
-            "cargo-reclaim.service"
+            "cargo-reclaim.service",
+            "cargo-reclaim.timer"
         ]
     ));
     Ok(())
@@ -293,7 +302,8 @@ fn systemd_uninstall_plan_disables_service_and_removes_known_files()
             "--user",
             "disable",
             "--now",
-            "cargo-reclaim.service"
+            "cargo-reclaim.service",
+            "cargo-reclaim.timer"
         ]
     ));
     assert!(has_command(
@@ -302,7 +312,7 @@ fn systemd_uninstall_plan_disables_service_and_removes_known_files()
     ));
     assert!(has_remove_step(&plan.steps, "scheduler-runner.sh"));
     assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
-    assert!(!has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
     assert!(matches!(
         plan.steps.last(),
         Some(SchedulerPlanStep::RunCommand { argv })

@@ -71,6 +71,14 @@ fn systemd_artifacts(
                 systemd_quote(&paths.runner_path)
             ),
         },
+        GeneratedArtifact {
+            kind: GeneratedArtifactKind::SystemdTimer,
+            intended_install_path: paths.systemd_timer_path(),
+            contents: format!(
+                "[Unit]\nDescription=cargo-reclaim scheduled background trigger\n\n[Timer]\nOnCalendar=*-*-* {:02}:{:02}:00\nPersistent=true\nUnit=cargo-reclaim.service\n\n[Install]\nWantedBy=timers.target\n",
+                request.schedule.hour, request.schedule.minute
+            ),
+        },
     ]
 }
 

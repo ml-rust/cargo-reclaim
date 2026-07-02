@@ -42,6 +42,12 @@ impl SchedulerPaths {
             .unwrap_or_else(|| PathBuf::from(".config/systemd/user/cargo-reclaim.service"))
     }
 
+    pub(crate) fn systemd_timer_path(&self) -> PathBuf {
+        home_dir()
+            .map(|home| home.join(".config/systemd/user/cargo-reclaim.timer"))
+            .unwrap_or_else(|| PathBuf::from(".config/systemd/user/cargo-reclaim.timer"))
+    }
+
     pub(crate) fn launchd_plist_path(&self) -> PathBuf {
         home_dir()
             .map(|home| home.join("Library/LaunchAgents/com.cargo-reclaim.plist"))

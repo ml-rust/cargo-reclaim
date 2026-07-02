@@ -25,9 +25,12 @@ cargo-reclaim apply --plan reclaim-plan.json
 cargo-reclaim apply --plan reclaim-plan.json --yes
 cargo-reclaim edit-plan --plan reclaim-plan.json --list
 cargo-reclaim edit-plan --plan reclaim-plan.json --select target/doc
+cargo-reclaim edit-plan --plan reclaim-plan.json --interactive
 ```
 
 `scan` and `plan` both build a read-only cleanup plan for one or more roots. `plan` can also persist the plan with `--save-plan`, which is what the later `apply` flow consumes.
+
+`edit-plan --interactive` reads and rewrites an explicit saved plan. It accepts entry numbers, project groups such as `p1`, class groups such as `c:incremental`, and `none` or `cancel`; project groups select only entries that are already delete candidates, and `whole_target` entries must be selected by entry number.
 
 ## Validation And Apply Flow
 
@@ -49,7 +52,7 @@ cargo-reclaim cargo-home apply --plan cargo-home-plan.json
 cargo-reclaim cargo-home apply --plan cargo-home-plan.json --yes
 ```
 
-`cargo-home report` summarizes Cargo home caches and preserved paths. `cargo-home plan` builds a dry-run cleanup plan for the Cargo home tree, and `cargo-home apply` validates or executes a saved Cargo home plan.
+`cargo-home report` summarizes Cargo home caches and preserved paths. `cargo-home plan` builds a dry-run cleanup plan for the Cargo home tree, and `cargo-home apply` validates or executes only a saved Cargo home plan; `apply` does not accept a live `--cargo-home` path.
 
 ## Scheduler Commands
 
@@ -61,7 +64,7 @@ cargo-reclaim scheduler service run --config reclaim.toml
 cargo-reclaim scheduler service status --config reclaim.toml
 ```
 
-`scheduler preview` emits the platform-specific installation artifacts without writing them. `scheduler install` and `scheduler uninstall` can stay in dry-run mode or execute through the selected backend. Installed artifacts supervise `scheduler service run`, which keeps a resident background loop alive, records durable service state, and writes JSONL run logs. `scheduler run` remains available as a single-cycle background execution entrypoint for diagnostics and compatibility.
+`scheduler preview` emits the platform-specific installation artifacts without writing them, including a systemd user service plus timer on Linux. `scheduler install` and `scheduler uninstall` can stay in dry-run mode or execute through the selected backend. Installed artifacts supervise `scheduler service run`, which keeps a resident background loop alive, records durable service state, and writes JSONL run logs. `scheduler service run` and `scheduler service status` are config-driven; `status` reads persisted service state and can report `unknown` before the service has written state. `scheduler run` remains available as a single-cycle background execution entrypoint for diagnostics and compatibility.
 
 ## Cargo Config Commands
 
@@ -71,13 +74,14 @@ cargo-reclaim cargo-config preview --project path/to/project --json
 cargo-reclaim cargo-config apply --preview path/to/preview.json --yes
 ```
 
-`cargo-config recommend` reports read-only Cargo build output configuration guidance. `cargo-config preview` builds a write plan for Cargo config files, and `cargo-config apply` applies a saved preview after explicit confirmation.
+`cargo-config recommend` reports read-only Cargo build output configuration guidance. `cargo-config preview` builds a dry-run write plan for Cargo config files and does not modify files. `cargo-config apply` applies a saved preview only with `--preview <path> --yes`; it does not accept `--project`.
 
 ## Common Options
 
 - `--config <path>` loads defaults from a TOML config file.
 - `examples/reclaim.toml` is a tracked starter config that stays within the currently supported keys.
 - `--policy <kind>` selects `observe`, `conservative`, `balanced`, `aggressive`, or `custom`.
+- `--whole-target <mode>` selects `off`, `confirm`, or `delete`; direct delete requires aggressive policy, and config-driven unattended whole-target deletion also requires `allow_unattended_whole_target_delete = true`.
 - `--ignore <path>` skips paths during scanning.
 - `--follow-symlinks`, `--allow-name-only-targets`, and `--cross-filesystems` adjust scan coverage.
 - `--keep-recent-writes <dur>` preserves delete candidates that were modified recently.

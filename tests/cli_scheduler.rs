@@ -29,8 +29,8 @@ fn preview_systemd_terminal_reports_dry_run_and_artifacts() -> Result<(), Box<dy
     assert!(stdout.contains("dry-run only"));
     assert!(stdout.contains("no scheduler files were installed"));
     assert!(stdout.contains("systemd-service"));
+    assert!(stdout.contains("systemd-timer"));
     assert!(stdout.contains("runner-script"));
-    assert!(!stdout.contains("systemd-timer"));
     Ok(())
 }
 
