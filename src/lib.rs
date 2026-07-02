@@ -1,5 +1,6 @@
 pub mod classifier;
 pub mod error;
+pub mod integration;
 pub mod inventory;
 pub mod model;
 pub mod planner;
@@ -8,8 +9,10 @@ pub mod scanner;
 
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use error::{ReclaimError, ReclaimResult};
+pub use integration::{build_plan_from_roots, build_plan_from_scan_items};
 pub use inventory::{
-    InventoryOptions, planner_candidate_from_target_relative_path, snapshot_target_relative_path,
+    InventoryOptions, planner_candidate_from_target_relative_path,
+    planner_candidates_from_target_root, snapshot_target_relative_path,
 };
 pub use model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
