@@ -2,6 +2,8 @@
 
 cargo-reclaim is a trust-first Rust artifact cleanup tool for Cargo projects and Cargo home data. It scans for reclaimable build outputs and cache entries, builds dry-run plans, persists plans for later validation, and only removes data after a fresh revalidation pass.
 
+Supported Rust: `cargo-reclaim` targets Rust 1.85+ for edition 2024 support.
+
 The default mode is conservative: `scan` and `plan` are dry-run only, `apply` validates a saved plan before execution, and `--json` is available for stable machine-readable output. The CLI does not expose a GUI and it does not pretend to modify Cargo state unless a command explicitly says it will.
 
 ## Safety Model

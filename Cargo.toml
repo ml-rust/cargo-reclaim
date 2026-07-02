@@ -2,6 +2,7 @@
 name = "cargo-reclaim"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Trust-first Rust artifact cleanup for Cargo projects and Cargo home data"
 readme = "README.md"
 license = "MIT OR Apache-2.0"

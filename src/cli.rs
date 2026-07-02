@@ -54,6 +54,10 @@ fn run_with_args(
             write_help(stdout)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Version => {
+            writeln!(stdout, "cargo-reclaim {}", env!("CARGO_PKG_VERSION"))?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Plan(command) => {
             let provider = platform_active_observation_provider();
             run_plan_command(command, stdout, &provider)?;
@@ -70,6 +74,7 @@ fn run_with_args(
 #[derive(Debug)]
 enum Command {
     Help,
+    Version,
     Plan(PlanCommand),
     Apply(ApplyCommand),
     EditPlan(EditPlanCommand),
@@ -112,6 +117,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
 
     match command.to_string_lossy().as_ref() {
         "-h" | "--help" | "help" => Ok(Command::Help),
+        "-V" | "--version" => Ok(Command::Version),
         "scan" => parse_plan_command(PlanMode::Scan, args),
         "plan" => parse_plan_command(PlanMode::Plan, args),
         "apply" => parse_apply_command(args).map(Command::Apply),
@@ -561,6 +567,29 @@ mod tests {
         assert_eq!(command.output_format, OutputFormat::Terminal);
         assert!(command.save_plan.is_none());
         assert!(!command.scanner_options.allow_name_only_targets);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_top_level_version_flags() -> Result<(), CliError> {
+        for flag in ["--version", "-V"] {
+            let command = parse_args([flag].map(OsString::from))?;
+            assert!(matches!(command, Command::Version));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_top_level_version_writes_version_and_exits_success() -> Result<(), CliError> {
+        let mut output = Vec::new();
+        let status = run_with_args([OsString::from("--version")], &mut output)?;
+
+        assert_eq!(status, ExitCode::SUCCESS);
+        assert_eq!(
+            String::from_utf8(output).expect("version output utf-8"),
+            format!("cargo-reclaim {}\n", env!("CARGO_PKG_VERSION"))
+        );
         Ok(())
     }
 
