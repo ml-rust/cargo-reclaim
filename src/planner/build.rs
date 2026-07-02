@@ -5,7 +5,7 @@ use crate::model::{Plan, PlanEntry, PlanInput};
 use crate::policy::PolicyKind;
 
 use super::foundation::plan_candidate_for_policy;
-use super::{PlannerCandidate, PlannerOptions};
+use super::{ActiveObservation, PlannerCandidate, PlannerOptions};
 
 pub fn plan_candidate(candidate: PlannerCandidate, policy: PolicyKind) -> ReclaimResult<PlanEntry> {
     plan_candidate_with_options(
@@ -22,7 +22,23 @@ pub fn plan_candidate_with_options(
     options: &PlannerOptions,
     now: SystemTime,
 ) -> ReclaimResult<PlanEntry> {
-    plan_candidate_for_policy(policy, candidate, options, now)
+    plan_candidate_with_active_observation(
+        candidate,
+        policy,
+        options,
+        &ActiveObservation::not_attempted(),
+        now,
+    )
+}
+
+pub fn plan_candidate_with_active_observation(
+    candidate: PlannerCandidate,
+    policy: PolicyKind,
+    options: &PlannerOptions,
+    active_observation: &ActiveObservation,
+    now: SystemTime,
+) -> ReclaimResult<PlanEntry> {
+    plan_candidate_for_policy(policy, candidate, options, active_observation, now)
 }
 
 pub fn build_plan(
@@ -46,9 +62,35 @@ pub fn build_plan_with_options(
     options: &PlannerOptions,
     now: SystemTime,
 ) -> ReclaimResult<Plan> {
+    build_plan_with_active_observation(
+        input,
+        policy,
+        candidates,
+        options,
+        &ActiveObservation::not_attempted(),
+        now,
+    )
+}
+
+pub fn build_plan_with_active_observation(
+    input: PlanInput,
+    policy: PolicyKind,
+    candidates: impl IntoIterator<Item = PlannerCandidate>,
+    options: &PlannerOptions,
+    active_observation: &ActiveObservation,
+    now: SystemTime,
+) -> ReclaimResult<Plan> {
     let entries = candidates
         .into_iter()
-        .map(|candidate| plan_candidate_with_options(candidate, policy, options, now))
+        .map(|candidate| {
+            plan_candidate_with_active_observation(
+                candidate,
+                policy,
+                options,
+                active_observation,
+                now,
+            )
+        })
         .collect::<ReclaimResult<Vec<_>>>()?;
 
     Ok(Plan::new(input, entries))

@@ -2,6 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::ReclaimResult;
 use crate::model::TargetEvidence;
+use crate::planner::TargetContext;
 
 use super::foundation::{CargoProject, ScannerOptions, TargetDirOverride};
 
@@ -14,15 +15,22 @@ pub struct TargetCandidate {
     pub path: PathBuf,
     pub kind: TargetCandidateKind,
     pub evidence: Option<TargetEvidence>,
+    pub target_context: Option<TargetContext>,
     pub skip_reason: Option<SkipReason>,
 }
 
 impl TargetCandidate {
-    fn candidate(path: PathBuf, kind: TargetCandidateKind, evidence: TargetEvidence) -> Self {
+    fn candidate(
+        path: PathBuf,
+        kind: TargetCandidateKind,
+        evidence: TargetEvidence,
+        target_context: Option<TargetContext>,
+    ) -> Self {
         Self {
             path,
             kind,
             evidence: Some(evidence),
+            target_context,
             skip_reason: None,
         }
     }
@@ -32,6 +40,7 @@ impl TargetCandidate {
             path,
             kind: TargetCandidateKind::Unknown,
             evidence: None,
+            target_context: None,
             skip_reason: Some(skip_reason),
         }
     }
@@ -93,6 +102,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::strong_marker(CACHEDIR_TAG)?,
+            target_context(path, project),
         ));
     }
 
@@ -101,6 +111,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::strong_marker(RUSTC_INFO)?,
+            target_context(path, project),
         ));
     }
 
@@ -112,6 +123,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::configured_path(target_dir_override.source.label.clone())?,
+            target_context(path, project),
         ));
     }
 
@@ -122,6 +134,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::project_context(project.manifest_path.clone())?,
+            Some(TargetContext::new(path).with_project_root(&project.root_path)),
         ));
     }
 
@@ -130,6 +143,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::weak_name_only(TARGET_DIR_NAME)?,
+            target_context(path, project),
         ));
     }
 
@@ -137,6 +151,16 @@ pub(crate) fn classify_target_candidate_with_overrides(
         path.to_path_buf(),
         SkipReason::NotRecognized,
     ))
+}
+
+fn target_context(path: &Path, project: Option<&CargoProject>) -> Option<TargetContext> {
+    let mut target_context = TargetContext::new(path);
+
+    if let Some(project) = project {
+        target_context = target_context.with_project_root(&project.root_path);
+    }
+
+    Some(target_context)
 }
 
 fn lexically_normalize(path: impl AsRef<Path>) -> PathBuf {

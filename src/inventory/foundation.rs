@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::classifier::classify_target_relative_path;
 use crate::error::{ReclaimError, ReclaimResult};
 use crate::model::TargetEvidence;
-use crate::planner::PlannerCandidate;
+use crate::planner::{PlannerCandidate, TargetContext};
 
 use super::snapshot::snapshot_target_relative_path_from_normalized_child;
 
@@ -19,11 +19,34 @@ pub fn planner_candidate_from_target_relative_path(
     options: &InventoryOptions,
 ) -> ReclaimResult<PlannerCandidate> {
     let child_path = normalize_target_relative_child(child_path.as_ref())?;
+    let target_root = target_root.as_ref();
     let snapshot =
         snapshot_target_relative_path_from_normalized_child(target_root, &child_path, options)?;
     let artifact_class = classify_target_relative_path(&child_path);
 
-    Ok(PlannerCandidate::new(snapshot, artifact_class, evidence))
+    Ok(
+        PlannerCandidate::new(snapshot, artifact_class, evidence.clone())
+            .with_target_context(target_context_from_evidence(target_root, &evidence)),
+    )
+}
+
+pub fn planner_candidate_from_target_relative_path_with_context(
+    target_root: impl AsRef<Path>,
+    child_path: impl AsRef<Path>,
+    evidence: TargetEvidence,
+    target_context: TargetContext,
+    options: &InventoryOptions,
+) -> ReclaimResult<PlannerCandidate> {
+    let child_path = normalize_target_relative_child(child_path.as_ref())?;
+    let snapshot = snapshot_target_relative_path_from_normalized_child(
+        target_root.as_ref(),
+        &child_path,
+        options,
+    )?;
+    let artifact_class = classify_target_relative_path(&child_path);
+
+    Ok(PlannerCandidate::new(snapshot, artifact_class, evidence)
+        .with_target_context(target_context))
 }
 
 pub(super) fn normalize_target_relative_child(child_path: &Path) -> ReclaimResult<PathBuf> {
@@ -55,4 +78,19 @@ pub(super) fn normalize_target_relative_child(child_path: &Path) -> ReclaimResul
     }
 
     Ok(normalized)
+}
+
+pub(super) fn target_context_from_evidence(
+    target_root: &Path,
+    evidence: &TargetEvidence,
+) -> TargetContext {
+    let mut target_context = TargetContext::new(target_root);
+
+    if let TargetEvidence::ProjectContext { project_manifest } = evidence
+        && let Some(project_root) = project_manifest.parent()
+    {
+        target_context = target_context.with_project_root(project_root);
+    }
+
+    target_context
 }

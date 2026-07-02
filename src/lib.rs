@@ -42,12 +42,15 @@ pub use executor::{
     validate_persisted_plan_for_apply,
 };
 pub use integration::{
-    build_plan_from_roots, build_plan_from_roots_with_options, build_plan_from_scan_items,
+    BuildPlanFromScanItemsRequest, build_plan_from_roots,
+    build_plan_from_roots_with_active_observation, build_plan_from_roots_with_options,
+    build_plan_from_scan_items, build_plan_from_scan_items_with_active_observation,
     build_plan_from_scan_items_with_options,
 };
 pub use inventory::{
     InventoryOptions, planner_candidate_from_target_relative_path,
-    planner_candidates_from_target_root, snapshot_target_relative_path,
+    planner_candidate_from_target_relative_path_with_context, planner_candidates_from_target_root,
+    planner_candidates_from_target_root_with_context, snapshot_target_relative_path,
 };
 pub use model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
@@ -63,7 +66,9 @@ pub use persistence::{
 };
 pub use plan_edit::{PlanEditError, PlanEditReport, PlanEditRequest, edit_persisted_plan};
 pub use planner::{
-    PlannerCandidate, PlannerOptions, build_plan, build_plan_with_options, plan_candidate,
+    ActiveObservation, CargoTool, ObservedCargoProcess, PlannerCandidate, PlannerOptions,
+    ProcessView, TargetContext, build_plan, build_plan_with_active_observation,
+    build_plan_with_options, plan_candidate, plan_candidate_with_active_observation,
     plan_candidate_with_options,
 };
 pub use policy::PolicyKind;

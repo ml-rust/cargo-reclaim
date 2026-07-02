@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    ArtifactClass, InventoryOptions, PlanAction, PlannerOptions, PolicyKind, ScannerOptions,
-    TargetCandidate, TargetCandidateKind, TargetEvidence, build_plan_from_roots,
+    ActiveObservation, ArtifactClass, CargoTool, InventoryOptions, ObservedCargoProcess,
+    PlanAction, PlannerOptions, PolicyKind, ScannerOptions, TargetCandidate, TargetCandidateKind,
+    TargetEvidence, build_plan_from_roots, build_plan_from_roots_with_active_observation,
     build_plan_from_roots_with_options, build_plan_from_scan_items,
     planner_candidates_from_target_root,
 };
@@ -133,6 +134,35 @@ fn recent_write_keep_window_skips_scanned_delete_candidates() -> Result<(), Box<
 }
 
 #[test]
+fn active_project_observation_skips_scanned_delete_candidates() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_active_observation")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots_with_active_observation(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions::default(),
+        &ActiveObservation::complete([
+            ObservedCargoProcess::new(CargoTool::Cargo).with_cwd(temp.path().join("member"))
+        ]),
+        SystemTime::now(),
+    )?;
+
+    let incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
+    assert_eq!(incremental.action, PlanAction::SkipActive);
+    assert_eq!(plan.totals.delete_candidate_count, 0);
+    assert_eq!(plan.totals.preserved_count, 1);
+    Ok(())
+}
+
+#[test]
 fn protected_outputs_are_preserved_from_scanned_target_contents() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_protected_outputs")?;
     write_manifest(temp.path())?;
@@ -224,6 +254,7 @@ fn lower_level_scan_item_planning_still_requires_explicit_weak_target_option()
         path: target.clone(),
         kind: TargetCandidateKind::CargoTargetDir,
         evidence: Some(TargetEvidence::weak_name_only("target")?),
+        target_context: None,
         skip_reason: None,
     });
 

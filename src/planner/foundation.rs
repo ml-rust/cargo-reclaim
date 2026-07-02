@@ -4,18 +4,20 @@ use crate::ReclaimResult;
 use crate::model::{ArtifactClass, PlanAction, PlanEntry};
 use crate::policy::PolicyKind;
 
-use super::{PlannerCandidate, PlannerOptions};
+use super::{ActiveObservation, PlannerCandidate, PlannerOptions, ProcessView, TargetContext};
 
 pub(super) fn plan_candidate_for_policy(
     policy: PolicyKind,
     candidate: PlannerCandidate,
     options: &PlannerOptions,
+    active_observation: &ActiveObservation,
     now: SystemTime,
 ) -> ReclaimResult<PlanEntry> {
     let PlannerCandidate {
         snapshot,
         artifact_class,
         evidence,
+        target_context,
     } = candidate;
 
     if artifact_class == ArtifactClass::Unknown {
@@ -78,6 +80,17 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
+    if let Some(reason) = active_skip_reason(target_context.as_ref(), active_observation) {
+        return PlanEntry::new(
+            snapshot,
+            artifact_class,
+            evidence,
+            PlanAction::SkipActive,
+            reason,
+            false,
+        );
+    }
+
     if policy.allows_delete(&PlanAction::Delete, artifact_class, &evidence) {
         return PlanEntry::delete(
             snapshot,
@@ -94,6 +107,52 @@ pub(super) fn plan_candidate_for_policy(
         evidence,
         "artifact class is not removable for the selected policy",
     )
+}
+
+fn active_skip_reason(
+    target_context: Option<&TargetContext>,
+    active_observation: &ActiveObservation,
+) -> Option<String> {
+    let target_context = target_context?;
+
+    match &active_observation.process_view {
+        ProcessView::NotAttempted => None,
+        ProcessView::PermissionLimited { reason } => Some(format!(
+            "process inspection was permission-limited for active project detection: {}",
+            non_empty_observation_reason(reason)
+        )),
+        ProcessView::Failed { reason } => Some(format!(
+            "process inspection failed for active project detection: {}",
+            non_empty_observation_reason(reason)
+        )),
+        ProcessView::Complete { processes } => processes
+            .iter()
+            .find_map(|process| target_context.active_match(process))
+            .map(|active_match| match active_match {
+                super::active::ActiveMatch::CwdUnderProject { cwd, project_root } => format!(
+                    "observed Cargo or rustc process cwd {} is under project root {}",
+                    cwd.display(),
+                    project_root.display()
+                ),
+                super::active::ActiveMatch::ReferencedPathOverlapsRoot {
+                    referenced_path,
+                    root,
+                } => format!(
+                    "observed Cargo or rustc process path {} overlaps build root {}",
+                    referenced_path.display(),
+                    root.display()
+                ),
+            }),
+    }
+}
+
+fn non_empty_observation_reason(reason: &str) -> &str {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        "reason unavailable"
+    } else {
+        reason
+    }
 }
 
 fn is_recently_modified(

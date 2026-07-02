@@ -6,13 +6,27 @@ use std::path::{Path, PathBuf};
 use crate::classifier::classify_target_relative_path;
 use crate::error::{ReclaimError, ReclaimResult};
 use crate::model::{ArtifactClass, TargetEvidence};
-use crate::planner::PlannerCandidate;
+use crate::planner::{PlannerCandidate, TargetContext};
 
-use super::foundation::{InventoryOptions, planner_candidate_from_target_relative_path};
+use super::foundation::{
+    InventoryOptions, planner_candidate_from_target_relative_path_with_context,
+    target_context_from_evidence,
+};
 
 pub fn planner_candidates_from_target_root(
     target_root: impl AsRef<Path>,
     evidence: TargetEvidence,
+    options: &InventoryOptions,
+) -> ReclaimResult<Vec<PlannerCandidate>> {
+    let target_root = target_root.as_ref();
+    let target_context = target_context_from_evidence(target_root, &evidence);
+    planner_candidates_from_target_root_with_context(target_root, evidence, target_context, options)
+}
+
+pub fn planner_candidates_from_target_root_with_context(
+    target_root: impl AsRef<Path>,
+    evidence: TargetEvidence,
+    target_context: TargetContext,
     options: &InventoryOptions,
 ) -> ReclaimResult<Vec<PlannerCandidate>> {
     let target_root = target_root.as_ref();
@@ -37,6 +51,7 @@ pub fn planner_candidates_from_target_root(
             target_root,
             PathBuf::from(child_name),
             &evidence,
+            &target_context,
             options,
             &mut visited_dirs,
             &mut candidates,
@@ -50,6 +65,7 @@ fn collect_child_candidates(
     target_root: &Path,
     child_path: PathBuf,
     evidence: &TargetEvidence,
+    target_context: &TargetContext,
     options: &InventoryOptions,
     visited_dirs: &mut HashSet<PathBuf>,
     candidates: &mut Vec<PlannerCandidate>,
@@ -70,10 +86,11 @@ fn collect_child_candidates(
 
     let artifact_class = classify_target_relative_path(&child_path);
     if metadata.is_file() || artifact_class != ArtifactClass::Unknown {
-        candidates.push(planner_candidate_from_target_relative_path(
+        candidates.push(planner_candidate_from_target_relative_path_with_context(
             target_root,
             child_path,
             evidence.clone(),
+            target_context.clone(),
             options,
         )?);
         return Ok(());
@@ -95,6 +112,7 @@ fn collect_child_candidates(
                 target_root,
                 child_path.join(file_name),
                 evidence,
+                target_context,
                 options,
                 visited_dirs,
                 candidates,
@@ -102,10 +120,11 @@ fn collect_child_candidates(
         }
 
         if candidates.len() == candidate_count_before {
-            candidates.push(planner_candidate_from_target_relative_path(
+            candidates.push(planner_candidate_from_target_relative_path_with_context(
                 target_root,
                 child_path,
                 evidence.clone(),
+                target_context.clone(),
                 options,
             )?);
         }
