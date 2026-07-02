@@ -423,6 +423,7 @@ enum CliError {
     PlanEdit(cargo_reclaim::PlanEditError),
     Scheduler(cargo_reclaim::SchedulerError),
     CargoHome(cargo_reclaim::CargoHomeError),
+    BackgroundRunner(cargo_reclaim::BackgroundRunnerError),
 }
 
 impl std::fmt::Display for CliError {
@@ -437,6 +438,7 @@ impl std::fmt::Display for CliError {
             Self::PlanEdit(error) => error.fmt(formatter),
             Self::Scheduler(error) => error.fmt(formatter),
             Self::CargoHome(error) => error.fmt(formatter),
+            Self::BackgroundRunner(error) => error.fmt(formatter),
         }
     }
 }
@@ -453,7 +455,7 @@ impl CliError {
             | Self::Json(_)
             | Self::Persistence(_) => ExitCode::FAILURE,
             Self::Scheduler(_) => ExitCode::from(2),
-            Self::CargoHome(_) => ExitCode::FAILURE,
+            Self::CargoHome(_) | Self::BackgroundRunner(_) => ExitCode::FAILURE,
             Self::PlanEdit(error) => match error {
                 cargo_reclaim::PlanEditError::NoEdits
                 | cargo_reclaim::PlanEditError::ConflictingEdit { .. }
@@ -510,6 +512,12 @@ impl From<cargo_reclaim::CargoHomeError> for CliError {
 impl From<cargo_reclaim::SchedulerError> for CliError {
     fn from(error: cargo_reclaim::SchedulerError) -> Self {
         Self::Scheduler(error)
+    }
+}
+
+impl From<cargo_reclaim::BackgroundRunnerError> for CliError {
+    fn from(error: cargo_reclaim::BackgroundRunnerError) -> Self {
+        Self::BackgroundRunner(error)
     }
 }
 

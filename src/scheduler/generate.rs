@@ -4,7 +4,7 @@ use crate::PolicyKind;
 
 use super::model::{
     GeneratedArtifact, GeneratedArtifactKind, SchedulerError, SchedulerMode, SchedulerPlatform,
-    SchedulerReport, SchedulerRequest, policy_label,
+    SchedulerReport, SchedulerRequest, mode_label,
 };
 use super::paths::SchedulerPaths;
 
@@ -135,57 +135,47 @@ fn task_scheduler_artifacts(
     ]
 }
 
-fn shell_runner(request: &SchedulerRequest, policy: PolicyKind, paths: &SchedulerPaths) -> String {
-    let plan_command = format!(
-        "{} plan --config {} --policy {} --save-plan \"$PLAN_PATH\" --expires-in 1h --json >> \"$LOG_PATH\" 2>&1",
-        shell_quote(&request.cargo_reclaim_bin),
-        shell_quote(&request.config_path),
-        shell_quote_str(policy_label(policy))
-    );
-    let apply_command = if request.mode == SchedulerMode::Cleanup {
-        format!(
-            "\n{} apply --plan \"$PLAN_PATH\" --yes --json >> \"$LOG_PATH\" 2>&1",
-            shell_quote(&request.cargo_reclaim_bin)
-        )
+fn shell_runner(request: &SchedulerRequest, _policy: PolicyKind, paths: &SchedulerPaths) -> String {
+    let apply_flag = if request.mode == SchedulerMode::Cleanup {
+        " --allow-apply"
     } else {
-        String::new()
+        ""
     };
 
     format!(
-        "#!/bin/sh\nset -eu\nSTATE_DIR={}\nLOG_DIR={}\nPLANS_DIR={}\nLOG_PATH={}\nmkdir -p \"$PLANS_DIR\" \"$LOG_DIR\"\nSTAMP=\"$(date -u +%Y%m%dT%H%M%SZ)\"\nPLAN_PATH=\"$PLANS_DIR/cargo-reclaim-$STAMP.json\"\n{}{}\n",
+        "#!/bin/sh\nset -eu\nSTATE_DIR={}\nLOG_DIR={}\nPLANS_DIR={}\nLOG_PATH={}\nRUN_LOG_PATH=\"$LOG_DIR/runs.jsonl\"\nmkdir -p \"$PLANS_DIR\" \"$LOG_DIR\"\nSTAMP=\"$(date -u +%Y%m%dT%H%M%SZ)\"\nRUN_ID=\"scheduler-$STAMP\"\nPLAN_PATH=\"$PLANS_DIR/cargo-reclaim-$STAMP.json\"\n{} scheduler run --config {} --run-id \"$RUN_ID\" --log-path \"$RUN_LOG_PATH\" --plan-path \"$PLAN_PATH\" --mode {}{} --json >> \"$LOG_PATH\" 2>&1\n",
         shell_quote(&paths.state_dir),
         shell_quote(&paths.log_dir),
         shell_quote(&paths.plans_dir),
         shell_quote(&paths.log_path),
-        plan_command,
-        apply_command
+        shell_quote(&request.cargo_reclaim_bin),
+        shell_quote(&request.config_path),
+        shell_quote_str(mode_label(request.mode)),
+        apply_flag
     )
 }
 
 fn powershell_runner(
     request: &SchedulerRequest,
-    policy: PolicyKind,
+    _policy: PolicyKind,
     paths: &SchedulerPaths,
 ) -> String {
-    let apply_command = if request.mode == SchedulerMode::Cleanup {
-        format!(
-            "\n& {} apply --plan $PlanPath --yes --json *>> $LogPath",
-            powershell_quote(&request.cargo_reclaim_bin)
-        )
+    let apply_flag = if request.mode == SchedulerMode::Cleanup {
+        " --allow-apply"
     } else {
-        String::new()
+        ""
     };
 
     format!(
-        "$ErrorActionPreference = 'Stop'\n$StateDir = {}\n$LogDir = {}\n$PlansDir = {}\n$LogPath = {}\nNew-Item -ItemType Directory -Force -Path $PlansDir, $LogDir | Out-Null\n$Stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')\n$PlanPath = Join-Path $PlansDir \"cargo-reclaim-$Stamp.json\"\n& {} plan --config {} --policy {} --save-plan $PlanPath --expires-in 1h --json *>> $LogPath{}\n",
+        "$ErrorActionPreference = 'Stop'\n$StateDir = {}\n$LogDir = {}\n$PlansDir = {}\n$LogPath = {}\n$RunLogPath = Join-Path $LogDir \"runs.jsonl\"\nNew-Item -ItemType Directory -Force -Path $PlansDir, $LogDir | Out-Null\n$Stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')\n$RunId = \"scheduler-$Stamp\"\n$PlanPath = Join-Path $PlansDir \"cargo-reclaim-$Stamp.json\"\n& {} scheduler run --config {} --run-id $RunId --log-path $RunLogPath --plan-path $PlanPath --mode {}{} --json *>> $LogPath\n",
         powershell_quote(&paths.state_dir),
         powershell_quote(&paths.log_dir),
         powershell_quote(&paths.plans_dir),
         powershell_quote(&paths.log_path),
         powershell_quote(&request.cargo_reclaim_bin),
         powershell_quote(&request.config_path),
-        powershell_quote_str(policy_label(policy)),
-        apply_command
+        powershell_quote_str(mode_label(request.mode)),
+        apply_flag
     )
 }
 

@@ -229,6 +229,59 @@ fn uninstall_dry_run_json_reports_removal_plan() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn run_json_builds_plan_and_appends_run_log() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_run")?;
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join("target/debug/incremental"))?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    fs::write(project.join("target/debug/incremental/cache.bin"), b"cache")?;
+    let config_path = write_config(
+        temp.path(),
+        &format!("roots = [{}]\n", toml_string(&project)),
+    )?;
+    let log_path = temp.path().join("scheduler.jsonl");
+    let plan_path = temp.path().join("plans/run.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "run", "--config"])
+        .arg(&config_path)
+        .args(["--run-id", "run-test", "--log-path"])
+        .arg(&log_path)
+        .arg("--plan-path")
+        .arg(&plan_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["command"], "scheduler-run");
+    assert_eq!(document["run_id"], "run-test");
+    assert!(document["plan_id"].as_str().is_some());
+    assert!(plan_path.is_file());
+    let log = fs::read_to_string(log_path)?;
+    assert!(log.lines().count() >= 3);
+    assert!(log.contains("\"run_id\":\"run-test\""));
+    Ok(())
+}
+
+#[test]
+fn run_missing_required_flags_exit_usage_code() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_run_usage")?;
+    let config_path = write_config(temp.path(), "")?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "run", "--config"])
+        .arg(&config_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("scheduler run requires --run-id"));
+    Ok(())
+}
+
+#[test]
 fn help_lists_scheduler_dry_run_operation_commands() -> Result<(), Box<dyn Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .arg("--help")
@@ -246,6 +299,10 @@ fn write_config(path: &Path, body: &str) -> Result<PathBuf, Box<dyn Error>> {
     let config_path = path.join("reclaim.toml");
     fs::write(&config_path, format!("version = 1\n{body}"))?;
     Ok(config_path)
+}
+
+fn toml_string(path: &Path) -> String {
+    format!("\"{}\"", path.display().to_string().replace('\\', "\\\\"))
 }
 
 struct TestTemp {

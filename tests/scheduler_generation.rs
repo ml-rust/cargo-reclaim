@@ -89,11 +89,22 @@ fn generated_runner_uses_explicit_config_policy_and_timestamped_plan()
         .iter()
         .find(|artifact| artifact.kind == GeneratedArtifactKind::RunnerScript)
         .expect("runner artifact");
-    assert!(runner.contents.contains(" plan --config "));
-    assert!(runner.contents.contains(" --policy 'observe' "));
-    assert!(runner.contents.contains(" --expires-in 1h "));
+    assert!(runner.contents.contains(" scheduler run "));
+    assert!(runner.contents.contains(" --config "));
+    assert!(runner.contents.contains(" --run-id "));
+    assert!(runner.contents.contains(" --log-path "));
+    assert!(runner.contents.contains(" --plan-path "));
     assert!(runner.contents.contains(" --json "));
+    assert!(
+        runner
+            .contents
+            .contains("RUN_LOG_PATH=\"$LOG_DIR/runs.jsonl\"")
+    );
+    assert!(runner.contents.contains("--log-path \"$RUN_LOG_PATH\""));
+    assert!(!runner.contents.contains("--log-path \"$LOG_PATH\""));
     assert!(runner.contents.contains("cargo-reclaim-$STAMP.json"));
+    assert!(!runner.contents.contains(" apply --plan "));
+    assert!(!runner.contents.contains(" plan --config "));
     assert!(!runner.contents.contains(" last"));
     Ok(())
 }
