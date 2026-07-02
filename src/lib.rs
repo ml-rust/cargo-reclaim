@@ -1,6 +1,7 @@
 pub mod classifier;
 pub mod error;
 pub mod model;
+pub mod planner;
 pub mod policy;
 pub mod scanner;
 
@@ -10,6 +11,7 @@ pub use model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathSnapshot, Plan, PlanAction, PlanEntry, PlanInput,
     PlanTotals, TargetEvidence,
 };
+pub use planner::{PlannerCandidate, build_plan, plan_candidate};
 pub use policy::PolicyKind;
 pub use scanner::{
     CargoProject, ScannerOptions, SkipReason, TargetCandidate, TargetCandidateKind,
