@@ -1,8 +1,9 @@
 use std::io::Write;
 
 use cargo_reclaim::{
-    GeneratedArtifact, SchedulerOperationPlan, SchedulerPlanStep, SchedulerReport,
-    artifact_kind_label, mode_label, operation_label, platform_label, policy_label,
+    GeneratedArtifact, SchedulerExecutionReport, SchedulerExecutionStep, SchedulerOperationPlan,
+    SchedulerPlanStep, SchedulerReport, artifact_kind_label, execution_status_label, mode_label,
+    operation_label, platform_label, policy_label,
 };
 use serde::Serialize;
 
@@ -79,6 +80,38 @@ pub(super) fn write_operation_json(
     Ok(())
 }
 
+pub(super) fn write_execution_terminal(
+    output: &mut impl Write,
+    report: &SchedulerExecutionReport,
+) -> Result<(), CliError> {
+    writeln!(
+        output,
+        "cargo-reclaim scheduler {}",
+        operation_label(report.operation)
+    )?;
+    writeln!(output, "platform: {}", platform_label(report.platform))?;
+    writeln!(output, "artifacts: {}", report.artifacts.len())?;
+    writeln!(
+        output,
+        "steps: {} applied, {} skipped, {} failed, {} blocked",
+        report.totals.applied, report.totals.skipped, report.totals.failed, report.totals.blocked
+    )?;
+    for step in &report.steps {
+        write_execution_step(output, step)?;
+    }
+    Ok(())
+}
+
+pub(super) fn write_execution_json(
+    output: &mut impl Write,
+    report: &SchedulerExecutionReport,
+) -> Result<(), CliError> {
+    let document = JsonSchedulerExecutionReport::from_report(report);
+    serde_json::to_writer(&mut *output, &document)?;
+    writeln!(output)?;
+    Ok(())
+}
+
 fn write_step(output: &mut impl Write, step: &SchedulerPlanStep) -> Result<(), CliError> {
     match step {
         SchedulerPlanStep::EnsureDir { path } => {
@@ -101,6 +134,30 @@ fn write_step(output: &mut impl Write, step: &SchedulerPlanStep) -> Result<(), C
         }
         SchedulerPlanStep::RunCommand { argv } => {
             writeln!(output, "run-command\t{}", argv.join("\t"))?
+        }
+    }
+    Ok(())
+}
+
+fn write_execution_step(
+    output: &mut impl Write,
+    step: &SchedulerExecutionStep,
+) -> Result<(), CliError> {
+    write!(output, "{}\t", execution_status_label(step.status))?;
+    write_step(output, &step.step)?;
+    if let Some(message) = &step.message {
+        writeln!(output, "message\t{message}")?;
+    }
+    if let Some(command_output) = &step.command_output {
+        match command_output.exit_code {
+            Some(code) => writeln!(output, "exit-code\t{code}")?,
+            None => writeln!(output, "exit-code\tunknown")?,
+        }
+        if !command_output.stdout.is_empty() {
+            writeln!(output, "stdout\t{}", command_output.stdout)?;
+        }
+        if !command_output.stderr.is_empty() {
+            writeln!(output, "stderr\t{}", command_output.stderr)?;
         }
     }
     Ok(())
@@ -163,6 +220,52 @@ impl<'a> JsonSchedulerOperationPlan<'a> {
 }
 
 #[derive(Serialize)]
+struct JsonSchedulerExecutionReport<'a> {
+    command: &'static str,
+    operation: &'static str,
+    dry_run: bool,
+    platform: &'static str,
+    artifacts: Vec<JsonArtifact<'a>>,
+    totals: JsonExecutionTotals,
+    steps: Vec<JsonExecutionStep<'a>>,
+}
+
+impl<'a> JsonSchedulerExecutionReport<'a> {
+    fn from_report(report: &'a SchedulerExecutionReport) -> Self {
+        Self {
+            command: report.command,
+            operation: operation_label(report.operation),
+            dry_run: report.dry_run,
+            platform: platform_label(report.platform),
+            artifacts: report
+                .artifacts
+                .iter()
+                .map(JsonArtifact::from_artifact)
+                .collect(),
+            totals: JsonExecutionTotals {
+                applied: report.totals.applied,
+                skipped: report.totals.skipped,
+                failed: report.totals.failed,
+                blocked: report.totals.blocked,
+            },
+            steps: report
+                .steps
+                .iter()
+                .map(JsonExecutionStep::from_step)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonExecutionTotals {
+    applied: usize,
+    skipped: usize,
+    failed: usize,
+    blocked: usize,
+}
+
+#[derive(Serialize)]
 struct JsonArtifact<'a> {
     kind: &'static str,
     intended_install_path: String,
@@ -198,6 +301,47 @@ enum JsonStep<'a> {
     RunCommand {
         argv: &'a [String],
     },
+}
+
+#[derive(Serialize)]
+struct JsonExecutionStep<'a> {
+    status: &'static str,
+    step: JsonStep<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command_output: Option<JsonCommandOutput<'a>>,
+}
+
+impl<'a> JsonExecutionStep<'a> {
+    fn from_step(step: &'a SchedulerExecutionStep) -> Self {
+        Self {
+            status: execution_status_label(step.status),
+            step: JsonStep::from_step(&step.step),
+            message: step.message.as_deref(),
+            command_output: step
+                .command_output
+                .as_ref()
+                .map(JsonCommandOutput::from_output),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonCommandOutput<'a> {
+    exit_code: Option<i32>,
+    stdout: &'a str,
+    stderr: &'a str,
+}
+
+impl<'a> JsonCommandOutput<'a> {
+    fn from_output(output: &'a cargo_reclaim::SchedulerCommandOutput) -> Self {
+        Self {
+            exit_code: output.exit_code,
+            stdout: &output.stdout,
+            stderr: &output.stderr,
+        }
+    }
 }
 
 impl<'a> JsonStep<'a> {

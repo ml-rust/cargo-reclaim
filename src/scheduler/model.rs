@@ -131,6 +131,54 @@ pub enum SchedulerPlanStep {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerExecutionReport {
+    pub command: &'static str,
+    pub operation: SchedulerOperation,
+    pub dry_run: bool,
+    pub platform: SchedulerPlatform,
+    pub artifacts: Vec<GeneratedArtifact>,
+    pub steps: Vec<SchedulerExecutionStep>,
+    pub totals: SchedulerExecutionTotals,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerExecutionStep {
+    pub step: SchedulerPlanStep,
+    pub status: SchedulerExecutionStatus,
+    pub message: Option<String>,
+    pub command_output: Option<SchedulerCommandOutput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchedulerExecutionStatus {
+    Applied,
+    Skipped,
+    Failed,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SchedulerExecutionTotals {
+    pub applied: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub blocked: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerCommandOutput {
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl SchedulerExecutionReport {
+    pub fn succeeded(&self) -> bool {
+        self.totals.failed == 0 && self.totals.blocked == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchedulerError {
     InvalidSchedule(String),
     CleanupNotAllowed,
@@ -187,6 +235,15 @@ pub fn operation_label(operation: SchedulerOperation) -> &'static str {
     match operation {
         SchedulerOperation::Install => "install",
         SchedulerOperation::Uninstall => "uninstall",
+    }
+}
+
+pub fn execution_status_label(status: SchedulerExecutionStatus) -> &'static str {
+    match status {
+        SchedulerExecutionStatus::Applied => "applied",
+        SchedulerExecutionStatus::Skipped => "skipped",
+        SchedulerExecutionStatus::Failed => "failed",
+        SchedulerExecutionStatus::Blocked => "blocked",
     }
 }
 

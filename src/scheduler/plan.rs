@@ -66,6 +66,9 @@ pub fn plan_scheduler_uninstall(
                 path: artifact.intended_install_path.clone(),
             }),
     );
+    if platform == SchedulerPlatform::SystemdUser {
+        steps.push(run_command(["systemctl", "--user", "daemon-reload"]));
+    }
 
     Ok(SchedulerOperationPlan {
         command: "scheduler-uninstall",
@@ -205,16 +208,13 @@ fn install_commands(
 
 fn uninstall_commands(platform: SchedulerPlatform) -> Vec<SchedulerPlanStep> {
     match platform {
-        SchedulerPlatform::SystemdUser => vec![
-            run_command([
-                "systemctl",
-                "--user",
-                "disable",
-                "--now",
-                "cargo-reclaim.timer",
-            ]),
-            run_command(["systemctl", "--user", "daemon-reload"]),
-        ],
+        SchedulerPlatform::SystemdUser => vec![run_command([
+            "systemctl",
+            "--user",
+            "disable",
+            "--now",
+            "cargo-reclaim.timer",
+        ])],
         SchedulerPlatform::Launchd => {
             vec![run_command(["launchctl", "remove", "com.cargo-reclaim"])]
         }

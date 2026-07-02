@@ -277,6 +277,14 @@ fn systemd_uninstall_plan_disables_timer_and_removes_known_files()
     assert!(has_remove_step(&plan.steps, "scheduler-runner.sh"));
     assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
     assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    assert!(matches!(
+        plan.steps.last(),
+        Some(SchedulerPlanStep::RunCommand { argv })
+            if argv
+                .iter()
+                .map(String::as_str)
+                .eq(["systemctl", "--user", "daemon-reload"])
+    ));
     Ok(())
 }
 

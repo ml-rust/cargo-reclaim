@@ -229,32 +229,6 @@ fn uninstall_dry_run_json_reports_removal_plan() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn install_and_uninstall_without_dry_run_exit_usage_code() -> Result<(), Box<dyn Error>> {
-    let temp = TestTemp::new("cli_scheduler_non_dry_run")?;
-    let config_path = write_config(temp.path(), "")?;
-
-    for subcommand in ["install", "uninstall"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
-            .args([
-                "scheduler",
-                subcommand,
-                "--platform",
-                "systemd-user",
-                "--config",
-            ])
-            .arg(&config_path)
-            .output()?;
-
-        assert_eq!(output.status.code(), Some(2), "{subcommand}");
-        assert!(
-            String::from_utf8(output.stderr)?
-                .contains(&format!("scheduler {subcommand} requires --dry-run"))
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn help_lists_scheduler_dry_run_operation_commands() -> Result<(), Box<dyn Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .arg("--help")
