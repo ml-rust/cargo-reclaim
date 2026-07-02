@@ -76,7 +76,10 @@ pub use scanner::{
 };
 pub use scheduler::{
     GeneratedArtifact, GeneratedArtifactKind, Schedule, SchedulerError, SchedulerMode,
-    SchedulerPlatform, SchedulerReport, SchedulerRequest, generate_scheduler_artifacts,
+    SchedulerOperation, SchedulerOperationPlan, SchedulerPlanStep, SchedulerPlatform,
+    SchedulerReport, SchedulerRequest, artifact_kind_label, generate_scheduler_artifacts,
+    mode_label, operation_label, plan_scheduler_install, plan_scheduler_uninstall, platform_label,
+    policy_label,
 };
 pub use watcher::{
     WatcherDecision, WatcherDecisionInput, WatcherDecisionState, WatcherMode,

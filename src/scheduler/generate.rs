@@ -6,6 +6,7 @@ use super::model::{
     GeneratedArtifact, GeneratedArtifactKind, SchedulerError, SchedulerMode, SchedulerPlatform,
     SchedulerReport, SchedulerRequest, policy_label,
 };
+use super::paths::SchedulerPaths;
 
 pub fn generate_scheduler_artifacts(
     request: SchedulerRequest,
@@ -51,73 +52,6 @@ fn effective_policy(request: &SchedulerRequest) -> Result<PolicyKind, SchedulerE
     }
 }
 
-struct SchedulerPaths {
-    state_dir: PathBuf,
-    log_dir: PathBuf,
-    plans_dir: PathBuf,
-    runner_path: PathBuf,
-    log_path: PathBuf,
-}
-
-impl SchedulerPaths {
-    fn new(request: &SchedulerRequest) -> Self {
-        let state_dir = request
-            .state_dir
-            .clone()
-            .unwrap_or_else(|| default_state_dir(request.platform));
-        let log_dir = request
-            .log_dir
-            .clone()
-            .unwrap_or_else(|| default_log_dir(request.platform));
-        let runner_path = match request.platform {
-            SchedulerPlatform::SystemdUser => state_dir.join("scheduler-runner.sh"),
-            SchedulerPlatform::Launchd => state_dir.join("scheduler-runner.sh"),
-            SchedulerPlatform::TaskScheduler => state_dir.join("scheduler-runner.ps1"),
-        };
-        Self {
-            plans_dir: state_dir.join("plans"),
-            log_path: log_dir.join("scheduler.log"),
-            state_dir,
-            log_dir,
-            runner_path,
-        }
-    }
-}
-
-fn default_state_dir(platform: SchedulerPlatform) -> PathBuf {
-    match platform {
-        SchedulerPlatform::SystemdUser => home_dir()
-            .map(|home| home.join(".local/state/cargo-reclaim"))
-            .unwrap_or_else(|| PathBuf::from(".cargo-reclaim/state")),
-        SchedulerPlatform::Launchd => home_dir()
-            .map(|home| home.join("Library/Application Support/cargo-reclaim"))
-            .unwrap_or_else(|| PathBuf::from("cargo-reclaim/Application Support")),
-        SchedulerPlatform::TaskScheduler => local_app_data_dir()
-            .map(|local_app_data| local_app_data.join("cargo-reclaim"))
-            .unwrap_or_else(|| PathBuf::from(r"cargo-reclaim")),
-    }
-}
-
-fn default_log_dir(platform: SchedulerPlatform) -> PathBuf {
-    match platform {
-        SchedulerPlatform::SystemdUser => default_state_dir(platform).join("logs"),
-        SchedulerPlatform::Launchd => home_dir()
-            .map(|home| home.join("Library/Logs/cargo-reclaim"))
-            .unwrap_or_else(|| PathBuf::from("cargo-reclaim/logs")),
-        SchedulerPlatform::TaskScheduler => default_state_dir(platform).join("logs"),
-    }
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
-fn local_app_data_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-}
-
 fn systemd_artifacts(
     request: &SchedulerRequest,
     policy: PolicyKind,
@@ -131,9 +65,7 @@ fn systemd_artifacts(
         },
         GeneratedArtifact {
             kind: GeneratedArtifactKind::SystemdService,
-            intended_install_path: home_dir()
-                .map(|home| home.join(".config/systemd/user/cargo-reclaim.service"))
-                .unwrap_or_else(|| PathBuf::from(".config/systemd/user/cargo-reclaim.service")),
+            intended_install_path: paths.systemd_service_path(),
             contents: format!(
                 "[Unit]\nDescription=cargo-reclaim scheduled run\n\n[Service]\nType=oneshot\nExecStart={}\n",
                 systemd_quote(&paths.runner_path)
@@ -141,9 +73,7 @@ fn systemd_artifacts(
         },
         GeneratedArtifact {
             kind: GeneratedArtifactKind::SystemdTimer,
-            intended_install_path: home_dir()
-                .map(|home| home.join(".config/systemd/user/cargo-reclaim.timer"))
-                .unwrap_or_else(|| PathBuf::from(".config/systemd/user/cargo-reclaim.timer")),
+            intended_install_path: paths.systemd_timer_path(),
             contents: format!(
                 "[Unit]\nDescription=cargo-reclaim scheduled timer\n\n[Timer]\nOnCalendar=*-*-* {:02}:{:02}:00\nPersistent=true\nUnit=cargo-reclaim.service\n\n[Install]\nWantedBy=timers.target\n",
                 request.schedule.hour, request.schedule.minute
@@ -165,9 +95,7 @@ fn launchd_artifacts(
         },
         GeneratedArtifact {
             kind: GeneratedArtifactKind::LaunchdPlist,
-            intended_install_path: home_dir()
-                .map(|home| home.join("Library/LaunchAgents/com.cargo-reclaim.plist"))
-                .unwrap_or_else(|| PathBuf::from("Library/LaunchAgents/com.cargo-reclaim.plist")),
+            intended_install_path: paths.launchd_plist_path(),
             contents: format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.cargo-reclaim</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n  </array>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{}</integer>\n    <key>Minute</key>\n    <integer>{}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>{}</string>\n  <key>StandardErrorPath</key>\n  <string>{}</string>\n</dict>\n</plist>\n",
                 xml_escape(&paths.runner_path),

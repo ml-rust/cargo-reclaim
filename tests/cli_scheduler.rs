@@ -144,7 +144,118 @@ fn unsafe_cleanup_and_high_policy_exit_usage_code() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn help_lists_scheduler_preview_but_not_install_uninstall_commands() -> Result<(), Box<dyn Error>> {
+fn install_dry_run_json_reports_plan_and_does_not_create_files() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_install")?;
+    let config_path = write_config(
+        temp.path(),
+        r#"
+[scheduler]
+state_dir = "state"
+log_dir = "logs"
+"#,
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "scheduler",
+            "install",
+            "--dry-run",
+            "--platform",
+            "systemd-user",
+            "--config",
+        ])
+        .arg(&config_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["command"], "scheduler-install");
+    assert_eq!(document["operation"], "install");
+    assert_eq!(document["dry_run"], true);
+    assert_eq!(document["platform"], "systemd-user");
+    assert!(document["artifacts"].as_array().expect("artifacts").len() >= 3);
+    assert!(
+        document["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .any(|step| {
+                step["kind"] == "run-command"
+                    && step["argv"] == serde_json::json!(["systemctl", "--user", "daemon-reload"])
+            })
+    );
+    assert!(!temp.path().join("state").exists());
+    assert!(!temp.path().join("logs").exists());
+    Ok(())
+}
+
+#[test]
+fn uninstall_dry_run_json_reports_removal_plan() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_uninstall")?;
+    let config_path = write_config(temp.path(), "")?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "scheduler",
+            "uninstall",
+            "--dry-run",
+            "--platform",
+            "launchd",
+            "--config",
+        ])
+        .arg(&config_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["command"], "scheduler-uninstall");
+    assert_eq!(document["operation"], "uninstall");
+    assert!(
+        document["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .any(|step| {
+                step["kind"] == "run-command"
+                    && step["argv"]
+                        == serde_json::json!(["launchctl", "remove", "com.cargo-reclaim"])
+            })
+    );
+    assert!(!temp.path().join("state").exists());
+    assert!(!temp.path().join("logs").exists());
+    Ok(())
+}
+
+#[test]
+fn install_and_uninstall_without_dry_run_exit_usage_code() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_non_dry_run")?;
+    let config_path = write_config(temp.path(), "")?;
+
+    for subcommand in ["install", "uninstall"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args([
+                "scheduler",
+                subcommand,
+                "--platform",
+                "systemd-user",
+                "--config",
+            ])
+            .arg(&config_path)
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2), "{subcommand}");
+        assert!(
+            String::from_utf8(output.stderr)?
+                .contains(&format!("scheduler {subcommand} requires --dry-run"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn help_lists_scheduler_dry_run_operation_commands() -> Result<(), Box<dyn Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .arg("--help")
         .output()?;
@@ -152,8 +263,8 @@ fn help_lists_scheduler_preview_but_not_install_uninstall_commands() -> Result<(
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("scheduler preview"));
-    assert!(!stdout.contains("scheduler install"));
-    assert!(!stdout.contains("scheduler uninstall"));
+    assert!(stdout.contains("scheduler install --dry-run"));
+    assert!(stdout.contains("scheduler uninstall --dry-run"));
     Ok(())
 }
 

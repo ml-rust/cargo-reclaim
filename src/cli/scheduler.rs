@@ -4,43 +4,73 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use cargo_reclaim::{
-    GeneratedArtifact, GeneratedArtifactKind, PolicyKind, Schedule, SchedulerMode,
-    SchedulerPlatform, SchedulerReport, SchedulerRequest, generate_scheduler_artifacts,
-    load_config_from_path,
+    Schedule, SchedulerMode, SchedulerPlatform, SchedulerRequest, generate_scheduler_artifacts,
+    load_config_from_path, plan_scheduler_install, plan_scheduler_uninstall,
 };
-use serde::Serialize;
 
 use super::{CliError, OutputFormat, inline_config_path, next_path, next_value, parse_policy};
+use output::{
+    write_operation_json, write_operation_terminal, write_preview_json, write_preview_terminal,
+};
+
+mod output;
 
 #[derive(Debug)]
-pub(super) struct SchedulerPreviewCommand {
+pub(super) enum SchedulerCommand {
+    Preview(SchedulerRequestCommand),
+    Install(SchedulerRequestCommand),
+    Uninstall(SchedulerRequestCommand),
+}
+
+pub(super) type SchedulerPreviewCommand = SchedulerCommand;
+
+#[derive(Debug)]
+pub(super) struct SchedulerRequestCommand {
     request: SchedulerRequest,
     output_format: OutputFormat,
 }
 
 pub(super) fn parse_scheduler_command(
     args: impl IntoIterator<Item = OsString>,
-) -> Result<SchedulerPreviewCommand, CliError> {
+) -> Result<SchedulerCommand, CliError> {
     let mut args = args.into_iter();
     let Some(subcommand) = args.next() else {
         return Err(CliError::Usage(
-            "scheduler requires `preview`; install and uninstall are not supported".to_string(),
+            "scheduler requires `preview`, `install`, or `uninstall`".to_string(),
         ));
     };
     match subcommand.to_string_lossy().as_ref() {
-        "preview" => parse_scheduler_preview(args),
-        "-h" | "--help" | "help" => Err(CliError::Usage(
-            "usage: cargo-reclaim scheduler preview --platform <systemd-user|launchd|task-scheduler> --config <path>".to_string(),
-        )),
+        "preview" => parse_scheduler_request("preview", args)
+            .map(SchedulerRequestParse::into_request_command)
+            .map(SchedulerCommand::Preview),
+        "install" => parse_scheduler_operation("install", args).map(SchedulerCommand::Install),
+        "uninstall" => {
+            parse_scheduler_operation("uninstall", args).map(SchedulerCommand::Uninstall)
+        }
+        "-h" | "--help" | "help" => Err(CliError::Usage(scheduler_help().to_string())),
         value => Err(CliError::Usage(format!(
-            "unknown scheduler command `{value}`; expected `preview`"
+            "unknown scheduler command `{value}`; expected `preview`, `install`, or `uninstall`"
         ))),
     }
 }
 
-fn parse_scheduler_preview(
+fn parse_scheduler_operation(
+    subcommand: &'static str,
     args: impl IntoIterator<Item = OsString>,
-) -> Result<SchedulerPreviewCommand, CliError> {
+) -> Result<SchedulerRequestCommand, CliError> {
+    let command = parse_scheduler_request(subcommand, args)?;
+    if !command.request_dry_run {
+        return Err(CliError::Usage(format!(
+            "scheduler {subcommand} requires --dry-run; execution is not available yet"
+        )));
+    }
+    Ok(command.into_request_command())
+}
+
+fn parse_scheduler_request(
+    subcommand: &'static str,
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<SchedulerRequestParse, CliError> {
     let mut platform = None;
     let mut config_path = None;
     let mut at = None;
@@ -50,6 +80,7 @@ fn parse_scheduler_preview(
     let mut allow_unattended_high_policy = false;
     let mut cargo_reclaim_bin = None;
     let mut output_format = OutputFormat::Terminal;
+    let mut request_dry_run = subcommand == "preview";
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -59,9 +90,9 @@ fn parse_scheduler_preview(
         }
 
         let Some(arg_text) = arg.as_os_str().to_str() else {
-            return Err(CliError::Usage(
-                "scheduler preview options must be valid UTF-8".to_string(),
-            ));
+            return Err(CliError::Usage(format!(
+                "scheduler {subcommand} options must be valid UTF-8"
+            )));
         };
 
         match arg_text {
@@ -89,28 +120,27 @@ fn parse_scheduler_preview(
                 cargo_reclaim_bin = Some(PathBuf::from(&value["--cargo-reclaim-bin=".len()..]));
             }
             "--json" => output_format = OutputFormat::Json,
+            "--dry-run" => request_dry_run = true,
             "-h" | "--help" => {
-                return Err(CliError::Usage(
-                    "usage: cargo-reclaim scheduler preview --platform <systemd-user|launchd|task-scheduler> --config <path>".to_string(),
-                ));
+                return Err(CliError::Usage(scheduler_subcommand_usage(subcommand)));
             }
             value if value.starts_with('-') => {
                 return Err(CliError::Usage(format!(
-                    "unknown scheduler preview option `{value}`"
+                    "unknown scheduler {subcommand} option `{value}`"
                 )));
             }
             value => {
                 return Err(CliError::Usage(format!(
-                    "unexpected scheduler preview argument `{value}`"
+                    "unexpected scheduler {subcommand} argument `{value}`"
                 )));
             }
         }
     }
 
     let platform = platform
-        .ok_or_else(|| CliError::Usage("scheduler preview requires --platform".to_string()))?;
+        .ok_or_else(|| CliError::Usage(format!("scheduler {subcommand} requires --platform")))?;
     let config_path = config_path
-        .ok_or_else(|| CliError::Usage("scheduler preview requires --config".to_string()))?;
+        .ok_or_else(|| CliError::Usage(format!("scheduler {subcommand} requires --config")))?;
     let config = load_config_from_path(&config_path)?;
     let scheduler = &config.scheduler;
     let schedule = Schedule::parse(at.as_deref().or(scheduler.at.as_deref()).unwrap_or("03:00"))?;
@@ -142,22 +172,57 @@ fn parse_scheduler_preview(
         log_dir: scheduler.log_dir.clone(),
     };
 
-    Ok(SchedulerPreviewCommand {
+    Ok(SchedulerRequestParse {
         request,
         output_format,
+        request_dry_run,
     })
 }
 
 pub(super) fn run_scheduler_preview(
-    command: &SchedulerPreviewCommand,
+    command: &SchedulerCommand,
     output: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
-    let report = generate_scheduler_artifacts(command.request.clone())?;
-    match command.output_format {
-        OutputFormat::Terminal => write_terminal(output, &report)?,
-        OutputFormat::Json => write_json(output, &report)?,
+    match command {
+        SchedulerCommand::Preview(command) => {
+            let report = generate_scheduler_artifacts(command.request.clone())?;
+            match command.output_format {
+                OutputFormat::Terminal => write_preview_terminal(output, &report)?,
+                OutputFormat::Json => write_preview_json(output, &report)?,
+            }
+        }
+        SchedulerCommand::Install(command) => {
+            let plan = plan_scheduler_install(command.request.clone())?;
+            match command.output_format {
+                OutputFormat::Terminal => write_operation_terminal(output, &plan)?,
+                OutputFormat::Json => write_operation_json(output, &plan)?,
+            }
+        }
+        SchedulerCommand::Uninstall(command) => {
+            let plan = plan_scheduler_uninstall(command.request.clone())?;
+            match command.output_format {
+                OutputFormat::Terminal => write_operation_terminal(output, &plan)?,
+                OutputFormat::Json => write_operation_json(output, &plan)?,
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Debug)]
+struct SchedulerRequestParse {
+    request: SchedulerRequest,
+    output_format: OutputFormat,
+    request_dry_run: bool,
+}
+
+impl SchedulerRequestParse {
+    fn into_request_command(self) -> SchedulerRequestCommand {
+        SchedulerRequestCommand {
+            request: self.request,
+            output_format: self.output_format,
+        }
+    }
 }
 
 fn parse_platform(value: &str) -> Result<SchedulerPlatform, CliError> {
@@ -185,116 +250,16 @@ fn default_cargo_reclaim_bin() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cargo-reclaim"))
 }
 
-fn write_terminal(output: &mut impl Write, report: &SchedulerReport) -> Result<(), CliError> {
-    writeln!(output, "cargo-reclaim scheduler preview")?;
-    writeln!(
-        output,
-        "dry-run only; no scheduler files were installed, tasks were registered, timers were enabled, or plans were run"
-    )?;
-    writeln!(output, "platform: {}", platform_label(report.platform))?;
-    writeln!(output, "mode: {}", mode_label(report.mode))?;
-    writeln!(
-        output,
-        "effective policy: {}",
-        policy_label(report.effective_policy)
-    )?;
-    writeln!(output, "at: {}", report.schedule.as_hh_mm())?;
-    writeln!(output, "artifacts: {}", report.artifacts.len())?;
-    for artifact in &report.artifacts {
-        writeln!(
-            output,
-            "{}\t{}",
-            artifact_kind_label(artifact.kind),
-            artifact.intended_install_path.display()
-        )?;
-    }
-    Ok(())
+fn scheduler_help() -> &'static str {
+    "usage: cargo-reclaim scheduler <preview|install|uninstall> --platform <systemd-user|launchd|task-scheduler> --config <path>"
 }
 
-fn write_json(output: &mut impl Write, report: &SchedulerReport) -> Result<(), CliError> {
-    let document = JsonSchedulerReport::from_report(report);
-    serde_json::to_writer(&mut *output, &document)?;
-    writeln!(output)?;
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct JsonSchedulerReport<'a> {
-    command: &'static str,
-    dry_run: bool,
-    platform: &'static str,
-    mode: &'static str,
-    effective_policy: &'static str,
-    at: String,
-    artifacts: Vec<JsonArtifact<'a>>,
-}
-
-impl<'a> JsonSchedulerReport<'a> {
-    fn from_report(report: &'a SchedulerReport) -> Self {
-        Self {
-            command: report.command,
-            dry_run: report.dry_run,
-            platform: platform_label(report.platform),
-            mode: mode_label(report.mode),
-            effective_policy: policy_label(report.effective_policy),
-            at: report.schedule.as_hh_mm(),
-            artifacts: report
-                .artifacts
-                .iter()
-                .map(JsonArtifact::from_artifact)
-                .collect(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct JsonArtifact<'a> {
-    kind: &'static str,
-    intended_install_path: String,
-    contents: &'a str,
-}
-
-impl<'a> JsonArtifact<'a> {
-    fn from_artifact(artifact: &'a GeneratedArtifact) -> Self {
-        Self {
-            kind: artifact_kind_label(artifact.kind),
-            intended_install_path: artifact.intended_install_path.display().to_string(),
-            contents: &artifact.contents,
-        }
-    }
-}
-
-fn platform_label(platform: SchedulerPlatform) -> &'static str {
-    match platform {
-        SchedulerPlatform::SystemdUser => "systemd-user",
-        SchedulerPlatform::Launchd => "launchd",
-        SchedulerPlatform::TaskScheduler => "task-scheduler",
-    }
-}
-
-fn mode_label(mode: SchedulerMode) -> &'static str {
-    match mode {
-        SchedulerMode::Observe => "observe",
-        SchedulerMode::Cleanup => "cleanup",
-    }
-}
-
-fn policy_label(policy: PolicyKind) -> &'static str {
-    match policy {
-        PolicyKind::Observe => "observe",
-        PolicyKind::Conservative => "conservative",
-        PolicyKind::Balanced => "balanced",
-        PolicyKind::Aggressive => "aggressive",
-        PolicyKind::Custom => "custom",
-    }
-}
-
-fn artifact_kind_label(kind: GeneratedArtifactKind) -> &'static str {
-    match kind {
-        GeneratedArtifactKind::SystemdService => "systemd-service",
-        GeneratedArtifactKind::SystemdTimer => "systemd-timer",
-        GeneratedArtifactKind::LaunchdPlist => "launchd-plist",
-        GeneratedArtifactKind::TaskSchedulerXml => "task-scheduler-xml",
-        GeneratedArtifactKind::RunnerScript => "runner-script",
+fn scheduler_subcommand_usage(subcommand: &str) -> String {
+    if subcommand == "preview" {
+        "usage: cargo-reclaim scheduler preview --platform <systemd-user|launchd|task-scheduler> --config <path>".to_string()
+    } else {
+        format!(
+            "usage: cargo-reclaim scheduler {subcommand} --dry-run --platform <systemd-user|launchd|task-scheduler> --config <path>"
+        )
     }
 }

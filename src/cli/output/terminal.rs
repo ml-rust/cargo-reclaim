@@ -27,6 +27,14 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  scheduler install --dry-run  Plan scheduler artifact installation"
+    )?;
+    writeln!(
+        output,
+        "  scheduler uninstall --dry-run  Plan scheduler artifact removal"
+    )?;
+    writeln!(
+        output,
         "  cargo-home report  Report Cargo home caches and preserved paths"
     )?;
     writeln!(output)?;

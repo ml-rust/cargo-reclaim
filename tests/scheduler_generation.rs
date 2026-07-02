@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use cargo_reclaim::{
-    GeneratedArtifactKind, PolicyKind, Schedule, SchedulerError, SchedulerMode, SchedulerPlatform,
-    SchedulerRequest, generate_scheduler_artifacts,
+    GeneratedArtifactKind, PolicyKind, Schedule, SchedulerError, SchedulerMode, SchedulerOperation,
+    SchedulerPlanStep, SchedulerPlatform, SchedulerRequest, generate_scheduler_artifacts,
+    plan_scheduler_install, plan_scheduler_uninstall,
 };
 
 fn request(platform: SchedulerPlatform) -> SchedulerRequest {
@@ -210,4 +211,168 @@ fn escapes_paths_in_scripts_and_xml() -> Result<(), Box<dyn std::error::Error>> 
             .contains("-NoProfile -ExecutionPolicy Bypass -File &apos;/tmp/state &amp; logs/state/scheduler-runner.ps1&apos;")
     );
     Ok(())
+}
+
+#[test]
+fn systemd_install_plan_writes_artifacts_and_registers_timer()
+-> Result<(), Box<dyn std::error::Error>> {
+    let plan = plan_scheduler_install(request(SchedulerPlatform::SystemdUser))?;
+
+    assert_eq!(plan.operation, SchedulerOperation::Install);
+    assert!(plan.dry_run);
+    assert!(has_write_step(
+        &plan.steps,
+        GeneratedArtifactKind::RunnerScript
+    ));
+    assert!(has_write_step(
+        &plan.steps,
+        GeneratedArtifactKind::SystemdService
+    ));
+    assert!(has_write_step(
+        &plan.steps,
+        GeneratedArtifactKind::SystemdTimer
+    ));
+    assert!(plan.steps.iter().any(|step| matches!(
+        step,
+        SchedulerPlanStep::SetExecutable { path }
+            if path.display().to_string().ends_with("scheduler-runner.sh")
+    )));
+    assert!(has_command(
+        &plan.steps,
+        &["systemctl", "--user", "daemon-reload"]
+    ));
+    assert!(has_command(
+        &plan.steps,
+        &[
+            "systemctl",
+            "--user",
+            "enable",
+            "--now",
+            "cargo-reclaim.timer"
+        ]
+    ));
+    Ok(())
+}
+
+#[test]
+fn systemd_uninstall_plan_disables_timer_and_removes_known_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let plan = plan_scheduler_uninstall(request(SchedulerPlatform::SystemdUser))?;
+
+    assert_eq!(plan.operation, SchedulerOperation::Uninstall);
+    assert!(has_command(
+        &plan.steps,
+        &[
+            "systemctl",
+            "--user",
+            "disable",
+            "--now",
+            "cargo-reclaim.timer"
+        ]
+    ));
+    assert!(has_command(
+        &plan.steps,
+        &["systemctl", "--user", "daemon-reload"]
+    ));
+    assert!(has_remove_step(&plan.steps, "scheduler-runner.sh"));
+    assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
+    assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    Ok(())
+}
+
+#[test]
+fn uninstall_plan_does_not_require_cleanup_policy_allowance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut request = request(SchedulerPlatform::SystemdUser);
+    request.mode = SchedulerMode::Cleanup;
+    request.policy = Some(PolicyKind::Aggressive);
+
+    let plan = plan_scheduler_uninstall(request)?;
+
+    assert_eq!(plan.operation, SchedulerOperation::Uninstall);
+    assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    Ok(())
+}
+
+#[test]
+fn launchd_install_plan_uses_launchctl_with_plist_path() -> Result<(), Box<dyn std::error::Error>> {
+    let plan = plan_scheduler_install(request(SchedulerPlatform::Launchd))?;
+    let plist = plan
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == GeneratedArtifactKind::LaunchdPlist)
+        .expect("plist")
+        .intended_install_path
+        .display()
+        .to_string();
+
+    assert!(has_command(&plan.steps, &["launchctl", "unload", &plist]));
+    assert!(has_command(
+        &plan.steps,
+        &["launchctl", "load", "-w", &plist]
+    ));
+    Ok(())
+}
+
+#[test]
+fn task_scheduler_install_plan_uses_state_xml_path() -> Result<(), Box<dyn std::error::Error>> {
+    let plan = plan_scheduler_install(request(SchedulerPlatform::TaskScheduler))?;
+    let xml = plan
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == GeneratedArtifactKind::TaskSchedulerXml)
+        .expect("xml")
+        .intended_install_path
+        .display()
+        .to_string();
+
+    assert_eq!(xml, "/tmp/cargo reclaim/state/cargo-reclaim.xml");
+    assert!(has_command(
+        &plan.steps,
+        &[
+            "schtasks",
+            "/Create",
+            "/TN",
+            r"\cargo-reclaim",
+            "/XML",
+            &xml,
+            "/F"
+        ]
+    ));
+    assert!(has_command(
+        &plan_scheduler_uninstall(request(SchedulerPlatform::TaskScheduler))?.steps,
+        &["schtasks", "/Delete", "/TN", r"\cargo-reclaim", "/F"]
+    ));
+    Ok(())
+}
+
+fn has_write_step(steps: &[SchedulerPlanStep], artifact_kind: GeneratedArtifactKind) -> bool {
+    steps.iter().any(|step| {
+        matches!(
+            step,
+            SchedulerPlanStep::WriteFile {
+                artifact_kind: kind,
+                ..
+            } if *kind == artifact_kind
+        )
+    })
+}
+
+fn has_remove_step(steps: &[SchedulerPlanStep], suffix: &str) -> bool {
+    steps.iter().any(|step| {
+        matches!(
+            step,
+            SchedulerPlanStep::RemoveFile { path } if path.display().to_string().ends_with(suffix)
+        )
+    })
+}
+
+fn has_command(steps: &[SchedulerPlanStep], expected: &[&str]) -> bool {
+    steps.iter().any(|step| {
+        matches!(
+            step,
+            SchedulerPlanStep::RunCommand { argv }
+                if argv.iter().map(String::as_str).eq(expected.iter().copied())
+        )
+    })
 }

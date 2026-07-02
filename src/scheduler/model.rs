@@ -94,6 +94,42 @@ pub struct SchedulerReport {
     pub artifacts: Vec<GeneratedArtifact>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchedulerOperation {
+    Install,
+    Uninstall,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerOperationPlan {
+    pub command: &'static str,
+    pub operation: SchedulerOperation,
+    pub dry_run: bool,
+    pub platform: SchedulerPlatform,
+    pub artifacts: Vec<GeneratedArtifact>,
+    pub steps: Vec<SchedulerPlanStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchedulerPlanStep {
+    EnsureDir {
+        path: PathBuf,
+    },
+    WriteFile {
+        path: PathBuf,
+        artifact_kind: GeneratedArtifactKind,
+    },
+    SetExecutable {
+        path: PathBuf,
+    },
+    RemoveFile {
+        path: PathBuf,
+    },
+    RunCommand {
+        argv: Vec<String>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchedulerError {
     InvalidSchedule(String),
@@ -122,12 +158,44 @@ impl fmt::Display for SchedulerError {
 
 impl std::error::Error for SchedulerError {}
 
-pub(crate) fn policy_label(policy: PolicyKind) -> &'static str {
+pub fn policy_label(policy: PolicyKind) -> &'static str {
     match policy {
         PolicyKind::Observe => "observe",
         PolicyKind::Conservative => "conservative",
         PolicyKind::Balanced => "balanced",
         PolicyKind::Aggressive => "aggressive",
         PolicyKind::Custom => "custom",
+    }
+}
+
+pub fn platform_label(platform: SchedulerPlatform) -> &'static str {
+    match platform {
+        SchedulerPlatform::SystemdUser => "systemd-user",
+        SchedulerPlatform::Launchd => "launchd",
+        SchedulerPlatform::TaskScheduler => "task-scheduler",
+    }
+}
+
+pub fn mode_label(mode: SchedulerMode) -> &'static str {
+    match mode {
+        SchedulerMode::Observe => "observe",
+        SchedulerMode::Cleanup => "cleanup",
+    }
+}
+
+pub fn operation_label(operation: SchedulerOperation) -> &'static str {
+    match operation {
+        SchedulerOperation::Install => "install",
+        SchedulerOperation::Uninstall => "uninstall",
+    }
+}
+
+pub fn artifact_kind_label(kind: GeneratedArtifactKind) -> &'static str {
+    match kind {
+        GeneratedArtifactKind::SystemdService => "systemd-service",
+        GeneratedArtifactKind::SystemdTimer => "systemd-timer",
+        GeneratedArtifactKind::LaunchdPlist => "launchd-plist",
+        GeneratedArtifactKind::TaskSchedulerXml => "task-scheduler-xml",
+        GeneratedArtifactKind::RunnerScript => "runner-script",
     }
 }
