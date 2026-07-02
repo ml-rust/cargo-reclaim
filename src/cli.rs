@@ -13,6 +13,7 @@ mod apply;
 mod cargo_config;
 mod cargo_home;
 mod edit_plan;
+mod error_output;
 mod output;
 mod persistence;
 mod plan;
@@ -22,6 +23,7 @@ use apply::{ApplyCommand, parse_apply_command, run_apply};
 use cargo_config::{CargoConfigCommand, parse_cargo_config_command, run_cargo_config_command};
 use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_command};
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
+use error_output::write_error_json;
 use output::write_help;
 use persistence::{SavePlanRequest, parse_duration};
 use plan::run_plan_command;
@@ -29,7 +31,9 @@ use scheduler::{SchedulerPreviewCommand, parse_scheduler_command, run_scheduler_
 
 pub fn run() -> ExitCode {
     let mut stdout = io::stdout();
-    match run_with_args(env::args_os().skip(1), &mut stdout) {
+    let args = env::args_os().skip(1).collect::<Vec<_>>();
+    let json_errors = args_request_json(&args);
+    match run_with_args(args, &mut stdout) {
         Ok(code) => code,
         Err(error) => match error {
             CliError::Help(message) => {
@@ -38,7 +42,12 @@ pub fn run() -> ExitCode {
             }
             error => {
                 let code = error.exit_code();
-                let _ = writeln!(io::stderr(), "cargo-reclaim: {error}");
+                let mut stderr = io::stderr();
+                if json_errors {
+                    let _ = write_error_json(&mut stderr, &error);
+                } else {
+                    let _ = writeln!(stderr, "cargo-reclaim: {error}");
+                }
                 code
             }
         },
@@ -107,6 +116,10 @@ enum PlanMode {
 enum OutputFormat {
     Terminal,
     Json,
+}
+
+fn args_request_json(args: &[OsString]) -> bool {
+    args.iter().any(|arg| arg == "--json")
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliError> {
@@ -534,21 +547,38 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 impl CliError {
-    fn exit_code(&self) -> ExitCode {
+    fn kind_label(&self) -> &'static str {
         match self {
-            Self::Help(_) => ExitCode::SUCCESS,
-            Self::Usage(_) => ExitCode::from(2),
+            Self::Help(_) => "help",
+            Self::Usage(_) => "usage",
+            Self::Reclaim(_) => "reclaim",
+            Self::Config(_) => "config",
+            Self::Io(_) => "io",
+            Self::Json(_) => "json",
+            Self::Persistence(_) => "persistence",
+            Self::PlanEdit(_) => "plan_edit",
+            Self::Scheduler(_) => "scheduler",
+            Self::CargoHome(_) => "cargo_home",
+            Self::BackgroundRunner(_) => "background_runner",
+            Self::BackgroundService(_) => "background_service",
+        }
+    }
+
+    fn exit_code_value(&self) -> u8 {
+        match self {
+            Self::Help(_) => 0,
+            Self::Usage(_) => 2,
             Self::Reclaim(_)
             | Self::Config(_)
             | Self::Io(_)
             | Self::Json(_)
-            | Self::Persistence(_) => ExitCode::FAILURE,
-            Self::Scheduler(_) => ExitCode::from(2),
-            Self::CargoHome(_) | Self::BackgroundRunner(_) => ExitCode::FAILURE,
+            | Self::Persistence(_) => 1,
+            Self::Scheduler(_) => 2,
+            Self::CargoHome(_) | Self::BackgroundRunner(_) => 1,
             Self::BackgroundService(error) => match error {
                 cargo_reclaim::BackgroundServiceError::Config(_)
-                | cargo_reclaim::BackgroundServiceError::Scheduler(_) => ExitCode::from(2),
-                _ => ExitCode::FAILURE,
+                | cargo_reclaim::BackgroundServiceError::Scheduler(_) => 2,
+                _ => 1,
             },
             Self::PlanEdit(error) => match error {
                 cargo_reclaim::PlanEditError::NoEdits
@@ -557,10 +587,14 @@ impl CliError {
                 | cargo_reclaim::PlanEditError::UnknownArtifactClass { .. }
                 | cargo_reclaim::PlanEditError::ProtectedArtifactClass { .. }
                 | cargo_reclaim::PlanEditError::ArtifactClassNotFound { .. }
-                | cargo_reclaim::PlanEditError::AmbiguousEntryPath { .. } => ExitCode::from(2),
-                cargo_reclaim::PlanEditError::Persistence(_) => ExitCode::FAILURE,
+                | cargo_reclaim::PlanEditError::AmbiguousEntryPath { .. } => 2,
+                cargo_reclaim::PlanEditError::Persistence(_) => 1,
             },
         }
+    }
+
+    fn exit_code(&self) -> ExitCode {
+        ExitCode::from(self.exit_code_value())
     }
 }
 

@@ -549,6 +549,31 @@ fn edit_plan_rejects_unmatched_artifact_classes_without_rewriting_plan()
 }
 
 #[test]
+fn edit_plan_json_errors_write_structured_stderr() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_json_error")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-class", "unknown", "--json"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr: Value = serde_json::from_slice(&output.stderr)?;
+    assert_eq!(stderr["error"]["kind"], "plan_edit");
+    assert!(
+        stderr["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("unknown")
+    );
+    assert_eq!(stderr["exit_code"], 2);
+    Ok(())
+}
+
+#[test]
 fn edit_plan_rejects_invalid_entry_indices_without_rewriting_plan() -> Result<(), Box<dyn Error>> {
     for (name, args) in [
         ("out_of_range", vec!["--select-index", "3"]),

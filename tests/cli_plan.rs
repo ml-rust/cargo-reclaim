@@ -516,6 +516,27 @@ mode = "observe"
 }
 
 #[test]
+fn json_usage_errors_write_structured_stderr() -> Result<(), Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--unknown", "--json"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr: Value = serde_json::from_slice(&output.stderr)?;
+    assert_eq!(stderr["command"], "cargo-reclaim");
+    assert_eq!(stderr["error"]["kind"], "usage");
+    assert!(
+        stderr["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("unknown option")
+    );
+    assert_eq!(stderr["exit_code"], 2);
+    Ok(())
+}
+
+#[test]
 fn json_output_can_be_combined_with_save_plan() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_json_save_plan")?;
     write_manifest(temp.path())?;

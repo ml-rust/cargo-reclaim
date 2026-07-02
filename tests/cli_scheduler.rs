@@ -144,6 +144,37 @@ fn unsafe_cleanup_and_high_policy_exit_usage_code() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn scheduler_json_errors_write_structured_stderr() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_json_error")?;
+    let config_path = write_config(temp.path(), "")?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "scheduler",
+            "preview",
+            "--platform",
+            "systemd-user",
+            "--config",
+        ])
+        .arg(&config_path)
+        .args(["--mode", "cleanup", "--json"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr: Value = serde_json::from_slice(&output.stderr)?;
+    assert_eq!(stderr["error"]["kind"], "scheduler");
+    assert!(
+        stderr["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("allow-unattended-cleanup")
+    );
+    assert_eq!(stderr["exit_code"], 2);
+    Ok(())
+}
+
+#[test]
 fn install_dry_run_json_reports_plan_and_does_not_create_files() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_scheduler_install")?;
     let config_path = write_config(
