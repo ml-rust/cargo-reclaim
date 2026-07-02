@@ -181,6 +181,7 @@ fn install_dry_run_json_reports_plan_and_does_not_create_files() -> Result<(), B
         temp.path(),
         r#"
 [scheduler]
+name = "cli-systemd"
 state_dir = "state"
 log_dir = "logs"
 "#,
@@ -216,6 +217,24 @@ log_dir = "logs"
                     && step["argv"] == serde_json::json!(["systemctl", "--user", "daemon-reload"])
             })
     );
+    assert!(
+        document["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .any(|step| {
+                step["kind"] == "run-command"
+                    && step["argv"]
+                        == serde_json::json!([
+                            "systemctl",
+                            "--user",
+                            "enable",
+                            "--now",
+                            "cargo-reclaim-cli-systemd.service",
+                            "cargo-reclaim-cli-systemd.timer"
+                        ])
+            })
+    );
     assert!(!temp.path().join("state").exists());
     assert!(!temp.path().join("logs").exists());
     Ok(())
@@ -224,7 +243,13 @@ log_dir = "logs"
 #[test]
 fn uninstall_dry_run_json_reports_removal_plan() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_scheduler_uninstall")?;
-    let config_path = write_config(temp.path(), "")?;
+    let config_path = write_config(
+        temp.path(),
+        r#"
+[scheduler]
+name = "cli-launchd"
+"#,
+    )?;
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .args([
@@ -251,11 +276,43 @@ fn uninstall_dry_run_json_reports_removal_plan() -> Result<(), Box<dyn Error>> {
             .any(|step| {
                 step["kind"] == "run-command"
                     && step["argv"]
-                        == serde_json::json!(["launchctl", "remove", "com.cargo-reclaim"])
+                        == serde_json::json!([
+                            "launchctl",
+                            "remove",
+                            "com.cargo-reclaim.cli-launchd"
+                        ])
             })
     );
     assert!(!temp.path().join("state").exists());
     assert!(!temp.path().join("logs").exists());
+    Ok(())
+}
+
+#[test]
+fn preview_rejects_unsafe_scheduler_name() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_unsafe_name")?;
+    let config_path = write_config(
+        temp.path(),
+        r#"
+[scheduler]
+name = "bad/name"
+"#,
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "scheduler",
+            "preview",
+            "--platform",
+            "systemd-user",
+            "--config",
+        ])
+        .arg(&config_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("invalid scheduler name"));
     Ok(())
 }
 

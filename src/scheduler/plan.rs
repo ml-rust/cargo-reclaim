@@ -4,12 +4,14 @@ use super::generate::generate_scheduler_artifacts;
 use super::model::{
     GeneratedArtifact, GeneratedArtifactKind, SchedulerError, SchedulerOperation,
     SchedulerOperationPlan, SchedulerPlanStep, SchedulerPlatform, SchedulerRequest,
+    validate_scheduler_instance_name,
 };
 use super::paths::SchedulerPaths;
 
 pub fn plan_scheduler_install(
     request: SchedulerRequest,
 ) -> Result<SchedulerOperationPlan, SchedulerError> {
+    validate_scheduler_instance_name(&request.instance_name)?;
     let paths = SchedulerPaths::new(&request);
     let report = generate_scheduler_artifacts(request)?;
     let artifacts = operation_artifacts(report.platform, report.artifacts, &paths);
@@ -39,7 +41,7 @@ pub fn plan_scheduler_install(
             }),
     );
 
-    steps.extend(install_commands(report.platform, &artifacts));
+    steps.extend(install_commands(report.platform, &artifacts, &paths));
 
     Ok(SchedulerOperationPlan {
         command: "scheduler-install",
@@ -54,10 +56,11 @@ pub fn plan_scheduler_install(
 pub fn plan_scheduler_uninstall(
     request: SchedulerRequest,
 ) -> Result<SchedulerOperationPlan, SchedulerError> {
+    validate_scheduler_instance_name(&request.instance_name)?;
     let paths = SchedulerPaths::new(&request);
     let platform = request.platform;
     let artifacts = uninstall_artifacts(platform, &paths);
-    let mut steps = uninstall_commands(platform);
+    let mut steps = uninstall_commands(platform, &paths);
 
     steps.extend(
         artifacts
@@ -170,17 +173,18 @@ fn contains_path(paths: &[PathBuf], path: &Path) -> bool {
 fn install_commands(
     platform: SchedulerPlatform,
     artifacts: &[GeneratedArtifact],
+    paths: &SchedulerPaths,
 ) -> Vec<SchedulerPlanStep> {
     match platform {
         SchedulerPlatform::SystemdUser => vec![
             run_command(["systemctl", "--user", "daemon-reload"]),
-            run_command([
-                "systemctl",
-                "--user",
-                "enable",
-                "--now",
-                "cargo-reclaim.service",
-                "cargo-reclaim.timer",
+            run_command_vec(vec![
+                "systemctl".to_string(),
+                "--user".to_string(),
+                "enable".to_string(),
+                "--now".to_string(),
+                paths.systemd_service_name.clone(),
+                paths.systemd_timer_name.clone(),
             ]),
         ],
         SchedulerPlatform::Launchd => plist_path(artifacts)
@@ -197,7 +201,7 @@ fn install_commands(
                     "schtasks",
                     "/Create",
                     "/TN",
-                    r"\cargo-reclaim",
+                    paths.task_name.as_str(),
                     "/XML",
                     path.as_str(),
                     "/F",
@@ -207,24 +211,31 @@ fn install_commands(
     }
 }
 
-fn uninstall_commands(platform: SchedulerPlatform) -> Vec<SchedulerPlanStep> {
+fn uninstall_commands(
+    platform: SchedulerPlatform,
+    paths: &SchedulerPaths,
+) -> Vec<SchedulerPlanStep> {
     match platform {
-        SchedulerPlatform::SystemdUser => vec![run_command([
-            "systemctl",
-            "--user",
-            "disable",
-            "--now",
-            "cargo-reclaim.service",
-            "cargo-reclaim.timer",
+        SchedulerPlatform::SystemdUser => vec![run_command_vec(vec![
+            "systemctl".to_string(),
+            "--user".to_string(),
+            "disable".to_string(),
+            "--now".to_string(),
+            paths.systemd_service_name.clone(),
+            paths.systemd_timer_name.clone(),
         ])],
         SchedulerPlatform::Launchd => {
-            vec![run_command(["launchctl", "remove", "com.cargo-reclaim"])]
+            vec![run_command([
+                "launchctl",
+                "remove",
+                paths.launchd_label.as_str(),
+            ])]
         }
         SchedulerPlatform::TaskScheduler => vec![run_command([
             "schtasks",
             "/Delete",
             "/TN",
-            r"\cargo-reclaim",
+            paths.task_name.as_str(),
             "/F",
         ])],
     }
@@ -249,4 +260,8 @@ fn run_command<const N: usize>(argv: [&str; N]) -> SchedulerPlanStep {
     SchedulerPlanStep::RunCommand {
         argv: argv.into_iter().map(ToOwned::to_owned).collect(),
     }
+}
+
+fn run_command_vec(argv: Vec<String>) -> SchedulerPlanStep {
+    SchedulerPlanStep::RunCommand { argv }
 }

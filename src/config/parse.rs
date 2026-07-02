@@ -121,6 +121,7 @@ keep_installed_toolchains = true
 keep_toolchains = ["stable", "nightly"]
 
 [scheduler]
+name = "daily-workstation"
 at = "04:15"
 mode = "cleanup"
 policy = "conservative"
@@ -164,6 +165,7 @@ field = true
         assert_eq!(config.scanner.follow_symlinks, Some(true));
         assert_eq!(config.scanner.allow_name_only_targets, Some(true));
         assert_eq!(config.scanner.cross_filesystems, Some(true));
+        assert_eq!(config.scheduler.name.as_deref(), Some("daily-workstation"));
         assert_eq!(config.scheduler.at.as_deref(), Some("04:15"));
         assert_eq!(config.scheduler.mode.as_deref(), Some("cleanup"));
         assert_eq!(config.scheduler.policy.as_deref(), Some("conservative"));

@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use crate::PolicyKind;
 
@@ -56,6 +56,7 @@ impl Default for Schedule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulerRequest {
     pub platform: SchedulerPlatform,
+    pub instance_name: String,
     pub config_path: PathBuf,
     pub cargo_reclaim_bin: PathBuf,
     pub schedule: Schedule,
@@ -181,6 +182,7 @@ impl SchedulerExecutionReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchedulerError {
     InvalidSchedule(String),
+    InvalidInstanceName(String),
     CleanupNotAllowed,
     HighPolicyNotAllowed(PolicyKind),
 }
@@ -191,6 +193,10 @@ impl fmt::Display for SchedulerError {
             Self::InvalidSchedule(value) => write!(
                 formatter,
                 "invalid scheduler time `{value}`; expected HH:MM in 24-hour time"
+            ),
+            Self::InvalidInstanceName(value) => write!(
+                formatter,
+                "invalid scheduler name `{value}`; use only ASCII letters, digits, '-', '_', or '.', and do not use path separators"
             ),
             Self::CleanupNotAllowed => formatter.write_str(
                 "scheduler cleanup preview requires --allow-unattended-cleanup or [scheduler].allow_unattended_cleanup = true",
@@ -205,6 +211,76 @@ impl fmt::Display for SchedulerError {
 }
 
 impl std::error::Error for SchedulerError {}
+
+pub fn scheduler_instance_name_from_config(
+    explicit_name: Option<&str>,
+    config_path: &Path,
+) -> Result<String, SchedulerError> {
+    if let Some(name) = explicit_name {
+        return validate_scheduler_instance_name(name).map(ToOwned::to_owned);
+    }
+
+    Ok(derive_scheduler_instance_name(config_path))
+}
+
+pub(crate) fn validate_scheduler_instance_name(name: &str) -> Result<&str, SchedulerError> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || !name.chars().all(is_safe_instance_character)
+    {
+        return Err(SchedulerError::InvalidInstanceName(name.to_string()));
+    }
+    Ok(name)
+}
+
+fn derive_scheduler_instance_name(config_path: &Path) -> String {
+    let stem = config_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(sanitize_instance_stem)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "config".to_string());
+    format!("{stem}-{:016x}", stable_path_hash(config_path))
+}
+
+fn sanitize_instance_stem(stem: &str) -> String {
+    stem.chars()
+        .map(|character| {
+            if is_safe_instance_character(character) {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn is_safe_instance_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+}
+
+fn stable_path_hash(path: &Path) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for component in path.components() {
+        hash_path_component(&mut hash, component);
+        hash_byte(&mut hash, 0xff);
+    }
+    hash
+}
+
+fn hash_path_component(hash: &mut u64, component: Component<'_>) {
+    for byte in component.as_os_str().to_string_lossy().as_bytes() {
+        hash_byte(hash, *byte);
+    }
+}
+
+fn hash_byte(hash: &mut u64, byte: u8) {
+    *hash ^= u64::from(byte);
+    *hash = hash.wrapping_mul(0x100000001b3);
+}
 
 pub fn policy_label(policy: PolicyKind) -> &'static str {
     match policy {

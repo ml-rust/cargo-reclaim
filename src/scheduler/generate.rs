@@ -4,13 +4,14 @@ use crate::PolicyKind;
 
 use super::model::{
     GeneratedArtifact, GeneratedArtifactKind, SchedulerError, SchedulerMode, SchedulerPlatform,
-    SchedulerReport, SchedulerRequest,
+    SchedulerReport, SchedulerRequest, validate_scheduler_instance_name,
 };
 use super::paths::SchedulerPaths;
 
 pub fn generate_scheduler_artifacts(
     request: SchedulerRequest,
 ) -> Result<SchedulerReport, SchedulerError> {
+    validate_scheduler_instance_name(&request.instance_name)?;
     let effective_policy = effective_policy(&request)?;
     let paths = SchedulerPaths::new(&request);
     let artifacts = match request.platform {
@@ -75,8 +76,8 @@ fn systemd_artifacts(
             kind: GeneratedArtifactKind::SystemdTimer,
             intended_install_path: paths.systemd_timer_path(),
             contents: format!(
-                "[Unit]\nDescription=cargo-reclaim scheduled background trigger\n\n[Timer]\nOnCalendar=*-*-* {:02}:{:02}:00\nPersistent=true\nUnit=cargo-reclaim.service\n\n[Install]\nWantedBy=timers.target\n",
-                request.schedule.hour, request.schedule.minute
+                "[Unit]\nDescription=cargo-reclaim scheduled background trigger\n\n[Timer]\nOnCalendar=*-*-* {:02}:{:02}:00\nPersistent=true\nUnit={}\n\n[Install]\nWantedBy=timers.target\n",
+                request.schedule.hour, request.schedule.minute, paths.systemd_service_name
             ),
         },
     ]
@@ -97,7 +98,8 @@ fn launchd_artifacts(
             kind: GeneratedArtifactKind::LaunchdPlist,
             intended_install_path: paths.launchd_plist_path(),
             contents: format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.cargo-reclaim</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n  </array>\n  <key>KeepAlive</key>\n  <true/>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>StandardOutPath</key>\n  <string>{}</string>\n  <key>StandardErrorPath</key>\n  <string>{}</string>\n</dict>\n</plist>\n",
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n  </array>\n  <key>KeepAlive</key>\n  <true/>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>StandardOutPath</key>\n  <string>{}</string>\n  <key>StandardErrorPath</key>\n  <string>{}</string>\n</dict>\n</plist>\n",
+                xml_escape_str(&paths.launchd_label),
                 xml_escape(&paths.runner_path),
                 xml_escape(&paths.log_path),
                 xml_escape(&paths.log_path)
@@ -119,7 +121,10 @@ fn task_scheduler_artifacts(
         },
         GeneratedArtifact {
             kind: GeneratedArtifactKind::TaskSchedulerXml,
-            intended_install_path: PathBuf::from(r"Task Scheduler Library\cargo-reclaim.xml"),
+            intended_install_path: PathBuf::from(format!(
+                r"Task Scheduler Library\cargo-reclaim-{}.xml",
+                paths.instance_name
+            )),
             contents: format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n<Task version=\"1.4\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n  <Triggers>\n    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>\n  </Triggers>\n  <Settings>\n    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n    <RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>3</Count>\n    </RestartOnFailure>\n  </Settings>\n  <Actions Context=\"Author\">\n    <Exec>\n      <Command>powershell.exe</Command>\n      <Arguments>{}</Arguments>\n    </Exec>\n  </Actions>\n</Task>\n",
                 xml_escape_str(&format!(

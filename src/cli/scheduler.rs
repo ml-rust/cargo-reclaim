@@ -7,6 +7,7 @@ use cargo_reclaim::{
     RealSchedulerOperationBackend, Schedule, SchedulerMode, SchedulerOperationBackend,
     SchedulerPlatform, SchedulerRequest, execute_scheduler_operation, generate_scheduler_artifacts,
     load_config_from_path, plan_scheduler_install, plan_scheduler_uninstall,
+    scheduler_instance_name_from_config,
 };
 
 use super::{CliError, OutputFormat, inline_config_path, next_path, next_value, parse_policy};
@@ -148,6 +149,7 @@ fn parse_scheduler_request(
     let config_path = config_path
         .ok_or_else(|| CliError::Usage(format!("scheduler {subcommand} requires --config")))?;
     let config = load_config_from_path(&config_path)?;
+    let config_path = canonical_config_path(config_path);
     let scheduler = &config.scheduler;
     let schedule = Schedule::parse(at.as_deref().or(scheduler.at.as_deref()).unwrap_or("03:00"))?;
     let mode = match mode {
@@ -165,6 +167,10 @@ fn parse_scheduler_request(
     };
     let request = SchedulerRequest {
         platform,
+        instance_name: scheduler_instance_name_from_config(
+            scheduler.name.as_deref(),
+            &config_path,
+        )?,
         config_path,
         cargo_reclaim_bin: cargo_reclaim_bin.unwrap_or_else(default_cargo_reclaim_bin),
         schedule,
@@ -285,6 +291,10 @@ pub(super) fn parse_mode(value: &str) -> Result<SchedulerMode, CliError> {
 
 fn default_cargo_reclaim_bin() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cargo-reclaim"))
+}
+
+fn canonical_config_path(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
 }
 
 fn scheduler_help() -> &'static str {

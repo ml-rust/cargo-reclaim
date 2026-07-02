@@ -213,6 +213,7 @@ pub struct ScannerConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 pub struct SchedulerConfig {
+    pub name: Option<String>,
     pub at: Option<String>,
     pub mode: Option<String>,
     pub policy: Option<String>,

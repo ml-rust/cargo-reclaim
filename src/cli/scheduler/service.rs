@@ -5,9 +5,9 @@ use std::process::ExitCode;
 
 use cargo_reclaim::{
     BackgroundServiceOptions, BackgroundServicePaths, BackgroundServiceState,
-    BackgroundServiceStatus, ReclaimConfig, SchedulerPlatform, default_log_dir, default_state_dir,
-    load_config_from_path, read_background_service_state, refresh_background_service_state,
-    run_background_service,
+    BackgroundServiceStatus, ReclaimConfig, SchedulerPlatform, default_instance_log_dir,
+    default_instance_state_dir, load_config_from_path, read_background_service_state,
+    refresh_background_service_state, run_background_service, scheduler_instance_name_from_config,
 };
 
 use super::super::{CliError, OutputFormat, inline_config_path, next_path, next_value};
@@ -162,7 +162,8 @@ fn run_service(
     output: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
     let config = load_config_from_path(&command.config_path)?;
-    let options = service_options(&command.config_path, &config, command.max_cycles);
+    let config_path = canonical_config_path(command.config_path.clone());
+    let options = service_options(&config_path, &config, command.max_cycles)?;
     let summary = run_background_service(options, &config)?;
     match command.output_format {
         OutputFormat::Terminal => {
@@ -188,7 +189,8 @@ fn run_status(
     output: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
     let config = load_config_from_path(&command.config_path)?;
-    let paths = service_paths(&config);
+    let config_path = canonical_config_path(command.config_path.clone());
+    let paths = service_paths(&config_path, &config)?;
     let state = read_background_service_state(&paths.state_path)?
         .map(refresh_background_service_state)
         .unwrap_or_else(BackgroundServiceState::missing);
@@ -203,30 +205,31 @@ fn service_options(
     config_path: &std::path::Path,
     config: &ReclaimConfig,
     max_cycles: Option<usize>,
-) -> BackgroundServiceOptions {
-    let paths = service_paths(config);
-    BackgroundServiceOptions {
+) -> Result<BackgroundServiceOptions, CliError> {
+    let paths = service_paths(config_path, config)?;
+    Ok(BackgroundServiceOptions {
         config_path: config_path.to_path_buf(),
         state_dir: paths.state_dir,
         log_dir: paths.log_dir,
         mode: None,
         max_cycles,
-    }
+    })
 }
 
-fn service_paths(config: &ReclaimConfig) -> BackgroundServicePaths {
-    BackgroundServicePaths::new(
-        config
-            .scheduler
-            .state_dir
-            .clone()
-            .unwrap_or_else(|| default_state_dir(SchedulerPlatform::SystemdUser)),
-        config
-            .scheduler
-            .log_dir
-            .clone()
-            .unwrap_or_else(|| default_log_dir(SchedulerPlatform::SystemdUser)),
-    )
+fn service_paths(
+    config_path: &std::path::Path,
+    config: &ReclaimConfig,
+) -> Result<BackgroundServicePaths, CliError> {
+    let instance_name =
+        scheduler_instance_name_from_config(config.scheduler.name.as_deref(), config_path)?;
+    Ok(BackgroundServicePaths::new(
+        config.scheduler.state_dir.clone().unwrap_or_else(|| {
+            default_instance_state_dir(SchedulerPlatform::SystemdUser, &instance_name)
+        }),
+        config.scheduler.log_dir.clone().unwrap_or_else(|| {
+            default_instance_log_dir(SchedulerPlatform::SystemdUser, &instance_name)
+        }),
+    ))
 }
 
 fn write_status_terminal(
@@ -296,4 +299,39 @@ fn parse_max_cycles(value: &str) -> Result<usize, CliError> {
         ));
     }
     Ok(max_cycles)
+}
+
+fn canonical_config_path(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use cargo_reclaim::parse_config;
+
+    use super::service_paths;
+
+    #[test]
+    fn service_paths_use_instance_scoped_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let config = parse_config("version = 1\n")?;
+        let paths = service_paths(Path::new("/tmp/projects/nodedb.toml"), &config)?;
+
+        assert!(
+            paths
+                .state_dir
+                .display()
+                .to_string()
+                .contains("cargo-reclaim/nodedb-")
+        );
+        assert!(
+            paths
+                .log_dir
+                .display()
+                .to_string()
+                .contains("cargo-reclaim/logs/nodedb-")
+        );
+        Ok(())
+    }
 }

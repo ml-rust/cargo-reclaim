@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use cargo_reclaim::{
     GeneratedArtifactKind, PolicyKind, Schedule, SchedulerError, SchedulerMode, SchedulerOperation,
     SchedulerPlanStep, SchedulerPlatform, SchedulerRequest, generate_scheduler_artifacts,
-    plan_scheduler_install, plan_scheduler_uninstall,
+    plan_scheduler_install, plan_scheduler_uninstall, scheduler_instance_name_from_config,
 };
 
 fn request(platform: SchedulerPlatform) -> SchedulerRequest {
     SchedulerRequest {
         platform,
+        instance_name: "daily-workstation".to_string(),
         config_path: PathBuf::from("/tmp/reclaim config.toml"),
         cargo_reclaim_bin: PathBuf::from("/usr/local/bin/cargo-reclaim"),
         schedule: Schedule::default(),
@@ -19,6 +20,52 @@ fn request(platform: SchedulerPlatform) -> SchedulerRequest {
         state_dir: Some(PathBuf::from("/tmp/cargo reclaim/state")),
         log_dir: Some(PathBuf::from("/tmp/cargo reclaim/logs")),
     }
+}
+
+#[test]
+fn derives_safe_instance_name_from_config_path() -> Result<(), Box<dyn std::error::Error>> {
+    let first = scheduler_instance_name_from_config(None, &PathBuf::from("/tmp/a/reclaim.toml"))?;
+    let second = scheduler_instance_name_from_config(None, &PathBuf::from("/tmp/b/reclaim.toml"))?;
+
+    assert!(first.starts_with("reclaim-"));
+    assert!(
+        first
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.'))
+    );
+    assert_ne!(first, second);
+    Ok(())
+}
+
+#[test]
+fn rejects_unsafe_explicit_instance_name() {
+    for name in [
+        "",
+        ".",
+        "..",
+        "daily/reclaim",
+        "daily\\reclaim",
+        "daily reclaim",
+        "daily:reclaim",
+    ] {
+        assert!(
+            scheduler_instance_name_from_config(Some(name), &PathBuf::from("/tmp/reclaim.toml"))
+                .is_err(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn scheduler_request_rejects_unsafe_instance_name() {
+    let mut request = request(SchedulerPlatform::SystemdUser);
+    request.instance_name = "bad/name".to_string();
+
+    assert_eq!(
+        generate_scheduler_artifacts(request).unwrap_err(),
+        SchedulerError::InvalidInstanceName("bad/name".to_string())
+    );
 }
 
 #[test]
@@ -153,7 +200,11 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
         .expect("systemd timer");
     assert!(timer.contents.contains("OnCalendar=*-*-* 03:00:00"));
     assert!(timer.contents.contains("Persistent=true"));
-    assert!(timer.contents.contains("Unit=cargo-reclaim.service"));
+    assert!(
+        timer
+            .contents
+            .contains("Unit=cargo-reclaim-daily-workstation.service")
+    );
 
     let launchd = generate_scheduler_artifacts(request(SchedulerPlatform::Launchd))?;
     assert!(
@@ -176,6 +227,11 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
         .expect("plist");
     assert!(plist.contents.contains("<key>KeepAlive</key>"));
     assert!(plist.contents.contains("<key>RunAtLoad</key>"));
+    assert!(
+        plist
+            .contents
+            .contains("<string>com.cargo-reclaim.daily-workstation</string>")
+    );
     assert!(!plist.contents.contains("StartCalendarInterval"));
 
     let task = generate_scheduler_artifacts(request(SchedulerPlatform::TaskScheduler))?;
@@ -242,7 +298,7 @@ fn escapes_paths_in_scripts_and_xml() -> Result<(), Box<dyn std::error::Error>> 
         .expect("xml");
     assert!(
         xml.contents
-            .contains("-NoProfile -ExecutionPolicy Bypass -File &apos;/tmp/state &amp; logs/state/scheduler-runner.ps1&apos;")
+            .contains("-NoProfile -ExecutionPolicy Bypass -File &apos;/tmp/state &amp; logs/state/scheduler-runner-daily-workstation.ps1&apos;")
     );
     Ok(())
 }
@@ -269,7 +325,7 @@ fn systemd_install_plan_writes_artifacts_and_registers_service()
     assert!(plan.steps.iter().any(|step| matches!(
         step,
         SchedulerPlanStep::SetExecutable { path }
-            if path.display().to_string().ends_with("scheduler-runner.sh")
+            if path.display().to_string().ends_with("scheduler-runner-daily-workstation.sh")
     )));
     assert!(has_command(
         &plan.steps,
@@ -282,8 +338,8 @@ fn systemd_install_plan_writes_artifacts_and_registers_service()
             "--user",
             "enable",
             "--now",
-            "cargo-reclaim.service",
-            "cargo-reclaim.timer"
+            "cargo-reclaim-daily-workstation.service",
+            "cargo-reclaim-daily-workstation.timer"
         ]
     ));
     Ok(())
@@ -302,17 +358,26 @@ fn systemd_uninstall_plan_disables_service_and_removes_known_files()
             "--user",
             "disable",
             "--now",
-            "cargo-reclaim.service",
-            "cargo-reclaim.timer"
+            "cargo-reclaim-daily-workstation.service",
+            "cargo-reclaim-daily-workstation.timer"
         ]
     ));
     assert!(has_command(
         &plan.steps,
         &["systemctl", "--user", "daemon-reload"]
     ));
-    assert!(has_remove_step(&plan.steps, "scheduler-runner.sh"));
-    assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
-    assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    assert!(has_remove_step(
+        &plan.steps,
+        "scheduler-runner-daily-workstation.sh"
+    ));
+    assert!(has_remove_step(
+        &plan.steps,
+        "cargo-reclaim-daily-workstation.service"
+    ));
+    assert!(has_remove_step(
+        &plan.steps,
+        "cargo-reclaim-daily-workstation.timer"
+    ));
     assert!(matches!(
         plan.steps.last(),
         Some(SchedulerPlanStep::RunCommand { argv })
@@ -334,7 +399,10 @@ fn uninstall_plan_does_not_require_cleanup_policy_allowance()
     let plan = plan_scheduler_uninstall(request)?;
 
     assert_eq!(plan.operation, SchedulerOperation::Uninstall);
-    assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
+    assert!(has_remove_step(
+        &plan.steps,
+        "cargo-reclaim-daily-workstation.service"
+    ));
     Ok(())
 }
 
@@ -370,14 +438,17 @@ fn task_scheduler_install_plan_uses_state_xml_path() -> Result<(), Box<dyn std::
         .display()
         .to_string();
 
-    assert_eq!(xml, "/tmp/cargo reclaim/state/cargo-reclaim.xml");
+    assert_eq!(
+        xml,
+        "/tmp/cargo reclaim/state/cargo-reclaim-daily-workstation.xml"
+    );
     assert!(has_command(
         &plan.steps,
         &[
             "schtasks",
             "/Create",
             "/TN",
-            r"\cargo-reclaim",
+            r"\cargo-reclaim\daily-workstation",
             "/XML",
             &xml,
             "/F"
@@ -385,7 +456,13 @@ fn task_scheduler_install_plan_uses_state_xml_path() -> Result<(), Box<dyn std::
     ));
     assert!(has_command(
         &plan_scheduler_uninstall(request(SchedulerPlatform::TaskScheduler))?.steps,
-        &["schtasks", "/Delete", "/TN", r"\cargo-reclaim", "/F"]
+        &[
+            "schtasks",
+            "/Delete",
+            "/TN",
+            r"\cargo-reclaim\daily-workstation",
+            "/F"
+        ]
     ));
     Ok(())
 }

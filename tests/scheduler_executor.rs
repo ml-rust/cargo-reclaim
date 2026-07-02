@@ -10,6 +10,7 @@ use cargo_reclaim::{
 fn request(platform: SchedulerPlatform) -> SchedulerRequest {
     SchedulerRequest {
         platform,
+        instance_name: "daily-workstation".to_string(),
         config_path: PathBuf::from("/tmp/reclaim config.toml"),
         cargo_reclaim_bin: PathBuf::from("/usr/local/bin/cargo-reclaim"),
         schedule: Schedule::default(),
