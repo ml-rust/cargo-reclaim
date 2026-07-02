@@ -12,6 +12,7 @@ pub struct ReclaimConfig {
     pub ignored_paths: Vec<PathBuf>,
     pub policy: Option<String>,
     pub scanner: ScannerConfig,
+    pub scheduler: SchedulerConfig,
     pub recent_write_keep_window: Option<Duration>,
 }
 
@@ -51,6 +52,10 @@ impl ReclaimConfig {
                 .collect(),
             policy: document.policy.and_then(|policy| policy.mode),
             scanner: document.scanner.unwrap_or_default(),
+            scheduler: document
+                .scheduler
+                .unwrap_or_default()
+                .resolve_paths(relative_base),
             recent_write_keep_window: planner_recent_write_keep_window
                 .or(policy_keep_recent_projects),
         })
@@ -62,6 +67,29 @@ pub struct ScannerConfig {
     pub follow_symlinks: Option<bool>,
     pub allow_name_only_targets: Option<bool>,
     pub cross_filesystems: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct SchedulerConfig {
+    pub at: Option<String>,
+    pub mode: Option<String>,
+    pub policy: Option<String>,
+    pub allow_unattended_cleanup: Option<bool>,
+    pub allow_unattended_high_policy: Option<bool>,
+    pub state_dir: Option<PathBuf>,
+    pub log_dir: Option<PathBuf>,
+}
+
+impl SchedulerConfig {
+    fn resolve_paths(mut self, relative_base: Option<&Path>) -> Self {
+        self.state_dir = self
+            .state_dir
+            .map(|path| resolve_config_path(path, relative_base));
+        self.log_dir = self
+            .log_dir
+            .map(|path| resolve_config_path(path, relative_base));
+        self
+    }
 }
 
 pub fn load_config_from_path(path: impl AsRef<Path>) -> Result<ReclaimConfig, ConfigError> {
@@ -169,6 +197,8 @@ struct ConfigDocument {
     scanner: Option<ScannerConfig>,
     #[serde(default)]
     planner: Option<PlannerConfig>,
+    #[serde(default)]
+    scheduler: Option<SchedulerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,6 +278,15 @@ cross_filesystems = true
 [planner]
 recent_write_keep_window = "4h"
 
+[scheduler]
+at = "04:15"
+mode = "cleanup"
+policy = "conservative"
+allow_unattended_cleanup = true
+allow_unattended_high_policy = false
+state_dir = "state"
+log_dir = "logs"
+
 [background]
 enabled = true
 mode = "periodic"
@@ -271,6 +310,13 @@ field = true
         assert_eq!(config.scanner.follow_symlinks, Some(true));
         assert_eq!(config.scanner.allow_name_only_targets, Some(true));
         assert_eq!(config.scanner.cross_filesystems, Some(true));
+        assert_eq!(config.scheduler.at.as_deref(), Some("04:15"));
+        assert_eq!(config.scheduler.mode.as_deref(), Some("cleanup"));
+        assert_eq!(config.scheduler.policy.as_deref(), Some("conservative"));
+        assert_eq!(config.scheduler.allow_unattended_cleanup, Some(true));
+        assert_eq!(config.scheduler.allow_unattended_high_policy, Some(false));
+        assert_eq!(config.scheduler.state_dir, Some(PathBuf::from("state")));
+        assert_eq!(config.scheduler.log_dir, Some(PathBuf::from("logs")));
         Ok(())
     }
 
@@ -282,6 +328,10 @@ field = true
 version = 1
 roots = ["workspace", "/absolute"]
 ignore = ["workspace/target"]
+
+[scheduler]
+state_dir = "state"
+log_dir = "logs"
 "#,
             Some(Path::new("/tmp/reclaim-configs")),
         )?;
@@ -296,6 +346,14 @@ ignore = ["workspace/target"]
         assert_eq!(
             config.ignored_paths,
             [PathBuf::from("/tmp/reclaim-configs/workspace/target")]
+        );
+        assert_eq!(
+            config.scheduler.state_dir,
+            Some(PathBuf::from("/tmp/reclaim-configs/state"))
+        );
+        assert_eq!(
+            config.scheduler.log_dir,
+            Some(PathBuf::from("/tmp/reclaim-configs/logs"))
         );
         Ok(())
     }

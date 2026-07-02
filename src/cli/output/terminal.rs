@@ -10,7 +10,7 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "cargo-reclaim")?;
     writeln!(
         output,
-        "Usage: cargo-reclaim <scan|plan|apply|edit-plan> [OPTIONS]"
+        "Usage: cargo-reclaim <scan|plan|apply|edit-plan|scheduler> [OPTIONS]"
     )?;
     writeln!(output)?;
     writeln!(output, "Commands:")?;
@@ -20,6 +20,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(
         output,
         "  edit-plan  Edit explicit entries in a persisted plan"
+    )?;
+    writeln!(
+        output,
+        "  scheduler preview  Preview scheduler artifacts only"
     )?;
     writeln!(output)?;
     writeln!(output, "Options:")?;

@@ -10,6 +10,7 @@ pub mod plan_edit;
 pub mod planner;
 pub mod policy;
 pub mod scanner;
+mod scheduler;
 
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use config::{ConfigError, ReclaimConfig, load_config_from_path, parse_config};
@@ -50,4 +51,8 @@ pub use scanner::{
     TargetCandidateKind, TargetDirOverride, TargetDirOverrideSource, classify_target_candidate,
     detect_cargo_project, resolve_project_output_dirs, resolve_project_output_dirs_with_env,
     scan_roots,
+};
+pub use scheduler::{
+    GeneratedArtifact, GeneratedArtifactKind, Schedule, SchedulerError, SchedulerMode,
+    SchedulerPlatform, SchedulerReport, SchedulerRequest, generate_scheduler_artifacts,
 };
