@@ -1,3 +1,4 @@
+pub mod background;
 pub mod cargo_home;
 pub mod classifier;
 pub mod config;
@@ -14,6 +15,13 @@ pub mod scanner;
 mod scheduler;
 pub mod watcher;
 
+pub use background::{
+    BACKGROUND_RUN_LOG_SCHEMA_VERSION, BackgroundApplyEntrySummary, BackgroundApplySummary,
+    BackgroundApplyTotals, BackgroundPlanSummary, BackgroundPlanTotals, BackgroundRunEventKind,
+    BackgroundRunLogError, BackgroundRunLogRecord, BackgroundRunLogResult,
+    BackgroundSkippedProject, BackgroundTriggerReasonSummary, BackgroundTriggerSummary,
+    append_background_run_log_record, read_background_run_log,
+};
 pub use cargo_home::{
     CARGO_HOME_PLAN_SCHEMA_VERSION, CARGO_HOME_REPORT_SCHEMA_VERSION, CargoHomeClass,
     CargoHomeEntry, CargoHomeError, CargoHomeInput, CargoHomePathKind, CargoHomePlan,
