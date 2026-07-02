@@ -4,6 +4,13 @@ cargo-reclaim is a trust-first Rust artifact cleanup tool for Cargo projects and
 
 Supported Rust: `cargo-reclaim` targets Rust 1.85+ for edition 2024 support.
 
+## Install
+
+```sh
+cargo install cargo-reclaim
+cargo install --path .
+```
+
 The default mode is conservative: `scan` and `plan` are dry-run only, `apply` validates a saved plan before execution, and `--json` is available for stable machine-readable output. The CLI does not expose a GUI and it does not pretend to modify Cargo state unless a command explicitly says it will.
 
 ## Safety Model
@@ -65,6 +72,13 @@ cargo-reclaim scheduler service status --config reclaim.toml
 ```
 
 `scheduler preview` emits the platform-specific installation artifacts without writing them, including a systemd user service plus timer on Linux. `scheduler install` and `scheduler uninstall` can stay in dry-run mode or execute through the selected backend. Installed artifacts supervise `scheduler service run`, which keeps a resident background loop alive, records durable service state, and writes JSONL run logs. `scheduler service run` and `scheduler service status` are config-driven; `status` reads persisted service state and can report `unknown` before the service has written state. `scheduler run` remains available as a single-cycle background execution entrypoint for diagnostics and compatibility.
+
+## Platform Notes
+
+- Linux uses `procfs` for active-process detection, so it can observe running `cargo` and `rustc` processes when `/proc` is readable; on non-Linux platforms active-process detection is not attempted and the planner proceeds without live process observation.
+- `scheduler preview`, `install`, and `uninstall` support backend-specific artifacts for `systemd-user` on Linux, `launchd` on macOS, and `task-scheduler` on Windows.
+- The scheduler service is a resident loop started by installed service artifacts; it persists service state and run logs, while `scheduler service status` reports the last recorded state, may return `unknown` until the service has written state, and reports `stale` when a saved running PID is definitely dead.
+- Cargo config resolution treats `build-dir = "{workspace-root}/{workspace-path-hash}"` as unsupported, so that template is reported instead of being used as a write target.
 
 ## Cargo Config Commands
 
