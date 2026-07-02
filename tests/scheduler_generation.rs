@@ -81,28 +81,19 @@ fn rejects_invalid_hh_mm() {
 }
 
 #[test]
-fn generated_runner_uses_explicit_config_policy_and_timestamped_plan()
--> Result<(), Box<dyn std::error::Error>> {
+fn generated_runner_starts_resident_service() -> Result<(), Box<dyn std::error::Error>> {
     let report = generate_scheduler_artifacts(request(SchedulerPlatform::SystemdUser))?;
     let runner = report
         .artifacts
         .iter()
         .find(|artifact| artifact.kind == GeneratedArtifactKind::RunnerScript)
         .expect("runner artifact");
-    assert!(runner.contents.contains(" scheduler run "));
+    assert!(runner.contents.contains(" scheduler service run "));
     assert!(runner.contents.contains(" --config "));
-    assert!(runner.contents.contains(" --run-id "));
-    assert!(runner.contents.contains(" --log-path "));
-    assert!(runner.contents.contains(" --plan-path "));
     assert!(runner.contents.contains(" --json "));
-    assert!(
-        runner
-            .contents
-            .contains("RUN_LOG_PATH=\"$LOG_DIR/runs.jsonl\"")
-    );
-    assert!(runner.contents.contains("--log-path \"$RUN_LOG_PATH\""));
-    assert!(!runner.contents.contains("--log-path \"$LOG_PATH\""));
-    assert!(runner.contents.contains("cargo-reclaim-$STAMP.json"));
+    assert!(!runner.contents.contains(" scheduler run "));
+    assert!(!runner.contents.contains(" --run-id "));
+    assert!(!runner.contents.contains(" --plan-path "));
     assert!(!runner.contents.contains(" apply --plan "));
     assert!(!runner.contents.contains(" plan --config "));
     assert!(!runner.contents.contains(" last"));
@@ -145,8 +136,16 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
         systemd
             .artifacts
             .iter()
-            .any(|artifact| artifact.kind == GeneratedArtifactKind::SystemdTimer)
+            .all(|artifact| artifact.kind != GeneratedArtifactKind::SystemdTimer)
     );
+    let service = systemd
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == GeneratedArtifactKind::SystemdService)
+        .expect("systemd service");
+    assert!(service.contents.contains("Type=simple"));
+    assert!(service.contents.contains("Restart=on-failure"));
+    assert!(!service.contents.contains("Type=oneshot"));
 
     let launchd = generate_scheduler_artifacts(request(SchedulerPlatform::Launchd))?;
     assert!(
@@ -162,6 +161,14 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
             .to_string()
             .contains("LaunchAgents")
     }));
+    let plist = launchd
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == GeneratedArtifactKind::LaunchdPlist)
+        .expect("plist");
+    assert!(plist.contents.contains("<key>KeepAlive</key>"));
+    assert!(plist.contents.contains("<key>RunAtLoad</key>"));
+    assert!(!plist.contents.contains("StartCalendarInterval"));
 
     let task = generate_scheduler_artifacts(request(SchedulerPlatform::TaskScheduler))?;
     assert!(
@@ -176,6 +183,14 @@ fn platform_artifact_kinds_and_paths() -> Result<(), Box<dyn std::error::Error>>
             .to_string()
             .contains("Task Scheduler")
     }));
+    let xml = task
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == GeneratedArtifactKind::TaskSchedulerXml)
+        .expect("task xml");
+    assert!(xml.contents.contains("<LogonTrigger>"));
+    assert!(xml.contents.contains("<RestartOnFailure>"));
+    assert!(!xml.contents.contains("<CalendarTrigger>"));
     Ok(())
 }
 
@@ -225,7 +240,7 @@ fn escapes_paths_in_scripts_and_xml() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
-fn systemd_install_plan_writes_artifacts_and_registers_timer()
+fn systemd_install_plan_writes_artifacts_and_registers_service()
 -> Result<(), Box<dyn std::error::Error>> {
     let plan = plan_scheduler_install(request(SchedulerPlatform::SystemdUser))?;
 
@@ -239,7 +254,7 @@ fn systemd_install_plan_writes_artifacts_and_registers_timer()
         &plan.steps,
         GeneratedArtifactKind::SystemdService
     ));
-    assert!(has_write_step(
+    assert!(!has_write_step(
         &plan.steps,
         GeneratedArtifactKind::SystemdTimer
     ));
@@ -259,14 +274,14 @@ fn systemd_install_plan_writes_artifacts_and_registers_timer()
             "--user",
             "enable",
             "--now",
-            "cargo-reclaim.timer"
+            "cargo-reclaim.service"
         ]
     ));
     Ok(())
 }
 
 #[test]
-fn systemd_uninstall_plan_disables_timer_and_removes_known_files()
+fn systemd_uninstall_plan_disables_service_and_removes_known_files()
 -> Result<(), Box<dyn std::error::Error>> {
     let plan = plan_scheduler_uninstall(request(SchedulerPlatform::SystemdUser))?;
 
@@ -278,7 +293,7 @@ fn systemd_uninstall_plan_disables_timer_and_removes_known_files()
             "--user",
             "disable",
             "--now",
-            "cargo-reclaim.timer"
+            "cargo-reclaim.service"
         ]
     ));
     assert!(has_command(
@@ -287,7 +302,7 @@ fn systemd_uninstall_plan_disables_timer_and_removes_known_files()
     ));
     assert!(has_remove_step(&plan.steps, "scheduler-runner.sh"));
     assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
-    assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    assert!(!has_remove_step(&plan.steps, "cargo-reclaim.timer"));
     assert!(matches!(
         plan.steps.last(),
         Some(SchedulerPlanStep::RunCommand { argv })
@@ -309,7 +324,7 @@ fn uninstall_plan_does_not_require_cleanup_policy_allowance()
     let plan = plan_scheduler_uninstall(request)?;
 
     assert_eq!(plan.operation, SchedulerOperation::Uninstall);
-    assert!(has_remove_step(&plan.steps, "cargo-reclaim.timer"));
+    assert!(has_remove_step(&plan.steps, "cargo-reclaim.service"));
     Ok(())
 }
 

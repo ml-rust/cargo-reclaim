@@ -57,10 +57,11 @@ cargo-reclaim cargo-home apply --plan cargo-home-plan.json --yes
 cargo-reclaim scheduler preview --platform systemd-user --config reclaim.toml
 cargo-reclaim scheduler install --platform launchd --config reclaim.toml --dry-run
 cargo-reclaim scheduler uninstall --platform task-scheduler --config reclaim.toml --dry-run
-cargo-reclaim scheduler run --config reclaim.toml --run-id test --log-path runs.jsonl --plan-path plan.json
+cargo-reclaim scheduler service run --config reclaim.toml
+cargo-reclaim scheduler service status --config reclaim.toml
 ```
 
-`scheduler preview` emits the platform-specific installation artifacts without writing them. `scheduler install` and `scheduler uninstall` can stay in dry-run mode or execute through the selected backend, while `scheduler run` is the background cycle entrypoint used by scheduled jobs.
+`scheduler preview` emits the platform-specific installation artifacts without writing them. `scheduler install` and `scheduler uninstall` can stay in dry-run mode or execute through the selected backend. Installed artifacts supervise `scheduler service run`, which keeps a resident background loop alive, records durable service state, and writes JSONL run logs. `scheduler run` remains available as a single-cycle background execution entrypoint for diagnostics and compatibility.
 
 ## Cargo Config Commands
 

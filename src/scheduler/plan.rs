@@ -96,11 +96,6 @@ fn uninstall_artifacts(
                 intended_install_path: paths.systemd_service_path(),
                 contents: String::new(),
             },
-            GeneratedArtifact {
-                kind: GeneratedArtifactKind::SystemdTimer,
-                intended_install_path: paths.systemd_timer_path(),
-                contents: String::new(),
-            },
         ],
         SchedulerPlatform::Launchd => vec![
             GeneratedArtifact {
@@ -179,7 +174,7 @@ fn install_commands(
                 "--user",
                 "enable",
                 "--now",
-                "cargo-reclaim.timer",
+                "cargo-reclaim.service",
             ]),
         ],
         SchedulerPlatform::Launchd => plist_path(artifacts)
@@ -213,7 +208,7 @@ fn uninstall_commands(platform: SchedulerPlatform) -> Vec<SchedulerPlanStep> {
             "--user",
             "disable",
             "--now",
-            "cargo-reclaim.timer",
+            "cargo-reclaim.service",
         ])],
         SchedulerPlatform::Launchd => {
             vec![run_command(["launchctl", "remove", "com.cargo-reclaim"])]

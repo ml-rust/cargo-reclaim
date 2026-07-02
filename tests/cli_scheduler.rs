@@ -29,8 +29,8 @@ fn preview_systemd_terminal_reports_dry_run_and_artifacts() -> Result<(), Box<dy
     assert!(stdout.contains("dry-run only"));
     assert!(stdout.contains("no scheduler files were installed"));
     assert!(stdout.contains("systemd-service"));
-    assert!(stdout.contains("systemd-timer"));
     assert!(stdout.contains("runner-script"));
+    assert!(!stdout.contains("systemd-timer"));
     Ok(())
 }
 
@@ -174,7 +174,7 @@ log_dir = "logs"
     assert_eq!(document["operation"], "install");
     assert_eq!(document["dry_run"], true);
     assert_eq!(document["platform"], "systemd-user");
-    assert!(document["artifacts"].as_array().expect("artifacts").len() >= 3);
+    assert!(document["artifacts"].as_array().expect("artifacts").len() >= 2);
     assert!(
         document["steps"]
             .as_array()

@@ -16,7 +16,7 @@ pub(super) fn write_preview_terminal(
     writeln!(output, "cargo-reclaim scheduler preview")?;
     writeln!(
         output,
-        "dry-run only; no scheduler files were installed, tasks were registered, timers were enabled, or plans were run"
+        "dry-run only; no scheduler files were installed, services or tasks were registered, or plans were run"
     )?;
     writeln!(output, "platform: {}", platform_label(report.platform))?;
     writeln!(output, "mode: {}", mode_label(report.mode))?;

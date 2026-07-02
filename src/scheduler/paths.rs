@@ -5,7 +5,6 @@ use super::model::{SchedulerPlatform, SchedulerRequest};
 pub(crate) struct SchedulerPaths {
     pub(crate) state_dir: PathBuf,
     pub(crate) log_dir: PathBuf,
-    pub(crate) plans_dir: PathBuf,
     pub(crate) runner_path: PathBuf,
     pub(crate) log_path: PathBuf,
 }
@@ -26,7 +25,6 @@ impl SchedulerPaths {
             SchedulerPlatform::TaskScheduler => state_dir.join("scheduler-runner.ps1"),
         };
         Self {
-            plans_dir: state_dir.join("plans"),
             log_path: log_dir.join("scheduler.log"),
             state_dir,
             log_dir,
@@ -42,12 +40,6 @@ impl SchedulerPaths {
         home_dir()
             .map(|home| home.join(".config/systemd/user/cargo-reclaim.service"))
             .unwrap_or_else(|| PathBuf::from(".config/systemd/user/cargo-reclaim.service"))
-    }
-
-    pub(crate) fn systemd_timer_path(&self) -> PathBuf {
-        home_dir()
-            .map(|home| home.join(".config/systemd/user/cargo-reclaim.timer"))
-            .unwrap_or_else(|| PathBuf::from(".config/systemd/user/cargo-reclaim.timer"))
     }
 
     pub(crate) fn launchd_plist_path(&self) -> PathBuf {
