@@ -403,19 +403,10 @@ fn is_configured_ignored(path: &Path, options: &ScannerOptions) -> bool {
 }
 
 fn is_configured_skipped(path: &Path, options: &ScannerOptions) -> bool {
-    let Some(path) = real_path(path) else {
-        return false;
-    };
+    let normalized_path = lexically_normalize(path);
     options.skipped_paths.iter().any(|skipped| {
-        real_path(skipped).is_some_and(|skipped| path == skipped || path.starts_with(skipped))
-    })
-}
-
-fn real_path(path: &Path) -> Option<PathBuf> {
-    fs::canonicalize(path).ok().or_else(|| {
-        let parent = path.parent()?;
-        let file_name = path.file_name()?;
-        Some(fs::canonicalize(parent).ok()?.join(file_name))
+        let skipped = lexically_normalize(skipped);
+        normalized_path == skipped || normalized_path.starts_with(skipped)
     })
 }
 

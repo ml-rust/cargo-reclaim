@@ -4,8 +4,8 @@ use std::time::SystemTime;
 
 use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::ReclaimResult;
+use crate::inventory::snapshot_path;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
-use crate::inventory::{real_inventory_path, snapshot_path};
 use crate::model::{ArtifactClass, Plan, PlanInput};
 use crate::planner::{
     ActiveObservation, PlannerCandidate, PlannerOptions, TargetContext, WholeTargetMode,
@@ -327,11 +327,25 @@ fn build_plan_from_scan_items_with_active_observation_impl(
 }
 
 fn has_skipped_descendant(target_root: &Path, inventory_options: &InventoryOptions) -> bool {
-    let Some(target_root) = real_inventory_path(target_root) else {
-        return false;
-    };
+    let target_root = lexically_normalize(target_root);
     inventory_options.skipped_paths.iter().any(|skipped| {
-        real_inventory_path(skipped)
-            .is_some_and(|skipped| skipped != target_root && skipped.starts_with(&target_root))
+        let skipped = lexically_normalize(skipped);
+        skipped != target_root && skipped.starts_with(&target_root)
     })
+}
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    normalized
 }

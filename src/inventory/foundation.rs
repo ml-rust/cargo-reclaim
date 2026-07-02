@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::classifier::classify_target_relative_path;
@@ -98,18 +97,25 @@ pub(super) fn target_context_from_evidence(
 }
 
 pub(super) fn is_configured_skipped(path: &Path, options: &InventoryOptions) -> bool {
-    let Some(path) = real_path(path) else {
-        return false;
-    };
+    let normalized_path = lexically_normalize(path);
     options.skipped_paths.iter().any(|skipped| {
-        real_path(skipped).is_some_and(|skipped| path == skipped || path.starts_with(skipped))
+        let skipped = lexically_normalize(skipped);
+        normalized_path == skipped || normalized_path.starts_with(skipped)
     })
 }
 
-pub(crate) fn real_path(path: &Path) -> Option<PathBuf> {
-    fs::canonicalize(path).ok().or_else(|| {
-        let parent = path.parent()?;
-        let file_name = path.file_name()?;
-        Some(fs::canonicalize(parent).ok()?.join(file_name))
-    })
+pub(super) fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    normalized
 }
