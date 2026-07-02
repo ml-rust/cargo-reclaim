@@ -101,6 +101,14 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  --keep-installed-toolchains  Preserve fingerprint groups for installed rustup toolchains"
+    )?;
+    writeln!(
+        output,
+        "  --keep-toolchain <name>      Preserve fingerprint groups for a named rustup toolchain"
+    )?;
+    writeln!(
+        output,
         "  --cross-filesystems          Allow recursive scan across filesystem boundaries"
     )?;
     writeln!(

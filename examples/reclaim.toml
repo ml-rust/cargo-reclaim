@@ -20,6 +20,8 @@ cross_filesystems = true
 recent_write_keep_window = "4h"
 keep_size = "64 MiB"
 keep_rustc_hashes = []
+keep_installed_toolchains = false
+keep_toolchains = []
 
 [scheduler]
 at = "04:15"

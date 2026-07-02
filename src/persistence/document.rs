@@ -130,6 +130,10 @@ pub struct PersistedPlannerOptions {
     pub keep_size_bytes: Option<u64>,
     #[serde(default)]
     pub keep_rustc_hashes: Vec<u64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub keep_installed_toolchains: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keep_toolchains: Vec<String>,
     #[serde(default, skip_serializing_if = "is_default_whole_target_mode")]
     pub whole_target_mode: PersistedWholeTargetMode,
 }
@@ -142,9 +146,15 @@ impl PersistedPlannerOptions {
                 .map(|duration| duration.as_secs()),
             keep_size_bytes: options.keep_size_bytes,
             keep_rustc_hashes: options.keep_rustc_hashes.clone(),
+            keep_installed_toolchains: options.keep_installed_toolchains,
+            keep_toolchains: options.keep_toolchains.clone(),
             whole_target_mode: PersistedWholeTargetMode::from_mode(options.whole_target_mode),
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -3,6 +3,7 @@ use std::time::SystemTime;
 
 use cargo_reclaim::{
     ActiveObservationProvider, build_plan_from_roots_with_active_observation_provider,
+    resolve_command_toolchain_hash_options,
 };
 
 use super::output::write_plan;
@@ -24,8 +25,9 @@ pub(super) fn run_plan_command(
         config_version,
         scanner_options,
         inventory_options,
-        planner_options,
+        mut planner_options,
     } = command;
+    resolve_command_toolchain_hash_options(&mut planner_options)?;
     let plan = build_plan_from_roots_with_active_observation_provider(
         roots,
         policy,

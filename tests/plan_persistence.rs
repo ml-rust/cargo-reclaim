@@ -37,6 +37,8 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
                     recent_write_keep_window: Some(Duration::from_secs(900)),
                     keep_size_bytes: Some(4096),
                     keep_rustc_hashes: vec![1, 2],
+                    keep_installed_toolchains: true,
+                    keep_toolchains: vec!["stable".to_string()],
                     ..PlannerOptions::default()
                 },
             ),
@@ -78,6 +80,17 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
     assert_eq!(
         loaded.body.invocation.planner_options.keep_rustc_hashes,
         [1, 2]
+    );
+    assert!(
+        loaded
+            .body
+            .invocation
+            .planner_options
+            .keep_installed_toolchains
+    );
+    assert_eq!(
+        loaded.body.invocation.planner_options.keep_toolchains,
+        ["stable"]
     );
     assert_eq!(
         loaded.body.plan.entries[0]
@@ -172,6 +185,8 @@ fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Er
     );
     assert_eq!(invocation.planner_options.keep_size_bytes, None);
     assert!(invocation.planner_options.keep_rustc_hashes.is_empty());
+    assert!(!invocation.planner_options.keep_installed_toolchains);
+    assert!(invocation.planner_options.keep_toolchains.is_empty());
     assert_eq!(
         invocation.planner_options.whole_target_mode,
         cargo_reclaim::PersistedWholeTargetMode::Off

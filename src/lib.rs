@@ -15,6 +15,7 @@ pub mod planner;
 pub mod policy;
 pub mod scanner;
 mod scheduler;
+mod toolchain_hash;
 pub mod watcher;
 
 pub use active_process::{
@@ -116,6 +117,10 @@ pub use scheduler::{
     execute_scheduler_operation, execution_status_label, generate_scheduler_artifacts, mode_label,
     operation_label, plan_scheduler_install, plan_scheduler_uninstall, platform_label,
     policy_label,
+};
+pub use toolchain_hash::{
+    ToolchainHashError, ToolchainHashResolver, ToolchainHashResult,
+    resolve_command_toolchain_hash_options, resolve_toolchain_hash_options,
 };
 pub use watcher::{
     WatcherDecision, WatcherDecisionInput, WatcherDecisionState, WatcherMode,

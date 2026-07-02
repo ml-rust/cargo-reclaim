@@ -16,6 +16,7 @@ name = "cargo-reclaim"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "rustc-stable-hash",
  "serde",
  "serde_json",
  "sha2",
@@ -135,6 +136,12 @@ checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "rustc-stable-hash"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "781442f29170c5c93b7185ad559492601acdc71d5bb0706f5868094f45cfcd08"
 
 [[package]]
 name = "serde"

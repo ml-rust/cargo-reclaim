@@ -29,6 +29,8 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
     );
     assert_eq!(config.keep_size_bytes, Some(64 * 1024 * 1024));
     assert!(config.keep_rustc_hashes.is_empty());
+    assert!(!config.keep_installed_toolchains);
+    assert!(config.keep_toolchains.is_empty());
     assert_eq!(config.scheduler.at.as_deref(), Some("04:15"));
     assert_eq!(config.scheduler.mode.as_deref(), Some("observe"));
     assert_eq!(config.scheduler.policy.as_deref(), Some("conservative"));

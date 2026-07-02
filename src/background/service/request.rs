@@ -265,6 +265,8 @@ fn planner_options_from_config(config: &ReclaimConfig) -> PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
         keep_size_bytes: config.keep_size_bytes,
         keep_rustc_hashes: config.keep_rustc_hashes.clone(),
+        keep_installed_toolchains: config.keep_installed_toolchains,
+        keep_toolchains: config.keep_toolchains.clone(),
         whole_target_mode: config
             .whole_target
             .map(whole_target_mode_from_config)

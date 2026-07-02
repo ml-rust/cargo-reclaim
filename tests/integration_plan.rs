@@ -6,10 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cargo_reclaim::{
     ActiveObservation, ActiveObservationProvider, ActiveObservationScope, ArtifactClass, CargoTool,
     InventoryOptions, ObservedCargoProcess, PlanAction, PlannerOptions, PolicyKind, ScannerOptions,
-    TargetCandidate, TargetCandidateKind, TargetEvidence, WholeTargetMode, build_plan_from_roots,
+    TargetCandidate, TargetCandidateKind, TargetEvidence, ToolchainHashError,
+    ToolchainHashResolver, ToolchainHashResult, WholeTargetMode, build_plan_from_roots,
     build_plan_from_roots_with_active_observation,
     build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
     build_plan_from_scan_items, planner_candidates_from_target_root,
+    resolve_toolchain_hash_options,
 };
 
 #[test]
@@ -213,6 +215,90 @@ fn keep_rustc_hash_preserves_matching_hash_grouped_intermediates() -> Result<(),
     );
     assert_eq!(unkept.action, PlanAction::Delete);
     Ok(())
+}
+
+#[test]
+fn resolved_toolchain_hash_preserves_matching_hash_grouped_intermediates()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_keep_toolchain_hash")?;
+    write_manifest(temp.path())?;
+    let kept_hash = "0123456789abcdef";
+    let unkept_hash = "1111111111111111";
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/kept-{kept_hash}")))?;
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/unkept-{unkept_hash}")))?;
+    fs::write(
+        target.join(format!(
+            "debug/.fingerprint/kept-{kept_hash}/fingerprint.json"
+        )),
+        br#"{"rustc":7}"#,
+    )?;
+    fs::write(
+        target.join(format!(
+            "debug/.fingerprint/unkept-{unkept_hash}/fingerprint.json"
+        )),
+        br#"{"rustc":8}"#,
+    )?;
+    fs::write(target.join(format!("debug/kept-{kept_hash}.json")), b"kept")?;
+    fs::write(
+        target.join(format!("debug/unkept-{unkept_hash}.json")),
+        b"unkept",
+    )?;
+
+    let mut planner_options = PlannerOptions {
+        keep_installed_toolchains: true,
+        keep_toolchains: vec!["stable".to_string()],
+        ..PlannerOptions::default()
+    };
+    resolve_toolchain_hash_options(
+        &mut planner_options,
+        &FakeToolchainHashResolver {
+            installed: vec!["nightly".to_string()],
+        },
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &planner_options,
+        SystemTime::now(),
+    )?;
+
+    let kept = entry_for(&plan, target.join(format!("debug/kept-{kept_hash}.json")))?;
+    assert_eq!(kept.artifact_class, ArtifactClass::Unknown);
+    assert_eq!(kept.action, PlanAction::Unknown);
+
+    let unkept = entry_for(
+        &plan,
+        target.join(format!("debug/unkept-{unkept_hash}.json")),
+    )?;
+    assert_eq!(
+        unkept.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(unkept.action, PlanAction::Delete);
+    Ok(())
+}
+
+struct FakeToolchainHashResolver {
+    installed: Vec<String>,
+}
+
+impl ToolchainHashResolver for FakeToolchainHashResolver {
+    fn installed_toolchains(&self) -> ToolchainHashResult<Vec<String>> {
+        Ok(self.installed.clone())
+    }
+
+    fn toolchain_rustc_hash(&self, toolchain: &str) -> ToolchainHashResult<u64> {
+        match toolchain {
+            "stable" | "nightly" => Ok(7),
+            _ => Err(ToolchainHashError::EmptyRustcVersion {
+                toolchain: toolchain.to_string(),
+            }),
+        }
+    }
 }
 
 #[test]

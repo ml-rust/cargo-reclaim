@@ -16,6 +16,7 @@ use crate::persistence::{
 use crate::planner::PlannerOptions;
 use crate::policy::PolicyKind;
 use crate::scanner::ScannerOptions;
+use crate::toolchain_hash::{ToolchainHashError, resolve_command_toolchain_hash_options};
 use crate::watcher::{
     WatcherDecision, WatcherDecisionInput, WatcherDecisionState, decide_watcher_thresholds,
 };
@@ -30,6 +31,7 @@ pub type BackgroundRunnerResult<T> = Result<T, BackgroundRunnerError>;
 #[derive(Debug)]
 pub enum BackgroundRunnerError {
     BuildPlan(ReclaimError),
+    ToolchainHash(ToolchainHashError),
     PersistPlan(PlanPersistenceError),
     SavePlan(PlanPersistenceError),
     Apply(PlanPersistenceError),
@@ -45,6 +47,12 @@ impl fmt::Display for BackgroundRunnerError {
         match self {
             Self::BuildPlan(source) => {
                 write!(formatter, "failed to build background plan: {source}")
+            }
+            Self::ToolchainHash(source) => {
+                write!(
+                    formatter,
+                    "failed to resolve background toolchain hashes: {source}"
+                )
             }
             Self::PersistPlan(source) => {
                 write!(formatter, "failed to persist background plan: {source}")
@@ -69,6 +77,7 @@ impl Error for BackgroundRunnerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::BuildPlan(source) => Some(source),
+            Self::ToolchainHash(source) => Some(source),
             Self::PersistPlan(source) | Self::SavePlan(source) | Self::Apply(source) => {
                 Some(source)
             }
@@ -173,18 +182,22 @@ fn run_after_started(
     .with_trigger(trigger_summary.clone());
     append_record_or_failure(&request, &triggered)?;
 
+    let mut planner_options = request.planner_options.clone();
+    resolve_command_toolchain_hash_options(&mut planner_options)
+        .map_err(|source| failure(&request, BackgroundRunnerError::ToolchainHash(source)))?;
+
     let plan = build_plan_from_roots_with_active_observation_provider(
         request.roots.clone(),
         request.policy,
         &request.scanner_options,
         &request.inventory_options,
-        &request.planner_options,
+        &planner_options,
         active_observation_provider,
         request.now,
     )
     .map_err(|source| failure(&request, BackgroundRunnerError::BuildPlan(source)))?;
 
-    let invocation = plan_invocation(&request);
+    let invocation = plan_invocation(&request, &planner_options);
     let document = persist_plan(
         &plan,
         SavePlanOptions {
@@ -250,13 +263,16 @@ fn should_skip(state: WatcherDecisionState) -> bool {
     )
 }
 
-fn plan_invocation(request: &BackgroundRunRequest) -> PlanInvocation {
+fn plan_invocation(
+    request: &BackgroundRunRequest,
+    planner_options: &PlannerOptions,
+) -> PlanInvocation {
     let invocation = PlanInvocation::new(
         PlanCommandKind::Plan,
         request.policy,
         &request.scanner_options,
         &request.inventory_options,
-        &request.planner_options,
+        planner_options,
     );
 
     match (&request.config_path, request.config_version) {

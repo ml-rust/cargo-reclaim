@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use cargo_reclaim::{
-    InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions, WholeTargetConfig,
-    WholeTargetMode, load_config_from_path, platform_active_observation_provider,
+    InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions, ToolchainHashError,
+    WholeTargetConfig, WholeTargetMode, load_config_from_path,
+    platform_active_observation_provider,
 };
 
 mod apply;
@@ -162,6 +163,8 @@ fn parse_plan_command(
     let mut cli_recent_write_keep_window = false;
     let mut cli_keep_size = false;
     let mut cli_keep_rustc_hashes = false;
+    let mut cli_keep_installed_toolchains = false;
+    let mut cli_keep_toolchains = false;
     let mut whole_target_source = None;
     let mut args = args.into_iter();
 
@@ -275,6 +278,27 @@ fn parse_plan_command(
                     .push(parse_u64(&value["--keep-rustc-hash=".len()..])?);
                 cli_keep_rustc_hashes = true;
             }
+            "--keep-installed-toolchains" => {
+                planner_options.keep_installed_toolchains = true;
+                cli_keep_installed_toolchains = true;
+            }
+            "--keep-toolchain" => {
+                planner_options.keep_toolchains.push(parse_toolchain_name(
+                    next_value(&mut args, "--keep-toolchain")?,
+                    "--keep-toolchain",
+                )?);
+                cli_keep_toolchains = true;
+            }
+            value if value.starts_with("--keep-toolchain=") => {
+                let toolchain = &value["--keep-toolchain=".len()..];
+                if toolchain.is_empty() {
+                    return Err(CliError::Usage(
+                        "--keep-toolchain requires a value".to_string(),
+                    ));
+                }
+                planner_options.keep_toolchains.push(toolchain.to_string());
+                cli_keep_toolchains = true;
+            }
             "--json" => output_format = OutputFormat::Json,
             "--save-plan" => {
                 if mode != PlanMode::Plan {
@@ -342,6 +366,8 @@ fn parse_plan_command(
     };
     if let Some(config) = config {
         let config_keep_rustc_hashes = config.keep_rustc_hashes;
+        let config_keep_installed_toolchains = config.keep_installed_toolchains;
+        let config_keep_toolchains = config.keep_toolchains;
         let mut ignored_paths = config.ignored_paths;
         ignored_paths.extend(scanner_options.ignored_paths);
         scanner_options.ignored_paths = ignored_paths;
@@ -368,6 +394,12 @@ fn parse_plan_command(
         }
         if !cli_keep_rustc_hashes {
             planner_options.keep_rustc_hashes = config_keep_rustc_hashes;
+        }
+        if !cli_keep_installed_toolchains {
+            planner_options.keep_installed_toolchains = config_keep_installed_toolchains;
+        }
+        if !cli_keep_toolchains {
+            planner_options.keep_toolchains = config_keep_toolchains;
         }
         if whole_target_source.is_none()
             && let Some(whole_target) = config.whole_target
@@ -553,6 +585,13 @@ fn parse_u64(value: &str) -> Result<u64, CliError> {
         .map_err(|_| CliError::Usage(format!("invalid u64 value `{value}`")))
 }
 
+fn parse_toolchain_name(value: String, option: &'static str) -> Result<String, CliError> {
+    if value.is_empty() {
+        return Err(CliError::Usage(format!("{option} requires a value")));
+    }
+    Ok(value)
+}
+
 fn parse_whole_target_mode(value: &str) -> Result<WholeTargetMode, CliError> {
     match value {
         "off" => Ok(WholeTargetMode::Off),
@@ -586,6 +625,7 @@ enum CliError {
     CargoHome(cargo_reclaim::CargoHomeError),
     BackgroundRunner(cargo_reclaim::BackgroundRunnerError),
     BackgroundService(cargo_reclaim::BackgroundServiceError),
+    ToolchainHash(ToolchainHashError),
 }
 
 impl std::fmt::Display for CliError {
@@ -603,6 +643,7 @@ impl std::fmt::Display for CliError {
             Self::CargoHome(error) => error.fmt(formatter),
             Self::BackgroundRunner(error) => error.fmt(formatter),
             Self::BackgroundService(error) => error.fmt(formatter),
+            Self::ToolchainHash(error) => error.fmt(formatter),
         }
     }
 }
@@ -624,6 +665,7 @@ impl CliError {
             Self::CargoHome(_) => "cargo_home",
             Self::BackgroundRunner(_) => "background_runner",
             Self::BackgroundService(_) => "background_service",
+            Self::ToolchainHash(_) => "toolchain_hash",
         }
     }
 
@@ -638,6 +680,7 @@ impl CliError {
             | Self::Persistence(_) => 1,
             Self::Scheduler(_) => 2,
             Self::CargoHome(_) | Self::BackgroundRunner(_) => 1,
+            Self::ToolchainHash(_) => 1,
             Self::BackgroundService(error) => match error {
                 cargo_reclaim::BackgroundServiceError::Config(_)
                 | cargo_reclaim::BackgroundServiceError::Scheduler(_) => 2,
@@ -721,6 +764,12 @@ impl From<cargo_reclaim::BackgroundServiceError> for CliError {
     }
 }
 
+impl From<ToolchainHashError> for CliError {
+    fn from(error: ToolchainHashError) -> Self {
+        Self::ToolchainHash(error)
+    }
+}
+
 #[cfg(test)]
 fn write_manifest(path: &std::path::Path) -> Result<(), std::io::Error> {
     std::fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")
@@ -789,6 +838,10 @@ mod tests {
                 "--keep-rustc-hash",
                 "1",
                 "--keep-rustc-hash=2",
+                "--keep-installed-toolchains",
+                "--keep-toolchain",
+                "stable",
+                "--keep-toolchain=nightly",
                 "--whole-target",
                 "confirm",
                 "workspace",
@@ -827,6 +880,11 @@ mod tests {
             Some(64 * 1024 * 1024)
         );
         assert_eq!(command.planner_options.keep_rustc_hashes, [1, 2]);
+        assert!(command.planner_options.keep_installed_toolchains);
+        assert_eq!(
+            command.planner_options.keep_toolchains,
+            ["stable", "nightly"]
+        );
         assert_eq!(
             command.planner_options.whole_target_mode,
             WholeTargetMode::Confirm
@@ -860,6 +918,8 @@ cross_filesystems = true
 recent_write_keep_window = "2h"
 keep_size = "32 MiB"
 keep_rustc_hashes = [7, 8]
+keep_installed_toolchains = true
+keep_toolchains = ["stable"]
 "#,
         )?;
 
@@ -875,6 +935,7 @@ keep_rustc_hashes = [7, 8]
             OsString::from("--keep-recent-writes=30m"),
             OsString::from("--keep-size=8MiB"),
             OsString::from("--keep-rustc-hash=9"),
+            OsString::from("--keep-toolchain=nightly"),
             OsString::from("cli-root"),
         ])?
         else {
@@ -916,6 +977,8 @@ keep_rustc_hashes = [7, 8]
             Some(8 * 1024 * 1024)
         );
         assert_eq!(command.planner_options.keep_rustc_hashes, [9]);
+        assert!(command.planner_options.keep_installed_toolchains);
+        assert_eq!(command.planner_options.keep_toolchains, ["nightly"]);
         assert_eq!(
             command.planner_options.whole_target_mode,
             WholeTargetMode::Off
@@ -935,6 +998,8 @@ version = 1
 
 [planner]
 keep_rustc_hashes = [3, 5]
+keep_installed_toolchains = true
+keep_toolchains = ["stable", "nightly"]
 "#,
         )?;
 
@@ -948,6 +1013,11 @@ keep_rustc_hashes = [3, 5]
         };
 
         assert_eq!(command.planner_options.keep_rustc_hashes, [3, 5]);
+        assert!(command.planner_options.keep_installed_toolchains);
+        assert_eq!(
+            command.planner_options.keep_toolchains,
+            ["stable", "nightly"]
+        );
         Ok(())
     }
 

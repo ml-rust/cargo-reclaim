@@ -26,6 +26,8 @@ pub struct ReclaimConfig {
     pub recent_write_keep_window: Option<Duration>,
     pub keep_size_bytes: Option<u64>,
     pub keep_rustc_hashes: Vec<u64>,
+    pub keep_installed_toolchains: bool,
+    pub keep_toolchains: Vec<String>,
 }
 
 impl ReclaimConfig {
@@ -58,6 +60,8 @@ impl ReclaimConfig {
             keep_days,
             keep_size,
             keep_rustc_hashes,
+            keep_installed_toolchains,
+            keep_toolchains,
         } = planner.unwrap_or_default();
         let planner_recent_write_keep_window = recent_write_keep_window
             .as_deref()
@@ -114,6 +118,8 @@ impl ReclaimConfig {
                 .or(policy_keep_recent_projects),
             keep_size_bytes: planner_keep_size_bytes,
             keep_rustc_hashes,
+            keep_installed_toolchains,
+            keep_toolchains,
         })
     }
 }

@@ -68,6 +68,10 @@ pub(super) struct PlannerConfig {
     pub keep_size: Option<String>,
     #[serde(default)]
     pub keep_rustc_hashes: Vec<u64>,
+    #[serde(default)]
+    pub keep_installed_toolchains: bool,
+    #[serde(default)]
+    pub keep_toolchains: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +117,8 @@ cross_filesystems = true
 recent_write_keep_window = "4h"
 keep_size = "64 MiB"
 keep_rustc_hashes = [1, 2]
+keep_installed_toolchains = true
+keep_toolchains = ["stable", "nightly"]
 
 [scheduler]
 at = "04:15"
@@ -153,6 +159,8 @@ field = true
         );
         assert_eq!(config.keep_size_bytes, Some(64 * 1024 * 1024));
         assert_eq!(config.keep_rustc_hashes, [1, 2]);
+        assert!(config.keep_installed_toolchains);
+        assert_eq!(config.keep_toolchains, ["stable", "nightly"]);
         assert_eq!(config.scanner.follow_symlinks, Some(true));
         assert_eq!(config.scanner.allow_name_only_targets, Some(true));
         assert_eq!(config.scanner.cross_filesystems, Some(true));
