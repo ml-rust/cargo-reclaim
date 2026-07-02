@@ -823,6 +823,8 @@ mod tests {
                 },
                 inventory_options: PersistedInventoryOptions {
                     follow_symlinks: false,
+                    deep_target_scan: false,
+                    deep_directory_measurement: false,
                 },
                 planner_options: PersistedPlannerOptions::default(),
             },

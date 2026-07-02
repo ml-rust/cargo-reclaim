@@ -102,12 +102,14 @@ fn revalidate_snapshot(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
         ));
     }
 
-    let current_size = measure_size(path, &metadata)?;
-    if current_size != snapshot.size_bytes {
-        return Err(format!(
-            "skip_stale_plan: size changed from {} to {current_size}",
-            snapshot.size_bytes
-        ));
+    if snapshot.path_kind != "directory" || snapshot.content_fingerprint.is_some() {
+        let current_size = measure_size(path, &metadata, snapshot.content_fingerprint.is_some())?;
+        if current_size != snapshot.size_bytes {
+            return Err(format!(
+                "skip_stale_plan: size changed from {} to {current_size}",
+                snapshot.size_bytes
+            ));
+        }
     }
 
     if let Some(expected_modified) = snapshot.modified {
@@ -122,7 +124,11 @@ fn revalidate_snapshot(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
 
 fn revalidate_content_fingerprint(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
     let Some(expected_fingerprint) = snapshot.content_fingerprint.as_ref() else {
-        return Err("skip_stale_plan: persisted content fingerprint is missing".to_string());
+        return if snapshot.path_kind == "directory" {
+            Ok(())
+        } else {
+            Err("skip_stale_plan: persisted content fingerprint is missing".to_string())
+        };
     };
 
     let path = Path::new(&snapshot.path);
@@ -242,12 +248,20 @@ fn remove_path(path: &Path) -> Result<(), String> {
     Err("delete_failed: path kind is not removable".to_string())
 }
 
-fn measure_size(path: &Path, metadata: &Metadata) -> Result<u64, String> {
+fn measure_size(
+    path: &Path,
+    metadata: &Metadata,
+    recurse_directories: bool,
+) -> Result<u64, String> {
     if metadata.is_file() {
         return Ok(metadata.len());
     }
 
     if metadata.is_dir() {
+        if !recurse_directories {
+            return Ok(metadata.len());
+        }
+
         let mut total = 0_u64;
         for entry in fs::read_dir(path).map_err(|error| {
             format!(
@@ -270,7 +284,7 @@ fn measure_size(path: &Path, metadata: &Metadata) -> Result<u64, String> {
             if metadata.file_type().is_symlink() {
                 return Err("skip_stale_plan: directory now contains a symlink".to_string());
             }
-            total = total.saturating_add(measure_size(&entry.path(), &metadata)?);
+            total = total.saturating_add(measure_size(&entry.path(), &metadata, true)?);
         }
         return Ok(total);
     }

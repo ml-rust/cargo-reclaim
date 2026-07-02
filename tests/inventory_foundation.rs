@@ -34,8 +34,14 @@ fn directory_snapshot_aggregates_child_file_sizes_only() -> Result<(), Box<dyn E
     fs::write(target.join("debug/deps/nested/unit.o"), b"abcdef")?;
     fs::write(target.join("debug/incremental/cache.bin"), b"not counted")?;
 
-    let snapshot =
-        snapshot_target_relative_path(&target, "debug/deps", &InventoryOptions::default())?;
+    let snapshot = snapshot_target_relative_path(
+        &target,
+        "debug/deps",
+        &InventoryOptions {
+            deep_directory_measurement: true,
+            ..InventoryOptions::default()
+        },
+    )?;
 
     assert_eq!(snapshot.path, target.join("debug/deps"));
     assert_eq!(snapshot.size_bytes, 10);
@@ -138,7 +144,7 @@ fn inventory_candidate_classifies_child_path_and_preserves_evidence() -> Result<
     assert_eq!(candidate.artifact_class, ArtifactClass::Incremental);
     assert_eq!(candidate.evidence, evidence);
     assert_eq!(candidate.snapshot.path, target.join("debug/incremental"));
-    assert_eq!(candidate.snapshot.size_bytes, 3);
+    assert_eq!(candidate.snapshot.path_kind, PathKind::Directory);
     Ok(())
 }
 

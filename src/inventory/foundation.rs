@@ -11,6 +11,8 @@ use super::snapshot::snapshot_target_relative_path_from_normalized_child;
 pub struct InventoryOptions {
     pub follow_symlinks: bool,
     pub skipped_paths: Vec<PathBuf>,
+    pub deep_target_scan: bool,
+    pub deep_directory_measurement: bool,
 }
 
 pub fn planner_candidate_from_target_relative_path(

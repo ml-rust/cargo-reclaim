@@ -114,12 +114,18 @@ impl PersistedScannerOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedInventoryOptions {
     pub follow_symlinks: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deep_target_scan: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deep_directory_measurement: bool,
 }
 
 impl PersistedInventoryOptions {
     fn from_options(options: &InventoryOptions) -> Self {
         Self {
             follow_symlinks: options.follow_symlinks,
+            deep_target_scan: options.deep_target_scan,
+            deep_directory_measurement: options.deep_directory_measurement,
         }
     }
 }
@@ -400,6 +406,7 @@ fn requires_content_fingerprint(entry: &PlanEntry) -> bool {
         entry.action,
         PlanAction::Delete | PlanAction::RequiresConfirmation
     ) && entry.artifact_class != ArtifactClass::WholeTarget
+        && entry.snapshot.path_kind == PathKind::File
 }
 
 pub fn ensure_plan_usable(document: &PersistedPlan, now: SystemTime) -> PlanPersistenceResult<()> {

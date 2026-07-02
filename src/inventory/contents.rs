@@ -89,6 +89,18 @@ fn collect_child_candidates(
     };
 
     let artifact_class = classify_target_relative_path(&child_path);
+    if !options.deep_target_scan && metadata.is_dir() && should_emit_shallow_candidate(&child_path)
+    {
+        candidates.push(planner_candidate_from_target_relative_path_with_context(
+            target_root,
+            child_path,
+            evidence.clone(),
+            target_context.clone(),
+            options,
+        )?);
+        return Ok(());
+    }
+
     if metadata.is_file()
         || (artifact_class != ArtifactClass::Unknown && artifact_class != ArtifactClass::Deps)
     {
@@ -103,6 +115,10 @@ fn collect_child_candidates(
     }
 
     if metadata.is_dir() {
+        if !options.deep_target_scan && !should_descend_shallow(&child_path) {
+            return Ok(());
+        }
+
         let canonical_path = fs::canonicalize(&full_path)
             .map_err(|error| inventory_read_error(&full_path, error))?;
         if !visited_dirs.insert(canonical_path) {
@@ -137,6 +153,34 @@ fn collect_child_candidates(
     }
 
     Ok(())
+}
+
+fn should_emit_shallow_candidate(child_path: &Path) -> bool {
+    classify_target_relative_path(child_path) != ArtifactClass::Unknown
+}
+
+fn should_descend_shallow(child_path: &Path) -> bool {
+    let components = child_path.components().count();
+    if components == 0 || components >= 3 {
+        return false;
+    }
+
+    child_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_routing_directory_name)
+}
+
+fn is_routing_directory_name(name: &str) -> bool {
+    is_profile_root_name(name) || is_target_triple_name(name)
+}
+
+fn is_profile_root_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('.') && name != "target"
+}
+
+fn is_target_triple_name(name: &str) -> bool {
+    name.matches('-').count() >= 2
 }
 
 fn sorted_children(path: &Path) -> ReclaimResult<Vec<PathBuf>> {

@@ -105,8 +105,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
         loaded.body.plan.entries[0]
             .snapshot
             .content_fingerprint
-            .as_deref()
-            .is_some_and(|fingerprint| fingerprint.starts_with("sha256:"))
+            .is_none()
     );
     assert_eq!(loaded.body.plan.totals.skipped_path_count, 0);
     assert!(loaded.body.plan.skipped_paths.is_empty());

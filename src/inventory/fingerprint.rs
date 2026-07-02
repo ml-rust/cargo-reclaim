@@ -224,21 +224,7 @@ fn is_hash_matched_intermediate(
         return false;
     }
 
-    !is_protected_artifact_location(classify_target_relative_path(child_path))
-}
-
-fn is_protected_artifact_location(artifact_class: ArtifactClass) -> bool {
-    matches!(
-        artifact_class,
-        ArtifactClass::WholeTarget
-            | ArtifactClass::Docs
-            | ArtifactClass::Package
-            | ArtifactClass::Timings
-            | ArtifactClass::FinalExecutable
-            | ArtifactClass::FinalLibrary
-            | ArtifactClass::FinalRlib
-            | ArtifactClass::FinalWasm
-    )
+    classify_target_relative_path(child_path) == ArtifactClass::Unknown
 }
 
 fn is_group_search_location(child_path: &Path) -> bool {

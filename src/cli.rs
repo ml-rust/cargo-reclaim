@@ -415,6 +415,8 @@ fn parse_plan_command(
     let inventory_options = InventoryOptions {
         follow_symlinks: scanner_options.follow_symlinks,
         skipped_paths: scanner_options.skipped_paths.clone(),
+        deep_target_scan: false,
+        deep_directory_measurement: false,
     };
 
     finish_plan_command(FinishPlanCommand {

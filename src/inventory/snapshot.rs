@@ -18,7 +18,7 @@ pub fn snapshot_path(
     }
 
     let mut visited_dirs = HashSet::new();
-    let measured = measure_path(path, options, &mut visited_dirs)?;
+    let measured = measure_path(path, options, &mut visited_dirs, true)?;
 
     PathSnapshot::with_details(
         path.to_path_buf(),
@@ -54,7 +54,12 @@ pub(super) fn snapshot_target_relative_path_from_normalized_child(
 
     let full_path = target_root.join(child_path);
     let mut visited_dirs = HashSet::new();
-    let measured = measure_path(&full_path, options, &mut visited_dirs)?;
+    let measured = measure_path(
+        &full_path,
+        options,
+        &mut visited_dirs,
+        options.deep_directory_measurement,
+    )?;
 
     PathSnapshot::with_details(
         full_path,
@@ -74,6 +79,7 @@ fn measure_path(
     path: &Path,
     options: &InventoryOptions,
     visited_dirs: &mut HashSet<PathBuf>,
+    deep_directory_measurement: bool,
 ) -> ReclaimResult<MeasuredPath> {
     let metadata = symlink_metadata(path)?;
 
@@ -84,19 +90,32 @@ fn measure_path(
             });
         }
 
-        return measure_followed_path(path, options, visited_dirs);
+        return measure_followed_path(path, options, visited_dirs, deep_directory_measurement);
     }
 
-    measure_from_metadata(path, metadata, options, visited_dirs)
+    measure_from_metadata(
+        path,
+        metadata,
+        options,
+        visited_dirs,
+        deep_directory_measurement,
+    )
 }
 
 fn measure_followed_path(
     path: &Path,
     options: &InventoryOptions,
     visited_dirs: &mut HashSet<PathBuf>,
+    deep_directory_measurement: bool,
 ) -> ReclaimResult<MeasuredPath> {
     let metadata = fs::metadata(path).map_err(|error| inventory_read_error(path, error))?;
-    measure_from_metadata(path, metadata, options, visited_dirs)
+    measure_from_metadata(
+        path,
+        metadata,
+        options,
+        visited_dirs,
+        deep_directory_measurement,
+    )
 }
 
 fn measure_from_metadata(
@@ -104,6 +123,7 @@ fn measure_from_metadata(
     metadata: Metadata,
     options: &InventoryOptions,
     visited_dirs: &mut HashSet<PathBuf>,
+    deep_directory_measurement: bool,
 ) -> ReclaimResult<MeasuredPath> {
     let modified = metadata.modified().ok();
 
@@ -116,7 +136,11 @@ fn measure_from_metadata(
     }
 
     if metadata.is_dir() {
-        let size_bytes = measure_directory(path, options, visited_dirs)?;
+        let size_bytes = if deep_directory_measurement {
+            measure_directory(path, options, visited_dirs)?
+        } else {
+            metadata.len()
+        };
         return Ok(MeasuredPath {
             size_bytes,
             path_kind: PathKind::Directory,
@@ -148,7 +172,7 @@ fn measure_directory(
         if is_configured_skipped(&entry.path(), options) {
             continue;
         }
-        let measured = measure_path(&entry.path(), options, visited_dirs)?;
+        let measured = measure_path(&entry.path(), options, visited_dirs, true)?;
         size_bytes = size_bytes.saturating_add(measured.size_bytes);
     }
 

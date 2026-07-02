@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ActiveObservation, ActiveObservationProvider, ActiveObservationScope, ArtifactClass, CargoTool,
-    InventoryOptions, ObservedCargoProcess, PlanAction, PlannerOptions, PolicyKind, ScannerOptions,
-    TargetCandidate, TargetCandidateKind, TargetEvidence, ToolchainHashError,
+    InventoryOptions, ObservedCargoProcess, PathKind, PlanAction, PlannerOptions, PolicyKind,
+    ScannerOptions, TargetCandidate, TargetCandidateKind, TargetEvidence, ToolchainHashError,
     ToolchainHashResolver, ToolchainHashResult, WholeTargetMode, build_plan_from_roots,
     build_plan_from_roots_with_active_observation,
     build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
@@ -47,17 +47,17 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
     let incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
     assert_eq!(incremental.artifact_class, ArtifactClass::Incremental);
     assert_eq!(incremental.action, PlanAction::Delete);
-    assert_eq!(incremental.snapshot.size_bytes, 3);
+    assert_eq!(incremental.snapshot.path_kind, PathKind::Directory);
 
     let rustdoc = entry_for(&plan, temp.path().join("target/debug/.rustdoc_fingerprint"))?;
     assert_eq!(rustdoc.artifact_class, ArtifactClass::Fingerprint);
     assert_eq!(rustdoc.action, PlanAction::Delete);
-    assert_eq!(rustdoc.snapshot.size_bytes, 7);
+    assert_eq!(rustdoc.snapshot.path_kind, PathKind::Directory);
 
     let sqlx = entry_for(&plan, temp.path().join("target/sqlx-tmp"))?;
     assert_eq!(sqlx.artifact_class, ArtifactClass::Tmp);
     assert_eq!(sqlx.action, PlanAction::Delete);
-    assert_eq!(sqlx.snapshot.size_bytes, 4);
+    assert_eq!(sqlx.snapshot.path_kind, PathKind::Directory);
 
     let docs = entry_for(&plan, temp.path().join("target/doc"))?;
     assert_eq!(docs.artifact_class, ArtifactClass::Docs);
@@ -70,7 +70,7 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
 }
 
 #[test]
-fn scanned_project_target_descends_into_deps_for_removable_intermediates()
+fn scanned_project_target_keeps_deps_as_shallow_preserved_boundary_by_default()
 -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_project_deps_plan")?;
     write_manifest(temp.path())?;
@@ -88,21 +88,24 @@ fn scanned_project_target_descends_into_deps_for_removable_intermediates()
         &InventoryOptions::default(),
     )?;
 
-    let dep_info = entry_for(&plan, deps.join("sample-123.d"))?;
-    assert_eq!(dep_info.artifact_class, ArtifactClass::DepInfo);
-    assert_eq!(dep_info.action, PlanAction::Delete);
+    let deps_entry = entry_for(&plan, deps.clone())?;
+    assert_eq!(deps_entry.artifact_class, ArtifactClass::Deps);
+    assert_eq!(deps_entry.action, PlanAction::Preserve);
 
-    let object = entry_for(&plan, deps.join("sample-123.o"))?;
-    assert_eq!(object.artifact_class, ArtifactClass::ObjectMetadata);
-    assert_eq!(object.action, PlanAction::Delete);
-
-    let rlib = entry_for(&plan, deps.join("libsample-123.rlib"))?;
-    assert_eq!(rlib.artifact_class, ArtifactClass::FinalRlib);
-    assert_eq!(rlib.action, PlanAction::Preserve);
-
-    let executable = entry_for(&plan, deps.join("sample-123"))?;
-    assert_eq!(executable.artifact_class, ArtifactClass::Deps);
-    assert_eq!(executable.action, PlanAction::Preserve);
+    for child in [
+        deps.join("sample-123.d"),
+        deps.join("sample-123.o"),
+        deps.join("libsample-123.rlib"),
+        deps.join("sample-123"),
+    ] {
+        assert!(
+            plan.entries
+                .iter()
+                .all(|entry| entry.snapshot.path != child),
+            "default inventory should not descend into {}",
+            child.display()
+        );
+    }
 
     Ok(())
 }
@@ -150,29 +153,27 @@ fn scanned_project_target_adds_hash_grouped_intermediates() -> Result<(), Box<dy
     );
     assert_eq!(profile.action, PlanAction::Delete);
 
-    let deps_tracked = entry_for(&plan, target.join(format!("debug/deps/sample-{hash}.json")))?;
-    assert_eq!(
-        deps_tracked.artifact_class,
-        ArtifactClass::FingerprintGroupIntermediate
-    );
-    assert_eq!(deps_tracked.action, PlanAction::Delete);
-
-    let dep_info = entry_for(&plan, target.join(format!("debug/deps/sample-{hash}.d")))?;
-    assert_eq!(dep_info.artifact_class, ArtifactClass::DepInfo);
-    assert_eq!(dep_info.action, PlanAction::Delete);
-
-    for protected_path in [
+    for skipped_deps_child in [
+        target.join(format!("debug/deps/sample-{hash}.json")),
+        target.join(format!("debug/deps/sample-{hash}.d")),
         target.join(format!("debug/deps/libsample-{hash}.rlib")),
         target.join(format!("debug/deps/sample-{hash}.rmeta")),
-        target.join(format!("debug/sample-{hash}")),
     ] {
-        let entry = entry_for(&plan, protected_path)?;
-        assert_ne!(
-            entry.artifact_class,
-            ArtifactClass::FingerprintGroupIntermediate
+        assert!(
+            plan.entries
+                .iter()
+                .all(|entry| entry.snapshot.path != skipped_deps_child),
+            "default inventory should not descend into {}",
+            skipped_deps_child.display()
         );
-        assert_ne!(entry.action, PlanAction::Delete);
     }
+
+    let binary = entry_for(&plan, target.join(format!("debug/sample-{hash}")))?;
+    assert_ne!(
+        binary.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_ne!(binary.action, PlanAction::Delete);
 
     let other = entry_for(&plan, target.join("debug/other-1111111111111111.json"))?;
     assert_eq!(other.artifact_class, ArtifactClass::Unknown);
@@ -691,7 +692,7 @@ fn keep_size_preserves_small_scanned_delete_candidates() -> Result<(), Box<dyn E
         &ScannerOptions::default(),
         &InventoryOptions::default(),
         &PlannerOptions {
-            keep_size_bytes: Some(3),
+            keep_size_bytes: Some(1024 * 1024),
             ..PlannerOptions::default()
         },
         SystemTime::now(),
