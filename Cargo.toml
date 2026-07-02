@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Trust-first Rust artifact cleanup for Cargo projects and Cargo home data"
 readme = "README.md"
+documentation = "https://docs.rs/cargo-reclaim"
 license = "MIT OR Apache-2.0"
 keywords = ["cargo", "cleanup", "artifacts", "cli", "cache"]
 categories = ["command-line-utilities", "filesystem", "development-tools"]
