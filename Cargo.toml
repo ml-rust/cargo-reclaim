@@ -1,0 +1,14 @@
+[package]
+name = "cargo-reclaim"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "cargo_reclaim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-reclaim"
+path = "src/main.rs"
+
+[dependencies]
