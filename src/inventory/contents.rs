@@ -85,7 +85,9 @@ fn collect_child_candidates(
     };
 
     let artifact_class = classify_target_relative_path(&child_path);
-    if metadata.is_file() || artifact_class != ArtifactClass::Unknown {
+    if metadata.is_file()
+        || (artifact_class != ArtifactClass::Unknown && artifact_class != ArtifactClass::Deps)
+    {
         candidates.push(planner_candidate_from_target_relative_path_with_context(
             target_root,
             child_path,

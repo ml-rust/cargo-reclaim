@@ -79,6 +79,28 @@ fn final_outputs_classify_from_profile_roots() {
 }
 
 #[test]
+fn extension_bearing_deps_outputs_remain_protected_final_outputs() {
+    for (path, artifact_class) in [
+        ("debug/deps/libexample.rlib", ArtifactClass::FinalRlib),
+        ("debug/deps/libexample.so", ArtifactClass::FinalLibrary),
+        ("release/deps/example.exe", ArtifactClass::FinalExecutable),
+        ("release/deps/example.wasm", ArtifactClass::FinalWasm),
+        (
+            "x86_64-unknown-linux-gnu/debug/deps/libexample.rlib",
+            ArtifactClass::FinalRlib,
+        ),
+    ] {
+        assert_eq!(classify_target_relative_path(path), artifact_class);
+        assert!(PolicyKind::is_default_protected_output(artifact_class));
+    }
+
+    assert_eq!(
+        classify_target_relative_path("debug/deps/example-123"),
+        ArtifactClass::Deps
+    );
+}
+
+#[test]
 fn profile_support_entries_are_not_final_outputs() {
     for path in [
         "debug/.cargo-lock",

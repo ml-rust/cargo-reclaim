@@ -123,6 +123,18 @@ fn classify_file_artifact(components: &[&OsStr]) -> ArtifactClass {
         }
     }
 
+    if is_deps_final_output_location(components) {
+        match extension {
+            Some(extension) if extension == "rlib" => return ArtifactClass::FinalRlib,
+            Some(extension) if extension == "wasm" => return ArtifactClass::FinalWasm,
+            Some(extension) if extension == "exe" => return ArtifactClass::FinalExecutable,
+            Some(extension) if has_dynamic_or_static_library_extension(extension) => {
+                return ArtifactClass::FinalLibrary;
+            }
+            _ => {}
+        }
+    }
+
     ArtifactClass::Unknown
 }
 
@@ -154,6 +166,16 @@ fn is_final_output_location(components: &[&OsStr]) -> bool {
                 && is_default_profile_root(profile)
                 && *dir == "examples"
                 && is_plausible_nested_final_output(file_name)
+        }
+        _ => false,
+    }
+}
+
+fn is_deps_final_output_location(components: &[&OsStr]) -> bool {
+    match components {
+        [profile, dir, _] => is_profile_root(profile) && *dir == "deps",
+        [triple, profile, dir, _] => {
+            is_target_triple(triple) && is_profile_root(profile) && *dir == "deps"
         }
         _ => false,
     }

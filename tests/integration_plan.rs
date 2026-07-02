@@ -50,6 +50,44 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
 }
 
 #[test]
+fn scanned_project_target_descends_into_deps_for_removable_intermediates()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_project_deps_plan")?;
+    write_manifest(temp.path())?;
+    let deps = temp.path().join("target/debug/deps");
+    fs::create_dir_all(&deps)?;
+    fs::write(deps.join("sample-123.d"), b"dep")?;
+    fs::write(deps.join("sample-123.o"), b"obj")?;
+    fs::write(deps.join("libsample-123.rlib"), b"rlib")?;
+    fs::write(deps.join("sample-123"), b"bin")?;
+
+    let plan = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+
+    let dep_info = entry_for(&plan, deps.join("sample-123.d"))?;
+    assert_eq!(dep_info.artifact_class, ArtifactClass::DepInfo);
+    assert_eq!(dep_info.action, PlanAction::Delete);
+
+    let object = entry_for(&plan, deps.join("sample-123.o"))?;
+    assert_eq!(object.artifact_class, ArtifactClass::ObjectMetadata);
+    assert_eq!(object.action, PlanAction::Delete);
+
+    let rlib = entry_for(&plan, deps.join("libsample-123.rlib"))?;
+    assert_eq!(rlib.artifact_class, ArtifactClass::FinalRlib);
+    assert_eq!(rlib.action, PlanAction::Preserve);
+
+    let executable = entry_for(&plan, deps.join("sample-123"))?;
+    assert_eq!(executable.artifact_class, ArtifactClass::Deps);
+    assert_eq!(executable.action, PlanAction::Preserve);
+
+    Ok(())
+}
+
+#[test]
 fn configured_custom_target_builds_policy_plan_from_scanned_roots() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_configured_target_plan")?;
     write_manifest(temp.path())?;
