@@ -1,6 +1,7 @@
 pub mod error;
 pub mod model;
 pub mod policy;
+pub mod scanner;
 
 pub use error::{ReclaimError, ReclaimResult};
 pub use model::{
@@ -8,3 +9,7 @@ pub use model::{
     PlanTotals, TargetEvidence,
 };
 pub use policy::PolicyKind;
+pub use scanner::{
+    CargoProject, ScannerOptions, SkipReason, TargetCandidate, TargetCandidateKind,
+    TargetDirOverride, TargetDirOverrideSource, classify_target_candidate, detect_cargo_project,
+};
