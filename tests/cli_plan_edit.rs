@@ -345,6 +345,36 @@ fn edit_plan_interactive_project_group_does_not_select_unknown_entries()
 }
 
 #[test]
+fn edit_plan_interactive_project_group_includes_strong_marker_target() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("cli_edit_plan_interactive_project_marker")?;
+    let plan_path = write_strong_marker_plan(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "p1\ny\n", &[])?;
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Project groups:"));
+    assert!(stderr.contains(&temp.path().join("Cargo.toml").display().to_string()));
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("selected: 1"));
+
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let entries = after["plan"]["entries"].as_array().expect("entries");
+    let incremental = entries
+        .iter()
+        .find(|entry| entry["artifact_class"] == "incremental")
+        .expect("incremental entry");
+    assert_eq!(incremental["action"], "delete");
+    let docs = entries
+        .iter()
+        .find(|entry| entry["artifact_class"] == "docs")
+        .expect("docs entry");
+    assert_eq!(docs["action"], "preserve");
+    Ok(())
+}
+
+#[test]
 fn edit_plan_interactive_cancel_and_no_confirmation_leave_plan_unchanged()
 -> Result<(), Box<dyn Error>> {
     for (name, input) in [("cancel", "cancel\n"), ("no", "1\nno\n")] {
@@ -867,6 +897,30 @@ fn write_whole_target_plan(temp: &TestTemp) -> Result<PathBuf, Box<dyn Error>> {
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .args(["plan", "--whole-target", "confirm", "--save-plan"])
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(output.status.success());
+    Ok(plan_path)
+}
+
+fn write_strong_marker_plan(temp: &TestTemp) -> Result<PathBuf, Box<dyn Error>> {
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("target/doc"))?;
+    fs::write(
+        temp.path().join("target/CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55\n",
+    )?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--save-plan"])
         .arg(&plan_path)
         .arg(temp.path())
         .output()?;

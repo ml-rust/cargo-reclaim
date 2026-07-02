@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
+use std::path::Path;
 
-use cargo_reclaim::{PersistedPlan, PlanEditRequest};
+use cargo_reclaim::{PersistedPlan, PersistedPlanEntry, PlanEditRequest};
 
 use super::{CliError, EditPlanCommand, OutputFormat};
 
@@ -68,12 +69,9 @@ impl InteractiveMenu {
         let mut classes = BTreeSet::new();
         for (index, entry) in document.body.plan.entries.iter().enumerate() {
             if entry.action == "delete"
-                && let Some(manifest) = &entry.evidence.project_manifest
+                && let Some(manifest) = project_manifest_for_entry(entry)
             {
-                projects
-                    .entry(manifest.clone())
-                    .or_default()
-                    .push(index + 1);
+                projects.entry(manifest).or_default().push(index + 1);
             }
             if entry.artifact_class != "whole_target" && entry.artifact_class != "unknown" {
                 classes.insert(entry.artifact_class.clone());
@@ -93,6 +91,26 @@ impl InteractiveMenu {
             class_groups: classes.into_iter().collect(),
         }
     }
+}
+
+fn project_manifest_for_entry(entry: &PersistedPlanEntry) -> Option<String> {
+    entry
+        .evidence
+        .project_manifest
+        .clone()
+        .or_else(|| adjacent_project_manifest(&entry.snapshot.path))
+}
+
+fn adjacent_project_manifest(snapshot_path: &str) -> Option<String> {
+    let mut current = Some(Path::new(snapshot_path));
+    while let Some(path) = current {
+        let manifest = path.join("Cargo.toml");
+        if manifest.is_file() {
+            return Some(manifest.display().to_string());
+        }
+        current = path.parent();
+    }
+    None
 }
 
 fn write_interactive_menu(
