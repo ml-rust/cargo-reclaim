@@ -11,9 +11,13 @@ pub mod planner;
 pub mod policy;
 pub mod scanner;
 mod scheduler;
+pub mod watcher;
 
 pub use classifier::{Classifier, classify_target_relative_path};
-pub use config::{ConfigError, ReclaimConfig, load_config_from_path, parse_config};
+pub use config::{
+    BackgroundConfig, BackgroundMode, ConfigError, PolicyThresholdConfig, ReclaimConfig,
+    load_config_from_path, parse_config,
+};
 pub use error::{ReclaimError, ReclaimResult};
 pub use executor::{
     ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, execute_persisted_plan_apply,
@@ -55,4 +59,8 @@ pub use scanner::{
 pub use scheduler::{
     GeneratedArtifact, GeneratedArtifactKind, Schedule, SchedulerError, SchedulerMode,
     SchedulerPlatform, SchedulerReport, SchedulerRequest, generate_scheduler_artifacts,
+};
+pub use watcher::{
+    WatcherDecision, WatcherDecisionInput, WatcherDecisionState, WatcherMode,
+    WatcherObservedTarget, WatcherThresholds, WatcherTriggerReason, decide_watcher_thresholds,
 };
