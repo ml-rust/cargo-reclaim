@@ -1,6 +1,8 @@
 # Rust build artifacts
 /target/
 /releases/
+Cargo.toml.orig
+*.crate
 
 # Data directories (fallback default or manual testing)
 /data/
