@@ -168,6 +168,7 @@ fn write_apply_json_report(output: &mut impl Write, report: &ApplyReport) -> Res
                 "status": apply_status_label(entry.status),
                 "reason": entry.reason,
                 "size_bytes": entry.size_bytes,
+                "deleted_bytes": entry.deleted_bytes,
             })
         })
         .collect::<Vec<_>>();

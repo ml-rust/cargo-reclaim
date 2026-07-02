@@ -828,9 +828,10 @@ fn apply_yes_json_reports_execution() -> Result<(), Box<dyn Error>> {
     assert_eq!(document["command"], "apply");
     assert_eq!(document["dry_run"], false);
     assert_eq!(document["totals"]["applied_count"], 1);
-    assert!(document["totals"]["applied_bytes"].as_u64().is_some());
+    assert_eq!(document["totals"]["applied_bytes"], 3);
     assert_eq!(document["totals"]["failed_count"], 0);
     assert_eq!(document["entries"][0]["status"], "deleted");
+    assert_eq!(document["entries"][0]["deleted_bytes"], 3);
     Ok(())
 }
 

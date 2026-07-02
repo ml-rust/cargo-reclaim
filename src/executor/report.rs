@@ -61,7 +61,9 @@ impl ApplyTotals {
                 }
                 ApplyEntryStatus::Deleted => {
                     totals.applied_count += 1;
-                    totals.applied_bytes = totals.applied_bytes.saturating_add(entry.size_bytes);
+                    totals.applied_bytes = totals
+                        .applied_bytes
+                        .saturating_add(entry.deleted_bytes.unwrap_or(entry.size_bytes));
                 }
                 ApplyEntryStatus::NotPlannedForDeletion => totals.skipped_count += 1,
                 ApplyEntryStatus::SkipStalePlan => {
@@ -83,6 +85,7 @@ pub struct ApplyEntryResult {
     pub status: ApplyEntryStatus,
     pub reason: String,
     pub size_bytes: u64,
+    pub deleted_bytes: Option<u64>,
 }
 
 impl ApplyEntryResult {
@@ -99,6 +102,7 @@ impl ApplyEntryResult {
             status,
             reason: reason.into(),
             size_bytes,
+            deleted_bytes: None,
         }
     }
 }

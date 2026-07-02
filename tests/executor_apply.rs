@@ -123,6 +123,30 @@ fn apply_execution_deletes_revalidated_directory() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
+fn apply_execution_reports_measured_deleted_bytes_for_shallow_directory()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("apply_execute_dir_measured_bytes")?;
+    let directory = temp.path.join("target/debug/incremental");
+    let expected_deleted_bytes = 7;
+    fs::create_dir_all(directory.join("session"))?;
+    fs::write(directory.join("session/cache.bin"), b"abc")?;
+    fs::write(directory.join("session/other.bin"), b"defg")?;
+    let document = persisted_plan_for_directory(&directory, 0, false)?;
+
+    let report = execute_persisted_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.entries[0].status, ApplyEntryStatus::Deleted);
+    assert_eq!(report.entries[0].size_bytes, 0);
+    assert_eq!(
+        report.entries[0].deleted_bytes,
+        Some(expected_deleted_bytes)
+    );
+    assert_eq!(report.totals.applied_bytes, expected_deleted_bytes);
+    assert!(!directory.exists());
+    Ok(())
+}
+
+#[test]
 fn apply_execution_deletes_revalidated_whole_target() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("apply_execute_whole_target")?;
     write_manifest(&temp.path)?;

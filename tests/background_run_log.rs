@@ -142,6 +142,7 @@ fn apply_summary_exposes_notable_entries_and_totals() {
     assert_eq!(summary.totals.stale_skip_count, 1);
     assert_eq!(summary.notable_entries.len(), 3);
     assert_eq!(summary.notable_entries[0].status, "deleted");
+    assert_eq!(summary.notable_entries[0].deleted_bytes, Some(10));
     assert_eq!(summary.notable_entries[1].status, "delete_failed");
     assert_eq!(summary.notable_entries[2].status, "skip_stale_plan");
 }
@@ -246,6 +247,7 @@ fn apply_entry(path: &str, status: ApplyEntryStatus, size_bytes: u64) -> ApplyEn
         status,
         reason: status_label(status).to_owned(),
         size_bytes,
+        deleted_bytes: (status == ApplyEntryStatus::Deleted).then_some(size_bytes),
     }
 }
 

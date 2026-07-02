@@ -366,6 +366,7 @@ pub struct BackgroundApplyEntrySummary {
     pub status: String,
     pub reason: String,
     pub size_bytes: u64,
+    pub deleted_bytes: Option<u64>,
 }
 
 impl BackgroundApplyEntrySummary {
@@ -376,6 +377,7 @@ impl BackgroundApplyEntrySummary {
             status: apply_entry_status_label(entry.status).to_owned(),
             reason: entry.reason.clone(),
             size_bytes: entry.size_bytes,
+            deleted_bytes: entry.deleted_bytes,
         }
     }
 }

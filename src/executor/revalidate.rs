@@ -51,14 +51,20 @@ pub(super) fn delete_revalidated_entry(entry: ApplyEntryResult) -> ApplyEntryRes
         return entry;
     }
 
-    match remove_path(Path::new(&entry.path)) {
-        Ok(()) => ApplyEntryResult::new(
-            entry.path,
-            entry.planned_action,
-            ApplyEntryStatus::Deleted,
-            entry.size_bytes,
-            "deleted revalidated path",
-        ),
+    let path = Path::new(&entry.path);
+    let deleted_bytes = measure_removable_bytes(path).ok();
+    match remove_path(path) {
+        Ok(()) => {
+            let mut result = ApplyEntryResult::new(
+                entry.path,
+                entry.planned_action,
+                ApplyEntryStatus::Deleted,
+                entry.size_bytes,
+                "deleted revalidated path",
+            );
+            result.deleted_bytes = deleted_bytes;
+            result
+        }
         Err(reason) => ApplyEntryResult::new(
             entry.path,
             entry.planned_action,
@@ -246,6 +252,42 @@ fn remove_path(path: &Path) -> Result<(), String> {
     }
 
     Err("delete_failed: path kind is not removable".to_string())
+}
+
+fn measure_removable_bytes(path: &Path) -> Result<u64, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("failed to read path metadata before deletion: {error}"))?;
+
+    measure_removable_metadata_bytes(path, &metadata)
+}
+
+fn measure_removable_metadata_bytes(path: &Path, metadata: &Metadata) -> Result<u64, String> {
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
+    if metadata.file_type().is_symlink() {
+        return Ok(metadata.len());
+    }
+
+    if metadata.is_dir() {
+        let mut total = 0_u64;
+        for entry in fs::read_dir(path)
+            .map_err(|error| format!("failed to read directory before deletion: {error}"))?
+        {
+            let entry = entry.map_err(|error| {
+                format!("failed to read directory entry before deletion: {error}")
+            })?;
+            let child_path = entry.path();
+            let metadata = fs::symlink_metadata(&child_path).map_err(|error| {
+                format!("failed to read child metadata before deletion: {error}")
+            })?;
+            total = total.saturating_add(measure_removable_metadata_bytes(&child_path, &metadata)?);
+        }
+        return Ok(total);
+    }
+
+    Ok(metadata.len())
 }
 
 fn measure_size(
