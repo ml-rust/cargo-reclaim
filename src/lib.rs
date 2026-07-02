@@ -21,12 +21,19 @@ pub use active_process::{
     platform_active_observation_provider,
 };
 pub use background::{
-    BACKGROUND_RUN_LOG_SCHEMA_VERSION, BackgroundApplyEntrySummary, BackgroundApplySummary,
-    BackgroundApplyTotals, BackgroundPlanSummary, BackgroundPlanTotals, BackgroundRunEventKind,
-    BackgroundRunLogError, BackgroundRunLogRecord, BackgroundRunLogResult, BackgroundRunReport,
-    BackgroundRunRequest, BackgroundRunTrigger, BackgroundRunnerError, BackgroundRunnerResult,
+    BACKGROUND_RUN_LOG_SCHEMA_VERSION, BACKGROUND_SERVICE_STATE_SCHEMA_VERSION,
+    BackgroundApplyEntrySummary, BackgroundApplySummary, BackgroundApplyTotals,
+    BackgroundPlanSummary, BackgroundPlanTotals, BackgroundRunEventKind, BackgroundRunLogError,
+    BackgroundRunLogRecord, BackgroundRunLogResult, BackgroundRunReport, BackgroundRunRequest,
+    BackgroundRunTrigger, BackgroundRunnerError, BackgroundRunnerResult, BackgroundServiceClock,
+    BackgroundServiceCycleRunner, BackgroundServiceError, BackgroundServiceOptions,
+    BackgroundServicePaths, BackgroundServiceResult, BackgroundServiceRunSummary,
+    BackgroundServiceSleeper, BackgroundServiceState, BackgroundServiceStatus,
     BackgroundSkippedProject, BackgroundTriggerReasonSummary, BackgroundTriggerSummary,
-    append_background_run_log_record, read_background_run_log, run_background_cleanup_cycle,
+    DEFAULT_BACKGROUND_CHECK_EVERY, PlatformBackgroundServiceCycleRunner,
+    SystemBackgroundServiceClock, ThreadBackgroundServiceSleeper, append_background_run_log_record,
+    read_background_run_log, read_background_service_state, run_background_cleanup_cycle,
+    run_background_service, run_background_service_with_runtime, write_background_service_state,
 };
 pub use cargo_home::{
     CARGO_HOME_PERSISTED_PLAN_SCHEMA_VERSION, CARGO_HOME_PLAN_SCHEMA_VERSION,
@@ -102,9 +109,10 @@ pub use scheduler::{
     SchedulerError, SchedulerExecutionReport, SchedulerExecutionStatus, SchedulerExecutionStep,
     SchedulerExecutionTotals, SchedulerMode, SchedulerOperation, SchedulerOperationBackend,
     SchedulerOperationPlan, SchedulerPlanStep, SchedulerPlatform, SchedulerReport,
-    SchedulerRequest, artifact_kind_label, execute_scheduler_operation, execution_status_label,
-    generate_scheduler_artifacts, mode_label, operation_label, plan_scheduler_install,
-    plan_scheduler_uninstall, platform_label, policy_label,
+    SchedulerRequest, artifact_kind_label, default_log_dir, default_state_dir,
+    execute_scheduler_operation, execution_status_label, generate_scheduler_artifacts, mode_label,
+    operation_label, plan_scheduler_install, plan_scheduler_uninstall, platform_label,
+    policy_label,
 };
 pub use watcher::{
     WatcherDecision, WatcherDecisionInput, WatcherDecisionState, WatcherMode,

@@ -16,4 +16,5 @@ pub use operation_executor::{
     RealSchedulerOperationBackend, RemoveFileOutcome, SchedulerOperationBackend,
     execute_scheduler_operation,
 };
+pub use paths::{default_log_dir, default_state_dir};
 pub use plan::{plan_scheduler_install, plan_scheduler_uninstall};

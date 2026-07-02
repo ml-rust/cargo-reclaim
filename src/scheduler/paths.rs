@@ -57,7 +57,7 @@ impl SchedulerPaths {
     }
 }
 
-pub(crate) fn default_state_dir(platform: SchedulerPlatform) -> PathBuf {
+pub fn default_state_dir(platform: SchedulerPlatform) -> PathBuf {
     match platform {
         SchedulerPlatform::SystemdUser => home_dir()
             .map(|home| home.join(".local/state/cargo-reclaim"))
@@ -71,7 +71,7 @@ pub(crate) fn default_state_dir(platform: SchedulerPlatform) -> PathBuf {
     }
 }
 
-pub(crate) fn default_log_dir(platform: SchedulerPlatform) -> PathBuf {
+pub fn default_log_dir(platform: SchedulerPlatform) -> PathBuf {
     match platform {
         SchedulerPlatform::SystemdUser => default_state_dir(platform).join("logs"),
         SchedulerPlatform::Launchd => home_dir()

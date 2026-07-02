@@ -17,8 +17,10 @@ use output::{
 
 mod output;
 mod run;
+mod service;
 
 use run::{SchedulerRunCommand, parse_scheduler_run, run_scheduler_cycle};
+use service::{SchedulerServiceCommand, parse_scheduler_service, run_scheduler_service};
 
 #[derive(Debug)]
 pub(super) enum SchedulerCommand {
@@ -26,6 +28,7 @@ pub(super) enum SchedulerCommand {
     Install(SchedulerRequestCommand),
     Uninstall(SchedulerRequestCommand),
     Run(SchedulerRunCommand),
+    Service(SchedulerServiceCommand),
 }
 
 pub(super) type SchedulerPreviewCommand = SchedulerCommand;
@@ -43,7 +46,7 @@ pub(super) fn parse_scheduler_command(
     let mut args = args.into_iter();
     let Some(subcommand) = args.next() else {
         return Err(CliError::Usage(
-            "scheduler requires `preview`, `install`, `uninstall`, or `run`".to_string(),
+            "scheduler requires `preview`, `install`, `uninstall`, `run`, or `service`".to_string(),
         ));
     };
     match subcommand.to_string_lossy().as_ref() {
@@ -55,9 +58,10 @@ pub(super) fn parse_scheduler_command(
             parse_scheduler_operation("uninstall", args).map(SchedulerCommand::Uninstall)
         }
         "run" => parse_scheduler_run(args).map(SchedulerCommand::Run),
+        "service" => parse_scheduler_service(args).map(SchedulerCommand::Service),
         "-h" | "--help" | "help" => Err(CliError::Help(scheduler_help().to_string())),
         value => Err(CliError::Usage(format!(
-            "unknown scheduler command `{value}`; expected `preview`, `install`, `uninstall`, or `run`"
+            "unknown scheduler command `{value}`; expected `preview`, `install`, `uninstall`, `run`, or `service`"
         ))),
     }
 }
@@ -211,6 +215,7 @@ fn run_scheduler_command_with_backend(
             run_scheduler_operation_plan(command, &plan, output, backend)
         }
         SchedulerCommand::Run(command) => run_scheduler_cycle(command, output),
+        SchedulerCommand::Service(command) => run_scheduler_service(command, output),
     }
 }
 
@@ -283,13 +288,16 @@ fn default_cargo_reclaim_bin() -> PathBuf {
 }
 
 fn scheduler_help() -> &'static str {
-    "usage: cargo-reclaim scheduler <preview|install|uninstall|run> [OPTIONS]"
+    "usage: cargo-reclaim scheduler <preview|install|uninstall|run|service> [OPTIONS]"
 }
 
 pub(super) fn scheduler_subcommand_usage(subcommand: &str) -> String {
     match subcommand {
         "preview" => "usage: cargo-reclaim scheduler preview --platform <systemd-user|launchd|task-scheduler> --config <path>".to_string(),
         "run" => "usage: cargo-reclaim scheduler run --config <path> --run-id <id> --log-path <path> --plan-path <path>".to_string(),
+        "service" => "usage: cargo-reclaim scheduler service <run|status> --config <path>".to_string(),
+        "service run" => "usage: cargo-reclaim scheduler service run --config <path> [--max-cycles <n>] [--json]".to_string(),
+        "service status" => "usage: cargo-reclaim scheduler service status --config <path> [--json]".to_string(),
         _ => {
             format!(
                 "usage: cargo-reclaim scheduler {subcommand} [--dry-run] --platform <systemd-user|launchd|task-scheduler> --config <path>"
