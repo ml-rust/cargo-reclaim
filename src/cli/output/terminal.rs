@@ -39,6 +39,14 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  cargo-home plan  Build a dry-run Cargo home cleanup plan"
+    )?;
+    writeln!(
+        output,
+        "  cargo-home apply --plan <path>  Validate a persisted Cargo home cleanup plan"
+    )?;
+    writeln!(
+        output,
         "  cargo-config recommend  Report read-only Cargo build output configuration recommendations"
     )?;
     writeln!(

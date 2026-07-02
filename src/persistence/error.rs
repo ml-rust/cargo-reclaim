@@ -6,6 +6,7 @@ pub type PlanPersistenceResult<T> = Result<T, PlanPersistenceError>;
 #[derive(Debug)]
 pub enum PlanPersistenceError {
     InvalidTimeRange,
+    InvalidPlan { message: String },
     TimestampBeforeUnixEpoch,
     Io { path: PathBuf, message: String },
     Json { message: String },
@@ -21,6 +22,7 @@ impl fmt::Display for PlanPersistenceError {
             Self::InvalidTimeRange => {
                 formatter.write_str("plan expiry must be after creation time")
             }
+            Self::InvalidPlan { message } => formatter.write_str(message),
             Self::TimestampBeforeUnixEpoch => {
                 formatter.write_str("plan timestamp must be at or after the Unix epoch")
             }

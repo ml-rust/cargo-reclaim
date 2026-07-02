@@ -1,6 +1,8 @@
 use std::io::Write;
 
-use cargo_reclaim::{CargoHomePlan, CargoHomeReport};
+use cargo_reclaim::{
+    CargoHomeApplyEntryStatus, CargoHomeApplyReport, CargoHomePlan, CargoHomeReport,
+};
 
 use super::super::CliError;
 use super::labels::{
@@ -138,4 +140,53 @@ pub(super) fn write_terminal_plan(
         )?;
     }
     Ok(())
+}
+
+pub(super) fn write_terminal_apply_report(
+    output: &mut impl Write,
+    report: &CargoHomeApplyReport,
+) -> Result<(), CliError> {
+    writeln!(output, "cargo-reclaim cargo-home apply")?;
+    writeln!(output, "validation only; no files were deleted or modified")?;
+    writeln!(
+        output,
+        "human-readable text; use --json for a stable structured document"
+    )?;
+    writeln!(output, "plan id: {}", report.plan_id.as_str())?;
+    writeln!(output, "entries: {}", report.totals.entry_count)?;
+    writeln!(
+        output,
+        "delete candidates: {}",
+        report.totals.delete_candidate_count
+    )?;
+    writeln!(output, "would delete: {}", report.totals.would_delete_count)?;
+    writeln!(
+        output,
+        "would delete bytes: {}",
+        report.totals.would_delete_bytes
+    )?;
+    writeln!(output, "skipped: {}", report.totals.skipped_count)?;
+    writeln!(output, "stale skips: {}", report.totals.stale_skip_count)?;
+
+    for entry in &report.entries {
+        writeln!(
+            output,
+            "{}\t{}\t{}\t{}\t{}",
+            apply_status_label(entry.status),
+            display_text(&entry.planned_action),
+            entry.size_bytes,
+            display_text(&entry.path),
+            display_text(&entry.reason)
+        )?;
+    }
+
+    Ok(())
+}
+
+fn apply_status_label(status: CargoHomeApplyEntryStatus) -> &'static str {
+    match status {
+        CargoHomeApplyEntryStatus::WouldDelete => "would_delete",
+        CargoHomeApplyEntryStatus::NotPlannedForDeletion => "not_planned_for_deletion",
+        CargoHomeApplyEntryStatus::SkipStalePlan => "skip_stale_plan",
+    }
 }

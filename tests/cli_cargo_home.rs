@@ -7,6 +7,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 #[test]
+fn help_lists_cargo_home_plan_and_apply_commands() -> Result<(), Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("--help")
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("cargo-home report"));
+    assert!(stdout.contains("cargo-home plan"));
+    assert!(stdout.contains("cargo-home apply --plan <path>"));
+    Ok(())
+}
+
+#[test]
 fn cargo_home_report_terminal_output_is_read_only() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_cargo_home_terminal")?;
     fs::create_dir_all(temp.path().join("registry/cache/example"))?;
@@ -181,18 +195,151 @@ fn cargo_home_plan_json_uses_plan_schema_without_target_fields() -> Result<(), B
 }
 
 #[test]
-fn cargo_home_plan_rejects_save_plan() -> Result<(), Box<dyn Error>> {
-    let temp = TestTemp::new("cli_cargo_home_plan_reject")?;
+fn cargo_home_plan_save_plan_writes_persisted_document() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_home_plan_save")?;
+    fs::create_dir_all(temp.path().join("registry/cache/example"))?;
+    fs::write(temp.path().join("registry/cache/example/pkg.crate"), b"abc")?;
+    let plan_path = temp.path().join("cargo-home-plan.json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .args(["cargo-home", "plan", "--save-plan"])
-        .arg(temp.path().join("plan.json"))
+        .arg(&plan_path)
+        .args(["--expires-in", "1h"])
         .arg("--cargo-home")
         .arg(temp.path())
         .output()?;
 
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let persisted: Value = serde_json::from_slice(&fs::read(plan_path)?)?;
+    assert_eq!(persisted["schema_version"], 1);
+    assert_eq!(persisted["command"], "cargo-home plan");
+    assert_eq!(persisted["plan"]["input"]["source"], "explicit");
+    assert_eq!(persisted["plan"]["totals"]["delete_candidate_count"], 1);
+    assert!(persisted.get("invocation").is_none());
+    Ok(())
+}
+
+#[test]
+fn cargo_home_apply_plan_validates_without_deleting() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_home_apply")?;
+    let cache_file = temp.path().join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_file.parent().expect("cache parent"))?;
+    fs::write(&cache_file, b"abc")?;
+    let plan_path = temp.path().join("cargo-home-plan.json");
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "cargo-home",
+            "plan",
+            "--policy",
+            "conservative",
+            "--save-plan",
+        ])
+        .arg(&plan_path)
+        .arg("--cargo-home")
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["cargo-home", "apply", "--json", "--plan"])
+        .arg(&plan_path)
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["command"], "cargo-home apply");
+    assert_eq!(document["dry_run"], true);
+    assert_eq!(document["validation_only"], true);
+    assert_eq!(document["totals"]["would_delete_count"], 1);
+    assert_eq!(document["entries"][0]["status"], "would_delete");
+    assert!(cache_file.is_file());
+    Ok(())
+}
+
+#[test]
+fn cargo_home_saved_relative_root_applies_from_different_cwd() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_home_relative_root")?;
+    let cargo_home = temp.path().join("relative-cargo-home");
+    let cache_file = cargo_home.join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_file.parent().expect("cache parent"))?;
+    fs::write(&cache_file, b"abc")?;
+    let other_cwd = temp.path().join("other");
+    fs::create_dir(&other_cwd)?;
+    let plan_path = temp.path().join("cargo-home-plan.json");
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .current_dir(temp.path())
+        .args([
+            "cargo-home",
+            "plan",
+            "--policy",
+            "conservative",
+            "--save-plan",
+        ])
+        .arg(&plan_path)
+        .args(["--cargo-home", "relative-cargo-home"])
+        .output()?;
+    assert!(plan_output.status.success());
+
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(
+        persisted["plan"]["input"]["root"],
+        cargo_home.canonicalize()?.display().to_string()
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .current_dir(other_cwd)
+        .args(["cargo-home", "apply", "--json", "--plan"])
+        .arg(&plan_path)
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["totals"]["would_delete_count"], 1);
+    assert!(cache_file.is_file());
+    Ok(())
+}
+
+#[test]
+fn cargo_home_apply_yes_is_rejected() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_home_apply_yes")?;
+    let plan_path = temp.path().join("cargo-home-plan.json");
+    fs::write(&plan_path, b"{}")?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["cargo-home", "apply", "--plan"])
+        .arg(&plan_path)
+        .arg("--yes")
+        .output()?;
+
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8(output.stderr)?.contains("unknown option"));
+    assert!(
+        String::from_utf8(output.stderr)?.contains("cargo-home execution is not available yet")
+    );
+    Ok(())
+}
+
+#[test]
+fn cargo_home_apply_requires_explicit_plan_path_and_rejects_last_alias()
+-> Result<(), Box<dyn Error>> {
+    for args in [
+        vec!["cargo-home", "apply"],
+        vec!["cargo-home", "apply", "last"],
+        vec!["cargo-home", "apply", "--plan", "last"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args(args)
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            String::from_utf8(output.stderr)?.contains("explicit"),
+            "stderr should mention explicit plan path"
+        );
+    }
     Ok(())
 }
 

@@ -29,13 +29,18 @@ pub use background::{
     append_background_run_log_record, read_background_run_log, run_background_cleanup_cycle,
 };
 pub use cargo_home::{
-    CARGO_HOME_PLAN_SCHEMA_VERSION, CARGO_HOME_REPORT_SCHEMA_VERSION, CargoHomeClass,
-    CargoHomeEntry, CargoHomeError, CargoHomeInput, CargoHomePathKind, CargoHomePlan,
-    CargoHomePlanAction, CargoHomePlanEntry, CargoHomePlanRequest, CargoHomePlanTotals,
-    CargoHomeProblem, CargoHomeRecommendation, CargoHomeReport, CargoHomeReportRequest,
-    CargoHomeResolveRequest, CargoHomeSource, CargoHomeTotals, build_cargo_home_plan,
-    build_cargo_home_plan_from_report, build_cargo_home_report, classify_cargo_home_relative_path,
-    inventory_cargo_home, resolve_cargo_home,
+    CARGO_HOME_PERSISTED_PLAN_SCHEMA_VERSION, CARGO_HOME_PLAN_SCHEMA_VERSION,
+    CARGO_HOME_REPORT_SCHEMA_VERSION, CargoHomeApplyEntryResult, CargoHomeApplyEntryStatus,
+    CargoHomeApplyReport, CargoHomeApplyTotals, CargoHomeClass, CargoHomeEntry, CargoHomeError,
+    CargoHomeInput, CargoHomePathKind, CargoHomePlan, CargoHomePlanAction, CargoHomePlanEntry,
+    CargoHomePlanRequest, CargoHomePlanTotals, CargoHomeProblem, CargoHomeRecommendation,
+    CargoHomeReport, CargoHomeReportRequest, CargoHomeResolveRequest, CargoHomeSource,
+    CargoHomeTotals, PersistedCargoHomeInput, PersistedCargoHomePlan, PersistedCargoHomePlanBody,
+    PersistedCargoHomePlanEntry, PersistedCargoHomePlanSnapshot, PersistedCargoHomePlanTotals,
+    SaveCargoHomePlanOptions, build_cargo_home_plan, build_cargo_home_plan_from_report,
+    build_cargo_home_report, classify_cargo_home_relative_path, ensure_cargo_home_plan_usable,
+    inventory_cargo_home, load_cargo_home_plan_from_path, persist_cargo_home_plan,
+    resolve_cargo_home, save_cargo_home_plan_to_path, validate_cargo_home_plan_for_apply,
 };
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use config::{

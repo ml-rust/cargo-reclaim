@@ -1,6 +1,9 @@
 use std::io::Write;
 
-use cargo_reclaim::{CargoHomeEntry, CargoHomePlan, CargoHomePlanEntry, CargoHomeReport};
+use cargo_reclaim::{
+    CargoHomeApplyEntryStatus, CargoHomeApplyReport, CargoHomeEntry, CargoHomePlan,
+    CargoHomePlanEntry, CargoHomeReport,
+};
 use serde::Serialize;
 
 use super::super::CliError;
@@ -23,6 +26,43 @@ pub(super) fn write_json_plan(
     plan: &CargoHomePlan,
 ) -> Result<(), CliError> {
     let document = JsonCargoHomePlan::from_plan(plan);
+    serde_json::to_writer(&mut *output, &document)?;
+    writeln!(output)?;
+    Ok(())
+}
+
+pub(super) fn write_json_apply_report(
+    output: &mut impl Write,
+    report: &CargoHomeApplyReport,
+) -> Result<(), CliError> {
+    let entries = report
+        .entries
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "path": entry.path,
+                "planned_action": entry.planned_action,
+                "status": apply_status_label(entry.status),
+                "size_bytes": entry.size_bytes,
+                "reason": entry.reason,
+            })
+        })
+        .collect::<Vec<_>>();
+    let document = serde_json::json!({
+        "command": "cargo-home apply",
+        "dry_run": report.dry_run,
+        "validation_only": report.validation_only,
+        "plan_id": report.plan_id.as_str(),
+        "totals": {
+            "entry_count": report.totals.entry_count,
+            "delete_candidate_count": report.totals.delete_candidate_count,
+            "would_delete_count": report.totals.would_delete_count,
+            "would_delete_bytes": report.totals.would_delete_bytes,
+            "skipped_count": report.totals.skipped_count,
+            "stale_skip_count": report.totals.stale_skip_count,
+        },
+        "entries": entries,
+    });
     serde_json::to_writer(&mut *output, &document)?;
     writeln!(output)?;
     Ok(())
@@ -221,5 +261,13 @@ impl JsonCargoHomePlanEntry {
             action: action_label(entry.action),
             reason: entry.reason.clone(),
         }
+    }
+}
+
+fn apply_status_label(status: CargoHomeApplyEntryStatus) -> &'static str {
+    match status {
+        CargoHomeApplyEntryStatus::WouldDelete => "would_delete",
+        CargoHomeApplyEntryStatus::NotPlannedForDeletion => "not_planned_for_deletion",
+        CargoHomeApplyEntryStatus::SkipStalePlan => "skip_stale_plan",
     }
 }
