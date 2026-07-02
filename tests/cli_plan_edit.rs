@@ -153,6 +153,50 @@ fn edit_plan_selects_and_deselects_persisted_entry_indices() -> Result<(), Box<d
 }
 
 #[test]
+fn edit_plan_selects_and_deselects_persisted_artifact_classes() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_classes")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args([
+            "--select-class",
+            "incremental",
+            "--deselect-class=docs",
+            "--json",
+        ])
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(stdout["selected_count"], 1);
+    assert_eq!(stdout["deselected_count"], 1);
+
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let incremental = after["plan"]["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["artifact_class"] == "incremental")
+        .expect("incremental entry");
+    assert_eq!(incremental["action"], "delete");
+    assert_eq!(
+        incremental["policy_reason"],
+        "explicitly selected for deletion"
+    );
+    let docs = after["plan"]["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["artifact_class"] == "docs")
+        .expect("docs entry");
+    assert_eq!(docs["action"], "preserve");
+    assert_eq!(docs["policy_reason"], "explicitly preserved by selection");
+    Ok(())
+}
+
+#[test]
 fn edit_plan_rejects_missing_plan_last_yes_and_no_edits() -> Result<(), Box<dyn Error>> {
     for args in [
         vec!["edit-plan"],
@@ -174,6 +218,64 @@ fn edit_plan_rejects_missing_plan_last_yes_and_no_edits() -> Result<(), Box<dyn 
         assert_eq!(output.status.code(), Some(2));
     }
 
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_invalid_artifact_classes_without_rewriting_plan() -> Result<(), Box<dyn Error>>
+{
+    for (name, args, message) in [
+        (
+            "unknown_label",
+            vec!["--select-class", "increment"],
+            "unknown artifact class selector",
+        ),
+        (
+            "missing_value",
+            vec!["--deselect-class"],
+            "--deselect-class requires a value",
+        ),
+        (
+            "unknown_class_selection",
+            vec!["--select-class", "unknown"],
+            "cannot be selected by class",
+        ),
+    ] {
+        let temp = TestTemp::new(&format!("cli_edit_plan_invalid_class_{name}"))?;
+        let plan_path = write_two_entry_plan(&temp)?;
+        let before = fs::read(&plan_path)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args(["edit-plan", "--plan"])
+            .arg(&plan_path)
+            .args(args)
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(fs::read(&plan_path)?, before);
+        assert!(String::from_utf8(output.stderr)?.contains(message));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_unmatched_artifact_classes_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_unmatched_class")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-class", "final_wasm"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("no persisted plan entry matches artifact class `final_wasm`"));
     Ok(())
 }
 
@@ -221,6 +323,77 @@ fn edit_plan_rejects_cross_action_entry_conflicts_without_rewriting_plan()
         .args(["--select"])
         .arg(entry_path)
         .args(["--deselect-index", "1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cannot be both selected and deselected"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_cross_action_class_and_index_conflicts_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_class_index_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-class", "incremental", "--deselect-index", "1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cannot be both selected and deselected"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_cross_action_class_conflicts_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_class_class_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-class", "docs", "--deselect-class", "docs"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cannot be both selected and deselected"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_rejects_cross_action_class_and_path_conflicts_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_class_path_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+    let before_json: Value = serde_json::from_slice(&before)?;
+    let entry_path = before_json["plan"]["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["artifact_class"] == "docs")
+        .expect("docs entry")["snapshot"]["path"]
+        .as_str()
+        .expect("persisted path")
+        .to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--select-class", "docs", "--deselect"])
+        .arg(entry_path)
         .output()?;
 
     assert_eq!(output.status.code(), Some(2));
@@ -395,6 +568,25 @@ fn edit_plan_list_rejects_index_edit_flags_without_rewriting_plan() -> Result<()
         .args(["edit-plan", "--plan"])
         .arg(&plan_path)
         .args(["--list", "--select-index", "1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("`--list` cannot be combined with edit flags"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_list_rejects_class_edit_flags_without_rewriting_plan() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_list_class_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--list", "--select-class", "incremental"])
         .output()?;
 
     assert_eq!(output.status.code(), Some(2));

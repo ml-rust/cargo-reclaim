@@ -9,6 +9,23 @@ use crate::persistence::{
 
 const SELECT_REASON: &str = "explicitly selected for deletion";
 const DESELECT_REASON: &str = "explicitly preserved by selection";
+const CANONICAL_ARTIFACT_CLASSES: &[&str] = &[
+    "incremental",
+    "deps",
+    "build_scripts",
+    "fingerprint",
+    "docs",
+    "package",
+    "timings",
+    "tmp",
+    "dep_info",
+    "object_metadata",
+    "final_executable",
+    "final_library",
+    "final_rlib",
+    "final_wasm",
+    "unknown",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanEditRequest {
@@ -16,6 +33,8 @@ pub struct PlanEditRequest {
     pub deselect: Vec<String>,
     pub select_indices: Vec<usize>,
     pub deselect_indices: Vec<usize>,
+    pub select_classes: Vec<String>,
+    pub deselect_classes: Vec<String>,
 }
 
 impl PlanEditRequest {
@@ -29,13 +48,36 @@ impl PlanEditRequest {
         select_indices: Vec<usize>,
         deselect_indices: Vec<usize>,
     ) -> Result<Self, PlanEditError> {
+        Self::new_with_class_selectors(
+            select,
+            deselect,
+            select_indices,
+            deselect_indices,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    pub fn new_with_class_selectors(
+        select: Vec<String>,
+        deselect: Vec<String>,
+        select_indices: Vec<usize>,
+        deselect_indices: Vec<usize>,
+        select_classes: Vec<String>,
+        deselect_classes: Vec<String>,
+    ) -> Result<Self, PlanEditError> {
         if select.is_empty()
             && deselect.is_empty()
             && select_indices.is_empty()
             && deselect_indices.is_empty()
+            && select_classes.is_empty()
+            && deselect_classes.is_empty()
         {
             return Err(PlanEditError::NoEdits);
         }
+
+        validate_class_labels(&select_classes, ClassEditAction::Select)?;
+        validate_class_labels(&deselect_classes, ClassEditAction::Deselect)?;
 
         let selected = select.iter().collect::<HashSet<_>>();
         if let Some(path) = deselect.iter().find(|path| selected.contains(path)) {
@@ -64,11 +106,23 @@ impl PlanEditRequest {
             });
         }
 
+        let selected_classes = select_classes.iter().collect::<HashSet<_>>();
+        if let Some(label) = deselect_classes
+            .iter()
+            .find(|label| selected_classes.contains(label))
+        {
+            return Err(PlanEditError::ConflictingEdit {
+                path: format!("artifact class {label}"),
+            });
+        }
+
         Ok(Self {
             select,
             deselect,
             select_indices,
             deselect_indices,
+            select_classes,
+            deselect_classes,
         })
     }
 }
@@ -99,6 +153,14 @@ pub fn edit_persisted_plan(
     deselected_indices.extend(resolve_entry_indices(
         document.body.plan.entries.len(),
         &request.deselect_indices,
+    )?);
+    selected_indices.extend(resolve_artifact_classes(
+        &document.body.plan.entries,
+        &request.select_classes,
+    )?);
+    deselected_indices.extend(resolve_artifact_classes(
+        &document.body.plan.entries,
+        &request.deselect_classes,
     )?);
     dedupe_positions(&mut selected_indices);
     dedupe_positions(&mut deselected_indices);
@@ -191,6 +253,49 @@ fn resolve_entry_indices(
     Ok(resolved)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassEditAction {
+    Select,
+    Deselect,
+}
+
+fn validate_class_labels(labels: &[String], action: ClassEditAction) -> Result<(), PlanEditError> {
+    for label in labels {
+        if !CANONICAL_ARTIFACT_CLASSES.contains(&label.as_str()) {
+            return Err(PlanEditError::UnknownArtifactClass {
+                label: label.clone(),
+            });
+        }
+        if action == ClassEditAction::Select && label == "unknown" {
+            return Err(PlanEditError::ProtectedArtifactClass {
+                label: label.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn resolve_artifact_classes(
+    entries: &[PersistedPlanEntry],
+    labels: &[String],
+) -> Result<Vec<usize>, PlanEditError> {
+    let mut resolved = Vec::new();
+    for label in labels {
+        let start_len = resolved.len();
+        for (index, entry) in entries.iter().enumerate() {
+            if entry.artifact_class == *label {
+                resolved.push(index);
+            }
+        }
+        if resolved.len() == start_len {
+            return Err(PlanEditError::ArtifactClassNotFound {
+                label: label.clone(),
+            });
+        }
+    }
+    Ok(resolved)
+}
+
 fn reject_conflicting_positions(
     entries: &[PersistedPlanEntry],
     selected_indices: &[usize],
@@ -261,6 +366,9 @@ pub enum PlanEditError {
     NoEdits,
     ConflictingEdit { path: String },
     EntryNotFound { path: String },
+    UnknownArtifactClass { label: String },
+    ProtectedArtifactClass { label: String },
+    ArtifactClassNotFound { label: String },
     AmbiguousEntryPath { path: String },
     Persistence(PlanPersistenceError),
 }
@@ -277,6 +385,21 @@ impl fmt::Display for PlanEditError {
             }
             Self::EntryNotFound { path } => {
                 write!(formatter, "no persisted plan entry matches `{path}`")
+            }
+            Self::UnknownArtifactClass { label } => {
+                write!(formatter, "unknown artifact class selector `{label}`")
+            }
+            Self::ProtectedArtifactClass { label } => {
+                write!(
+                    formatter,
+                    "artifact class `{label}` cannot be selected by class; select explicit entries by path or index"
+                )
+            }
+            Self::ArtifactClassNotFound { label } => {
+                write!(
+                    formatter,
+                    "no persisted plan entry matches artifact class `{label}`"
+                )
             }
             Self::AmbiguousEntryPath { path } => {
                 write!(formatter, "persisted plan entry path `{path}` is ambiguous")
@@ -431,6 +554,138 @@ mod tests {
 
         assert_eq!(report.selected_count, 1);
         assert_eq!(document.body.plan.entries[0].action, "delete");
+        Ok(())
+    }
+
+    #[test]
+    fn edits_matching_persisted_artifact_classes() -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+        document.body.plan.entries[1].artifact_class = "docs".to_string();
+        document.id = PlanId::from_body(&document.body)?;
+
+        let report = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_class_selectors(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec!["incremental".to_string()],
+                vec!["docs".to_string()],
+            )?,
+            created_at,
+        )?;
+
+        assert_eq!(report.selected_count, 1);
+        assert_eq!(report.deselected_count, 1);
+        assert_eq!(document.body.plan.entries[0].action, "delete");
+        assert_eq!(document.body.plan.entries[0].policy_reason, SELECT_REASON);
+        assert_eq!(document.body.plan.entries[1].action, "preserve");
+        assert_eq!(document.body.plan.entries[1].policy_reason, DESELECT_REASON);
+        Ok(())
+    }
+
+    #[test]
+    fn dedupes_same_action_artifact_classes_before_reporting()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+
+        let report = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_class_selectors(
+                Vec::new(),
+                Vec::new(),
+                vec![1],
+                Vec::new(),
+                vec!["incremental".to_string(), "incremental".to_string()],
+                Vec::new(),
+            )?,
+            created_at,
+        )?;
+
+        assert_eq!(report.selected_count, 2);
+        assert_eq!(document.body.plan.entries[0].action, "delete");
+        assert_eq!(document.body.plan.entries[1].action, "delete");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_artifact_class_labels_without_partial_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let document = document(created_at, expires_at)?;
+        let original = document.clone();
+
+        let error = PlanEditRequest::new_with_class_selectors(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec!["typo".to_string()],
+            Vec::new(),
+        )
+        .expect_err("unknown artifact class should fail");
+
+        assert!(matches!(error, PlanEditError::UnknownArtifactClass { .. }));
+        assert_eq!(document, original);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_broad_unknown_artifact_class_selection_without_partial_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let document = document(created_at, expires_at)?;
+        let original = document.clone();
+
+        let error = PlanEditRequest::new_with_class_selectors(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec!["unknown".to_string()],
+            Vec::new(),
+        )
+        .expect_err("unknown class selection should fail");
+
+        assert!(matches!(
+            error,
+            PlanEditError::ProtectedArtifactClass { .. }
+        ));
+        assert_eq!(document, original);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unmatched_artifact_classes_without_partial_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let created_at = UNIX_EPOCH + Duration::from_secs(100);
+        let expires_at = created_at + Duration::from_secs(60);
+        let mut document = document(created_at, expires_at)?;
+        let original = document.clone();
+
+        let error = edit_persisted_plan(
+            &mut document,
+            &PlanEditRequest::new_with_class_selectors(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec!["docs".to_string()],
+                Vec::new(),
+            )?,
+            created_at,
+        )
+        .expect_err("unmatched artifact class should fail");
+
+        assert!(matches!(error, PlanEditError::ArtifactClassNotFound { .. }));
+        assert_eq!(document, original);
         Ok(())
     }
 

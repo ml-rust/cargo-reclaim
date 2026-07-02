@@ -35,6 +35,8 @@ pub(super) fn parse_edit_plan_command(
     let mut deselect = Vec::new();
     let mut select_indices = Vec::new();
     let mut deselect_indices = Vec::new();
+    let mut select_classes = Vec::new();
+    let mut deselect_classes = Vec::new();
     let mut list = false;
     let mut output_format = OutputFormat::Terminal;
 
@@ -82,6 +84,14 @@ pub(super) fn parse_edit_plan_command(
                 )?);
                 index += 1;
             }
+            "--select-class" => {
+                index =
+                    collect_edit_values(&args, index + 1, "--select-class", &mut select_classes)?;
+            }
+            value if value.starts_with("--select-class=") => {
+                select_classes.push(required_inline_value(value, "--select-class")?.to_string());
+                index += 1;
+            }
             "--deselect" => {
                 index = collect_edit_values(&args, index + 1, "--deselect", &mut deselect)?;
             }
@@ -102,6 +112,19 @@ pub(super) fn parse_edit_plan_command(
                     required_inline_value(value, "--deselect-index")?,
                     "--deselect-index",
                 )?);
+                index += 1;
+            }
+            "--deselect-class" => {
+                index = collect_edit_values(
+                    &args,
+                    index + 1,
+                    "--deselect-class",
+                    &mut deselect_classes,
+                )?;
+            }
+            value if value.starts_with("--deselect-class=") => {
+                deselect_classes
+                    .push(required_inline_value(value, "--deselect-class")?.to_string());
                 index += 1;
             }
             "--last" | "last" => {
@@ -138,6 +161,8 @@ pub(super) fn parse_edit_plan_command(
             || !deselect.is_empty()
             || !select_indices.is_empty()
             || !deselect_indices.is_empty()
+            || !select_classes.is_empty()
+            || !deselect_classes.is_empty()
         {
             return Err(CliError::Usage(
                 "`--list` cannot be combined with edit flags".to_string(),
@@ -145,11 +170,13 @@ pub(super) fn parse_edit_plan_command(
         }
         EditPlanOperation::List
     } else {
-        EditPlanOperation::Edit(PlanEditRequest::new_with_indices(
+        EditPlanOperation::Edit(PlanEditRequest::new_with_class_selectors(
             select,
             deselect,
             select_indices,
             deselect_indices,
+            select_classes,
+            deselect_classes,
         )?)
     };
 
@@ -499,6 +526,35 @@ mod tests {
         assert!(request.deselect.is_empty());
         assert_eq!(request.select_indices, [1, 2]);
         assert_eq!(request.deselect_indices, [3]);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_explicit_plan_and_multiple_class_values() -> Result<(), CliError> {
+        let command = parse_edit_plan_command(
+            [
+                "edit-plan",
+                "--plan",
+                "plan.json",
+                "--select-class",
+                "incremental",
+                "docs",
+                "--deselect-class=unknown",
+            ]
+            .into_iter()
+            .skip(1)
+            .map(OsString::from),
+        )?;
+
+        assert_eq!(command.plan_path, PathBuf::from("plan.json"));
+        let request = match command.operation {
+            EditPlanOperation::Edit(request) => request,
+            EditPlanOperation::List => {
+                return Err(CliError::Usage("expected edit operation".into()));
+            }
+        };
+        assert_eq!(request.select_classes, ["incremental", "docs"]);
+        assert_eq!(request.deselect_classes, ["unknown"]);
         Ok(())
     }
 

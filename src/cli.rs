@@ -465,6 +465,9 @@ impl CliError {
                 cargo_reclaim::PlanEditError::NoEdits
                 | cargo_reclaim::PlanEditError::ConflictingEdit { .. }
                 | cargo_reclaim::PlanEditError::EntryNotFound { .. }
+                | cargo_reclaim::PlanEditError::UnknownArtifactClass { .. }
+                | cargo_reclaim::PlanEditError::ProtectedArtifactClass { .. }
+                | cargo_reclaim::PlanEditError::ArtifactClassNotFound { .. }
                 | cargo_reclaim::PlanEditError::AmbiguousEntryPath { .. } => ExitCode::from(2),
                 cargo_reclaim::PlanEditError::Persistence(_) => ExitCode::FAILURE,
             },
