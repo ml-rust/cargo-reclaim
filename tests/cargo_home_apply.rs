@@ -5,7 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     CargoHomeApplyEntryStatus, CargoHomePlanRequest, PlanId, PolicyKind, SaveCargoHomePlanOptions,
-    build_cargo_home_plan, persist_cargo_home_plan, validate_cargo_home_plan_for_apply,
+    build_cargo_home_plan, execute_cargo_home_plan_apply, persist_cargo_home_plan,
+    validate_cargo_home_plan_for_apply,
 };
 
 #[test]
@@ -25,6 +26,9 @@ fn cargo_home_apply_validation_reports_would_delete_without_deleting() -> Result
     assert_eq!(report.totals.delete_candidate_count, 1);
     assert_eq!(report.totals.would_delete_count, 1);
     assert_eq!(report.totals.would_delete_bytes, 3);
+    assert_eq!(report.totals.applied_count, 0);
+    assert_eq!(report.totals.applied_bytes, 0);
+    assert_eq!(report.totals.failed_count, 0);
     assert!(cache_file.is_file());
     assert!(
         report
@@ -32,6 +36,143 @@ fn cargo_home_apply_validation_reports_would_delete_without_deleting() -> Result
             .iter()
             .any(|entry| entry.status == CargoHomeApplyEntryStatus::WouldDelete)
     );
+    Ok(())
+}
+
+#[test]
+fn cargo_home_apply_execution_deletes_revalidated_file_and_directory() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("cargo_home_apply_execute")?;
+    let cache_dir_file = temp.path().join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_dir_file.parent().expect("cache parent"))?;
+    fs::write(&cache_dir_file, b"abc")?;
+    let git_db_file = temp.path().join("git/db");
+    fs::create_dir_all(git_db_file.parent().expect("git parent"))?;
+    fs::write(&git_db_file, b"abcd")?;
+
+    let document = persisted_plan(temp.path(), PolicyKind::Aggressive)?;
+    let report = execute_cargo_home_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_500))?;
+
+    assert!(!report.dry_run);
+    assert!(!report.validation_only);
+    assert_eq!(report.totals.delete_candidate_count, 2);
+    assert_eq!(report.totals.applied_count, 2);
+    assert_eq!(report.totals.applied_bytes, 7);
+    assert_eq!(report.totals.failed_count, 0);
+    assert_eq!(report.totals.would_delete_count, 0);
+    assert!(
+        report
+            .entries
+            .iter()
+            .all(|entry| entry.status == CargoHomeApplyEntryStatus::Deleted)
+    );
+    assert!(!temp.path().join("registry/cache").exists());
+    assert!(!git_db_file.exists());
+    Ok(())
+}
+
+#[test]
+fn cargo_home_apply_execution_skips_stale_without_deleting() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_home_apply_execute_stale")?;
+    let cache_file = temp.path().join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_file.parent().expect("cache parent"))?;
+    fs::write(&cache_file, b"abc")?;
+    let document = persisted_plan(temp.path(), PolicyKind::Conservative)?;
+
+    fs::write(&cache_file, b"abcd")?;
+    let report = execute_cargo_home_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_500))?;
+
+    assert_eq!(report.totals.applied_count, 0);
+    assert_eq!(report.totals.failed_count, 0);
+    assert_eq!(report.totals.stale_skip_count, 1);
+    assert_eq!(
+        report.entries[0].status,
+        CargoHomeApplyEntryStatus::SkipStalePlan
+    );
+    assert!(cache_file.is_file());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_home_apply_execution_skips_directory_that_now_contains_symlink()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_home_apply_execute_symlink_child")?;
+    let cache_file = temp.path().join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_file.parent().expect("cache parent"))?;
+    fs::write(&cache_file, b"abc")?;
+    let document = persisted_plan(temp.path(), PolicyKind::Conservative)?;
+
+    std::os::unix::fs::symlink(
+        temp.path().join("outside"),
+        temp.path().join("registry/cache/link"),
+    )?;
+    let report = execute_cargo_home_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_500))?;
+
+    assert_eq!(report.totals.applied_count, 0);
+    assert_eq!(report.totals.failed_count, 0);
+    assert_eq!(report.totals.stale_skip_count, 1);
+    assert_eq!(
+        report.entries[0].status,
+        CargoHomeApplyEntryStatus::SkipStalePlan
+    );
+    assert!(cache_file.is_file());
+    assert!(fs::symlink_metadata(temp.path().join("registry/cache/link")).is_ok());
+    Ok(())
+}
+
+#[test]
+fn cargo_home_apply_execution_never_deletes_preserved_entries() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_home_apply_execute_preserved")?;
+    let cache_file = temp.path().join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_file.parent().expect("cache parent"))?;
+    fs::write(&cache_file, b"abc")?;
+    fs::write(temp.path().join("config.toml"), b"[net]\n")?;
+    fs::write(temp.path().join("custom"), b"keep")?;
+
+    let document = persisted_plan(temp.path(), PolicyKind::Conservative)?;
+    let report = execute_cargo_home_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_500))?;
+
+    assert_eq!(report.totals.applied_count, 1);
+    assert_eq!(report.totals.failed_count, 0);
+    assert!(report.entries.iter().any(|entry| {
+        entry.path.ends_with("config.toml")
+            && entry.status == CargoHomeApplyEntryStatus::NotPlannedForDeletion
+    }));
+    assert!(report.entries.iter().any(|entry| {
+        entry.path.ends_with("custom")
+            && entry.status == CargoHomeApplyEntryStatus::NotPlannedForDeletion
+    }));
+    assert!(!temp.path().join("registry/cache").exists());
+    assert!(temp.path().join("config.toml").is_file());
+    assert!(temp.path().join("custom").is_file());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_home_apply_execution_reports_delete_failure() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TestTemp::new("cargo_home_apply_execute_delete_failed")?;
+    let git = temp.path().join("git");
+    let git_db_file = git.join("db");
+    fs::create_dir_all(&git)?;
+    fs::write(&git_db_file, b"abc")?;
+    let document = persisted_plan(temp.path(), PolicyKind::Aggressive)?;
+
+    let original_permissions = fs::metadata(&git)?.permissions();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o500))?;
+    let report = execute_cargo_home_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_500))?;
+    fs::set_permissions(&git, original_permissions)?;
+
+    assert_eq!(report.totals.applied_count, 0);
+    assert_eq!(report.totals.failed_count, 1);
+    assert_eq!(
+        report.entries[0].status,
+        CargoHomeApplyEntryStatus::DeleteFailed
+    );
+    assert!(git_db_file.is_file());
     Ok(())
 }
 

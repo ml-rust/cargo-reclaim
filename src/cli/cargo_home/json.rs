@@ -49,6 +49,7 @@ pub(super) fn write_json_apply_report(
         })
         .collect::<Vec<_>>();
     let document = serde_json::json!({
+        "schema_version": 1,
         "command": "cargo-home apply",
         "dry_run": report.dry_run,
         "validation_only": report.validation_only,
@@ -57,9 +58,12 @@ pub(super) fn write_json_apply_report(
             "entry_count": report.totals.entry_count,
             "delete_candidate_count": report.totals.delete_candidate_count,
             "would_delete_count": report.totals.would_delete_count,
-            "would_delete_bytes": report.totals.would_delete_bytes,
+            "applied_count": report.totals.applied_count,
+            "failed_count": report.totals.failed_count,
             "skipped_count": report.totals.skipped_count,
             "stale_skip_count": report.totals.stale_skip_count,
+            "would_delete_bytes": report.totals.would_delete_bytes,
+            "applied_bytes": report.totals.applied_bytes,
         },
         "entries": entries,
     });
@@ -267,7 +271,9 @@ impl JsonCargoHomePlanEntry {
 fn apply_status_label(status: CargoHomeApplyEntryStatus) -> &'static str {
     match status {
         CargoHomeApplyEntryStatus::WouldDelete => "would_delete",
+        CargoHomeApplyEntryStatus::Deleted => "deleted",
         CargoHomeApplyEntryStatus::NotPlannedForDeletion => "not_planned_for_deletion",
         CargoHomeApplyEntryStatus::SkipStalePlan => "skip_stale_plan",
+        CargoHomeApplyEntryStatus::DeleteFailed => "delete_failed",
     }
 }

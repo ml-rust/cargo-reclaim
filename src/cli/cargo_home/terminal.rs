@@ -146,8 +146,16 @@ pub(super) fn write_terminal_apply_report(
     output: &mut impl Write,
     report: &CargoHomeApplyReport,
 ) -> Result<(), CliError> {
-    writeln!(output, "cargo-reclaim cargo-home apply")?;
-    writeln!(output, "validation only; no files were deleted or modified")?;
+    if report.validation_only {
+        writeln!(output, "cargo-reclaim cargo-home apply validation")?;
+        writeln!(output, "validation only; no files were deleted or modified")?;
+    } else {
+        writeln!(output, "cargo-reclaim cargo-home apply execution")?;
+        writeln!(
+            output,
+            "execution mode; files were removed only after persisted-plan revalidation"
+        )?;
+    }
     writeln!(
         output,
         "human-readable text; use --json for a stable structured document"
@@ -165,6 +173,9 @@ pub(super) fn write_terminal_apply_report(
         "would delete bytes: {}",
         report.totals.would_delete_bytes
     )?;
+    writeln!(output, "deleted: {}", report.totals.applied_count)?;
+    writeln!(output, "deleted bytes: {}", report.totals.applied_bytes)?;
+    writeln!(output, "delete failures: {}", report.totals.failed_count)?;
     writeln!(output, "skipped: {}", report.totals.skipped_count)?;
     writeln!(output, "stale skips: {}", report.totals.stale_skip_count)?;
 
@@ -186,7 +197,9 @@ pub(super) fn write_terminal_apply_report(
 fn apply_status_label(status: CargoHomeApplyEntryStatus) -> &'static str {
     match status {
         CargoHomeApplyEntryStatus::WouldDelete => "would_delete",
+        CargoHomeApplyEntryStatus::Deleted => "deleted",
         CargoHomeApplyEntryStatus::NotPlannedForDeletion => "not_planned_for_deletion",
         CargoHomeApplyEntryStatus::SkipStalePlan => "skip_stale_plan",
+        CargoHomeApplyEntryStatus::DeleteFailed => "delete_failed",
     }
 }

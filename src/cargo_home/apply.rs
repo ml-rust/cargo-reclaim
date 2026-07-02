@@ -26,6 +26,9 @@ pub struct CargoHomeApplyTotals {
     pub delete_candidate_count: usize,
     pub would_delete_count: usize,
     pub would_delete_bytes: u64,
+    pub applied_count: usize,
+    pub applied_bytes: u64,
+    pub failed_count: usize,
     pub skipped_count: usize,
     pub stale_skip_count: usize,
 }
@@ -42,8 +45,10 @@ pub struct CargoHomeApplyEntryResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CargoHomeApplyEntryStatus {
     WouldDelete,
+    Deleted,
     NotPlannedForDeletion,
     SkipStalePlan,
+    DeleteFailed,
 }
 
 pub fn validate_cargo_home_plan_for_apply(
@@ -51,18 +56,28 @@ pub fn validate_cargo_home_plan_for_apply(
     now: SystemTime,
 ) -> PlanPersistenceResult<CargoHomeApplyReport> {
     ensure_cargo_home_plan_usable(document, now)?;
-    let entries = document
-        .body
-        .plan
-        .entries
-        .iter()
-        .map(|entry| revalidate_entry(document, entry))
-        .collect::<Vec<_>>();
+    let entries = collect_revalidated_entries(document);
 
     Ok(CargoHomeApplyReport {
         plan_id: document.id.clone(),
         dry_run: true,
         validation_only: true,
+        totals: CargoHomeApplyTotals::from_entries(&entries),
+        entries,
+    })
+}
+
+pub fn execute_cargo_home_plan_apply(
+    document: &PersistedCargoHomePlan,
+    now: SystemTime,
+) -> PlanPersistenceResult<CargoHomeApplyReport> {
+    ensure_cargo_home_plan_usable(document, now)?;
+    let entries = collect_deleted_entries(document);
+
+    Ok(CargoHomeApplyReport {
+        plan_id: document.id.clone(),
+        dry_run: false,
+        validation_only: false,
         totals: CargoHomeApplyTotals::from_entries(&entries),
         entries,
     })
@@ -86,16 +101,44 @@ impl CargoHomeApplyTotals {
                     totals.would_delete_bytes =
                         totals.would_delete_bytes.saturating_add(entry.size_bytes);
                 }
+                CargoHomeApplyEntryStatus::Deleted => {
+                    totals.applied_count += 1;
+                    totals.applied_bytes = totals.applied_bytes.saturating_add(entry.size_bytes);
+                }
                 CargoHomeApplyEntryStatus::NotPlannedForDeletion => totals.skipped_count += 1,
                 CargoHomeApplyEntryStatus::SkipStalePlan => {
                     totals.skipped_count += 1;
                     totals.stale_skip_count += 1;
                 }
+                CargoHomeApplyEntryStatus::DeleteFailed => totals.failed_count += 1,
             }
         }
 
         totals
     }
+}
+
+fn collect_revalidated_entries(
+    document: &PersistedCargoHomePlan,
+) -> Vec<CargoHomeApplyEntryResult> {
+    document
+        .body
+        .plan
+        .entries
+        .iter()
+        .map(|entry| revalidate_entry(document, entry))
+        .collect()
+}
+
+fn collect_deleted_entries(document: &PersistedCargoHomePlan) -> Vec<CargoHomeApplyEntryResult> {
+    document
+        .body
+        .plan
+        .entries
+        .iter()
+        .map(|entry| revalidate_entry(document, entry))
+        .map(delete_revalidated_entry)
+        .collect()
 }
 
 fn revalidate_entry(
@@ -117,6 +160,25 @@ fn revalidate_entry(
             "delete candidate revalidated; no files were deleted",
         ),
         Err(reason) => result(entry, CargoHomeApplyEntryStatus::SkipStalePlan, reason),
+    }
+}
+
+fn delete_revalidated_entry(entry: CargoHomeApplyEntryResult) -> CargoHomeApplyEntryResult {
+    if entry.status != CargoHomeApplyEntryStatus::WouldDelete {
+        return entry;
+    }
+
+    match remove_path(Path::new(&entry.path)) {
+        Ok(()) => CargoHomeApplyEntryResult {
+            status: CargoHomeApplyEntryStatus::Deleted,
+            reason: "deleted revalidated path".to_string(),
+            ..entry
+        },
+        Err(reason) => CargoHomeApplyEntryResult {
+            status: CargoHomeApplyEntryStatus::DeleteFailed,
+            reason,
+            ..entry
+        },
     }
 }
 
@@ -229,6 +291,27 @@ fn revalidate_delete_candidate(
     }
 
     Ok(())
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("delete_failed: failed to read path metadata: {error}"))?;
+
+    if metadata.file_type().is_symlink() {
+        return Err("delete_failed: path is now a symlink".to_string());
+    }
+
+    if metadata.is_file() {
+        return fs::remove_file(path)
+            .map_err(|error| format!("delete_failed: failed to remove file: {error}"));
+    }
+
+    if metadata.is_dir() {
+        return fs::remove_dir_all(path)
+            .map_err(|error| format!("delete_failed: failed to remove directory: {error}"));
+    }
+
+    Err("delete_failed: path kind is not removable".to_string())
 }
 
 fn is_plain_relative_path(path: &Path) -> bool {

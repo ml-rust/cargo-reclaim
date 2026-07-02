@@ -7,8 +7,8 @@ use std::time::SystemTime;
 use cargo_reclaim::{
     CargoHomePlan, CargoHomePlanRequest, CargoHomeReportRequest, PolicyKind,
     SaveCargoHomePlanOptions, build_cargo_home_plan, build_cargo_home_report,
-    load_cargo_home_plan_from_path, persist_cargo_home_plan, save_cargo_home_plan_to_path,
-    validate_cargo_home_plan_for_apply,
+    execute_cargo_home_plan_apply, load_cargo_home_plan_from_path, persist_cargo_home_plan,
+    save_cargo_home_plan_to_path, validate_cargo_home_plan_for_apply,
 };
 
 use super::super::persistence::{SavePlanRequest, parse_duration};
@@ -223,23 +223,25 @@ fn run_cargo_home_apply(
     command: &CargoHomeCommand,
     stdout: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
-    if command.execute {
-        return Err(CliError::Usage(
-            "cargo-home execution is not available yet; omit `--yes` to run validation only"
-                .to_string(),
-        ));
-    }
-
     let plan_path = command.plan_path.as_ref().ok_or_else(|| {
         CliError::Usage("cargo-home apply requires an explicit `--plan <path>`".to_string())
     })?;
     let document = load_cargo_home_plan_from_path(plan_path)?;
-    let report = validate_cargo_home_plan_for_apply(&document, SystemTime::now())?;
+    let report = if command.execute {
+        execute_cargo_home_plan_apply(&document, SystemTime::now())?
+    } else {
+        validate_cargo_home_plan_for_apply(&document, SystemTime::now())?
+    };
     match command.output_format {
         OutputFormat::Terminal => write_terminal_apply_report(stdout, &report)?,
         OutputFormat::Json => write_json_apply_report(stdout, &report)?,
     }
-    Ok(ExitCode::SUCCESS)
+    let exit_code = if report.totals.failed_count == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
+    Ok(exit_code)
 }
 
 fn save_cargo_home_plan(plan: &CargoHomePlan, request: &SavePlanRequest) -> Result<(), CliError> {
@@ -281,7 +283,7 @@ fn usage_for_kind(kind: CargoHomeCommandKind) -> &'static str {
             "usage: cargo-reclaim cargo-home plan [--cargo-home <path>] [--policy <kind>] [--save-plan <path>] [--expires-in <duration>] [--json]"
         }
         CargoHomeCommandKind::Apply => {
-            "usage: cargo-reclaim cargo-home apply --plan <path> [--json]"
+            "usage: cargo-reclaim cargo-home apply --plan <path> [--yes] [--json]"
         }
     }
 }

@@ -10,7 +10,7 @@ mod resolve;
 
 pub use apply::{
     CargoHomeApplyEntryResult, CargoHomeApplyEntryStatus, CargoHomeApplyReport,
-    CargoHomeApplyTotals, validate_cargo_home_plan_for_apply,
+    CargoHomeApplyTotals, execute_cargo_home_plan_apply, validate_cargo_home_plan_for_apply,
 };
 pub use classify::classify_cargo_home_relative_path;
 pub use inventory::inventory_cargo_home;

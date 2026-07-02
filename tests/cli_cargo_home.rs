@@ -16,7 +16,7 @@ fn help_lists_cargo_home_plan_and_apply_commands() -> Result<(), Box<dyn Error>>
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("cargo-home report"));
     assert!(stdout.contains("cargo-home plan"));
-    assert!(stdout.contains("cargo-home apply --plan <path>"));
+    assert!(stdout.contains("cargo-home apply --plan <path> [--yes]"));
     Ok(())
 }
 
@@ -250,10 +250,14 @@ fn cargo_home_apply_plan_validates_without_deleting() -> Result<(), Box<dyn Erro
     assert!(output.status.success());
     assert!(String::from_utf8(output.stderr)?.is_empty());
     let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["schema_version"], 1);
     assert_eq!(document["command"], "cargo-home apply");
     assert_eq!(document["dry_run"], true);
     assert_eq!(document["validation_only"], true);
     assert_eq!(document["totals"]["would_delete_count"], 1);
+    assert_eq!(document["totals"]["applied_count"], 0);
+    assert_eq!(document["totals"]["applied_bytes"], 0);
+    assert_eq!(document["totals"]["failed_count"], 0);
     assert_eq!(document["entries"][0]["status"], "would_delete");
     assert!(cache_file.is_file());
     Ok(())
@@ -298,27 +302,100 @@ fn cargo_home_saved_relative_root_applies_from_different_cwd() -> Result<(), Box
 
     assert!(output.status.success());
     let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["schema_version"], 1);
     assert_eq!(document["totals"]["would_delete_count"], 1);
     assert!(cache_file.is_file());
     Ok(())
 }
 
 #[test]
-fn cargo_home_apply_yes_is_rejected() -> Result<(), Box<dyn Error>> {
-    let temp = TestTemp::new("cli_cargo_home_apply_yes")?;
+fn cargo_home_apply_yes_json_deletes_revalidated_entries() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_home_apply_yes_json")?;
+    let cache_file = temp.path().join("registry/cache/example/pkg.crate");
+    fs::create_dir_all(cache_file.parent().expect("cache parent"))?;
+    fs::write(&cache_file, b"abc")?;
     let plan_path = temp.path().join("cargo-home-plan.json");
-    fs::write(&plan_path, b"{}")?;
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "cargo-home",
+            "plan",
+            "--policy",
+            "conservative",
+            "--save-plan",
+        ])
+        .arg(&plan_path)
+        .arg("--cargo-home")
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
-        .args(["cargo-home", "apply", "--plan"])
+        .args(["cargo-home", "apply", "--json", "--yes", "--plan"])
         .arg(&plan_path)
-        .arg("--yes")
         .output()?;
 
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        String::from_utf8(output.stderr)?.contains("cargo-home execution is not available yet")
-    );
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["command"], "cargo-home apply");
+    assert_eq!(document["dry_run"], false);
+    assert_eq!(document["validation_only"], false);
+    assert_eq!(document["totals"]["delete_candidate_count"], 1);
+    assert_eq!(document["totals"]["would_delete_count"], 0);
+    assert_eq!(document["totals"]["applied_count"], 1);
+    assert_eq!(document["totals"]["applied_bytes"], 3);
+    assert_eq!(document["totals"]["failed_count"], 0);
+    assert_eq!(document["entries"][0]["status"], "deleted");
+    assert!(!temp.path().join("registry/cache").exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_home_apply_yes_exits_nonzero_when_delete_fails() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TestTemp::new("cli_cargo_home_apply_yes_failed")?;
+    let git = temp.path().join("git");
+    let git_db_file = git.join("db");
+    fs::create_dir_all(&git)?;
+    fs::write(&git_db_file, b"abc")?;
+    let plan_path = temp.path().join("cargo-home-plan.json");
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "cargo-home",
+            "plan",
+            "--policy",
+            "aggressive",
+            "--save-plan",
+        ])
+        .arg(&plan_path)
+        .arg("--cargo-home")
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+
+    let original_permissions = fs::metadata(&git)?.permissions();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o500))?;
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["cargo-home", "apply", "--json", "--yes", "--plan"])
+        .arg(&plan_path)
+        .output()?;
+    if git.exists() {
+        fs::set_permissions(&git, original_permissions)?;
+    }
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["totals"]["applied_count"], 0);
+    assert_eq!(document["totals"]["failed_count"], 1);
+    assert_eq!(document["entries"][0]["status"], "delete_failed");
+    assert!(git_db_file.is_file());
     Ok(())
 }
 

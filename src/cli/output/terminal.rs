@@ -43,7 +43,7 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
-        "  cargo-home apply --plan <path>  Validate a persisted Cargo home cleanup plan"
+        "  cargo-home apply --plan <path> [--yes]  Validate or execute a persisted Cargo home cleanup plan"
     )?;
     writeln!(
         output,
