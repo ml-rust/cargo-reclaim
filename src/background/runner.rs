@@ -222,7 +222,8 @@ fn run_after_started(
     )
     .with_selected_policy(request.policy)
     .with_trigger(trigger_summary.clone())
-    .with_plan(plan_summary);
+    .with_plan(plan_summary)
+    .with_plan_skipped_paths(&plan);
     append_record_or_failure(&request, &plan_built)?;
 
     let mut apply_report = None;
@@ -241,6 +242,7 @@ fn run_after_started(
             &document.id,
             plan.totals,
         ))
+        .with_plan_skipped_paths(&plan)
         .with_apply(BackgroundApplySummary::from_apply_report(&report));
         append_record_or_failure(&request, &apply_completed)?;
         apply_report = Some(report);

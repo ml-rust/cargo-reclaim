@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::executor::{ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals};
-use crate::model::{Plan, PlanTotals};
+use crate::model::{Plan, PlanSkip, PlanTotals};
 use crate::persistence::{PersistedTimestamp, PlanId};
 use crate::policy::PolicyKind;
 use crate::watcher::{WatcherDecision, WatcherDecisionState, WatcherTriggerReason};
@@ -144,6 +144,15 @@ impl BackgroundRunLogRecord {
         self
     }
 
+    pub fn with_plan_skipped_paths(mut self, plan: &Plan) -> Self {
+        self.skipped_projects.extend(
+            plan.skipped_paths
+                .iter()
+                .map(BackgroundSkippedProject::from_skip),
+        );
+        self
+    }
+
     pub fn with_apply(mut self, apply: BackgroundApplySummary) -> Self {
         self.apply = Some(apply);
         self
@@ -252,6 +261,8 @@ pub struct BackgroundPlanTotals {
     pub total_bytes: u64,
     pub preserved_count: usize,
     pub delete_candidate_count: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped_path_count: usize,
 }
 
 impl BackgroundPlanTotals {
@@ -261,14 +272,31 @@ impl BackgroundPlanTotals {
             total_bytes: totals.total_bytes,
             preserved_count: totals.preserved_count,
             delete_candidate_count: totals.delete_candidate_count,
+            skipped_path_count: totals.skipped_path_count,
         }
     }
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackgroundSkippedProject {
     pub path: String,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl BackgroundSkippedProject {
+    fn from_skip(skip: &PlanSkip) -> Self {
+        Self {
+            path: skip.path.display().to_string(),
+            reason: skip.reason.label().to_owned(),
+            message: skip.message.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

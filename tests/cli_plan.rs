@@ -38,6 +38,31 @@ fn plan_command_prints_dry_run_summary_and_entries() -> Result<(), Box<dyn Error
 }
 
 #[test]
+fn plan_command_prints_skipped_scan_paths_when_present() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_plan_skip_diagnostics")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join(".git"))?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("skipped scan paths: 1"));
+    assert!(stdout.contains("default_ignored_dir\t"));
+    assert!(stdout.contains(".git"));
+    assert!(stdout.contains("delete\tincremental\t3\t"));
+    Ok(())
+}
+
+#[test]
 fn scan_command_supports_observe_policy() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_scan_observe")?;
     write_manifest(temp.path())?;
@@ -164,6 +189,39 @@ fn plan_json_outputs_single_dry_run_document() -> Result<(), Box<dyn Error>> {
         .find(|entry| entry["artifact_class"] == "docs")
         .expect("docs entry");
     assert_eq!(docs["action"], "preserve");
+    Ok(())
+}
+
+#[test]
+fn plan_json_outputs_skipped_scan_path_diagnostics() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_plan_json_skip_diagnostics")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join(".git"))?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(document["totals"]["skipped_path_count"], 1);
+    let skipped_paths = document["skipped_paths"]
+        .as_array()
+        .expect("skipped_paths array");
+    assert_eq!(skipped_paths.len(), 1);
+    assert_eq!(
+        skipped_paths[0]["path"],
+        temp.path().join(".git").display().to_string()
+    );
+    assert_eq!(skipped_paths[0]["reason"], "default_ignored_dir");
+    assert!(skipped_paths[0].get("message").is_none());
     Ok(())
 }
 

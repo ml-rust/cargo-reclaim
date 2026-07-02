@@ -7,8 +7,8 @@ mod time;
 
 pub use document::{
     PersistedEvidence, PersistedInventoryOptions, PersistedPathSnapshot, PersistedPlan,
-    PersistedPlanBody, PersistedPlanEntry, PersistedPlanInput, PersistedPlanSnapshot,
-    PersistedPlanTotals, PersistedPlannerOptions, PersistedScannerOptions,
+    PersistedPlanBody, PersistedPlanEntry, PersistedPlanInput, PersistedPlanSkip,
+    PersistedPlanSnapshot, PersistedPlanTotals, PersistedPlannerOptions, PersistedScannerOptions,
     PersistedWholeTargetMode, PlanCommandKind, PlanInvocation, SavePlanOptions, ensure_plan_usable,
     persist_plan,
 };

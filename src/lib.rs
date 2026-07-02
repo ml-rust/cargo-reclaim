@@ -82,15 +82,15 @@ pub use inventory::{
 };
 pub use model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
-    PlanInput, PlanTotals, TargetEvidence,
+    PlanInput, PlanSkip, PlanSkipReason, PlanTotals, TargetEvidence,
 };
 pub use persistence::{
     PERSISTED_PLAN_SCHEMA_VERSION, PersistedEvidence, PersistedInventoryOptions,
     PersistedPathSnapshot, PersistedPlan, PersistedPlanBody, PersistedPlanEntry,
-    PersistedPlanInput, PersistedPlanSnapshot, PersistedPlanTotals, PersistedPlannerOptions,
-    PersistedScannerOptions, PersistedTimestamp, PersistedWholeTargetMode, PlanCommandKind, PlanId,
-    PlanInvocation, PlanPersistenceError, PlanPersistenceResult, SavePlanOptions,
-    ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
+    PersistedPlanInput, PersistedPlanSkip, PersistedPlanSnapshot, PersistedPlanTotals,
+    PersistedPlannerOptions, PersistedScannerOptions, PersistedTimestamp, PersistedWholeTargetMode,
+    PlanCommandKind, PlanId, PlanInvocation, PlanPersistenceError, PlanPersistenceResult,
+    SavePlanOptions, ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
 };
 pub use plan_edit::{PlanEditError, PlanEditReport, PlanEditRequest, edit_persisted_plan};
 pub use planner::{

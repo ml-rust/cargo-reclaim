@@ -7,9 +7,9 @@ use cargo_reclaim::{
     ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, ArtifactClass,
     BackgroundApplySummary, BackgroundPlanSummary, BackgroundRunEventKind, BackgroundRunLogError,
     BackgroundRunLogRecord, BackgroundTriggerReasonSummary, BackgroundTriggerSummary, PathKind,
-    PathSnapshot, PersistedTimestamp, Plan, PlanAction, PlanEntry, PlanId, PlanInput, PolicyKind,
-    TargetEvidence, WatcherDecision, WatcherDecisionState, WatcherTriggerReason,
-    append_background_run_log_record, read_background_run_log,
+    PathSnapshot, PersistedTimestamp, Plan, PlanAction, PlanEntry, PlanId, PlanInput, PlanSkip,
+    PlanSkipReason, PolicyKind, TargetEvidence, WatcherDecision, WatcherDecisionState,
+    WatcherTriggerReason, append_background_run_log_record, read_background_run_log,
 };
 
 #[test]
@@ -157,7 +157,60 @@ fn plan_summary_records_policy_and_totals_without_entries() -> Result<(), Box<dy
     assert_eq!(summary.totals.entry_count, 2);
     assert_eq!(summary.totals.total_bytes, 30);
     assert_eq!(summary.totals.delete_candidate_count, 1);
+    assert_eq!(summary.totals.skipped_path_count, 0);
     assert_eq!(serde_json::to_value(&summary)?.get("entries"), None);
+    Ok(())
+}
+
+#[test]
+fn plan_summary_defaults_missing_skipped_path_count() -> Result<(), Box<dyn Error>> {
+    let summary: BackgroundPlanSummary = serde_json::from_value(serde_json::json!({
+        "plan_id": null,
+        "policy": "balanced",
+        "totals": {
+            "entry_count": 0,
+            "total_bytes": 0,
+            "preserved_count": 0,
+            "delete_candidate_count": 0
+        }
+    }))?;
+
+    assert_eq!(summary.totals.skipped_path_count, 0);
+    Ok(())
+}
+
+#[test]
+fn record_can_include_plan_skipped_path_diagnostics() -> Result<(), Box<dyn Error>> {
+    let plan = Plan::with_skipped_paths(
+        PlanInput::from_root(".")?,
+        Vec::new(),
+        vec![PlanSkip::new(
+            "project/.cargo",
+            PlanSkipReason::CargoConfigUnsupported,
+            Some("unsupported build-dir template".to_string()),
+        )?],
+    );
+    let record = record("run-1", 10, BackgroundRunEventKind::PlanBuilt)
+        .with_plan(BackgroundPlanSummary::from_plan(
+            PolicyKind::Balanced,
+            &plan,
+        ))
+        .with_plan_skipped_paths(&plan);
+    let value = serde_json::to_value(&record)?;
+
+    assert_eq!(
+        value["plan"]["totals"]["skipped_path_count"],
+        serde_json::json!(1)
+    );
+    assert_eq!(value["skipped_projects"][0]["path"], "project/.cargo");
+    assert_eq!(
+        value["skipped_projects"][0]["reason"],
+        "cargo_config_unsupported"
+    );
+    assert_eq!(
+        value["skipped_projects"][0]["message"],
+        "unsupported build-dir template"
+    );
     Ok(())
 }
 

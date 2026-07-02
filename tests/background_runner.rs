@@ -34,6 +34,7 @@ fn skipped_threshold_appends_started_and_skipped_without_plan() -> Result<(), Bo
         ],
     )?;
     let records = read_background_run_log(temp.path.join("runs.jsonl"))?;
+    assert!(records[1].skipped_projects.is_empty());
     assert_eq!(
         records[1]
             .trigger
@@ -49,6 +50,7 @@ fn triggered_plan_only_builds_and_logs_plan_without_apply() -> Result<(), Box<dy
     let temp = TestTemp::new("background_runner_plan_only")?;
     let target_entry = temp.path.join("project/target/debug/incremental/cache.bin");
     write_project_target_file(&target_entry)?;
+    fs::create_dir_all(temp.path.join("project/.git"))?;
     let request = request(
         &temp,
         "run-plan-only",
@@ -77,6 +79,13 @@ fn triggered_plan_only_builds_and_logs_plan_without_apply() -> Result<(), Box<dy
             .and_then(|plan| plan.plan_id.as_deref()),
         report.plan_id.as_ref().map(|plan_id| plan_id.as_str())
     );
+    assert_eq!(records[2].skipped_projects.len(), 1);
+    assert_eq!(
+        records[2].skipped_projects[0].path,
+        temp.path.join("project/.git").display().to_string()
+    );
+    assert_eq!(records[2].skipped_projects[0].reason, "default_ignored_dir");
+    assert_eq!(records[2].skipped_projects[0].message, None);
     assert!(records[2].apply.is_none());
     Ok(())
 }

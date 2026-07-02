@@ -1,4 +1,6 @@
-use cargo_reclaim::{ArtifactClass, PathKind, PlanAction, PolicyKind, TargetEvidence};
+use cargo_reclaim::{
+    ArtifactClass, PathKind, PlanAction, PlanSkipReason, PolicyKind, TargetEvidence,
+};
 
 pub(super) fn policy_label(policy: PolicyKind) -> &'static str {
     match policy {
@@ -61,11 +63,20 @@ pub(super) fn evidence_kind_label(evidence: &TargetEvidence) -> &'static str {
     }
 }
 
+pub(super) fn skip_reason_label(reason: PlanSkipReason) -> &'static str {
+    reason.label()
+}
+
 #[cfg(test)]
 mod tests {
-    use cargo_reclaim::{ArtifactClass, PathKind, PlanAction, PolicyKind, TargetEvidence};
+    use cargo_reclaim::{
+        ArtifactClass, PathKind, PlanAction, PlanSkipReason, PolicyKind, TargetEvidence,
+    };
 
-    use super::{action_label, artifact_label, evidence_kind_label, path_kind_label, policy_label};
+    use super::{
+        action_label, artifact_label, evidence_kind_label, path_kind_label, policy_label,
+        skip_reason_label,
+    };
 
     #[test]
     fn labels_cover_current_schema_enums() -> Result<(), Box<dyn std::error::Error>> {
@@ -133,6 +144,40 @@ mod tests {
             evidence_kind_label(&TargetEvidence::weak_name_only("target")?),
             "weak_name_only"
         );
+
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::DefaultIgnoredDir),
+            "default_ignored_dir"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::ConfiguredIgnoredPath),
+            "configured_ignored_path"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::SymlinkNotFollowed),
+            "symlink_not_followed"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::CrossFilesystem),
+            "cross_filesystem"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::WeakNameOnlySuppressed),
+            "weak_name_only_suppressed"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::AlreadyVisited),
+            "already_visited"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::CargoConfigUnsupported),
+            "cargo_config_unsupported"
+        );
+        assert_eq!(
+            skip_reason_label(PlanSkipReason::CargoConfigProblem),
+            "cargo_config_problem"
+        );
+        assert_eq!(skip_reason_label(PlanSkipReason::ReadError), "read_error");
         Ok(())
     }
 }

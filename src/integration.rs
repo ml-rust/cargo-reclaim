@@ -6,13 +6,15 @@ use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::ReclaimResult;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
 use crate::inventory::{append_fingerprint_group_candidates, snapshot_path};
-use crate::model::{ArtifactClass, Plan, PlanInput};
+use crate::model::{ArtifactClass, Plan, PlanInput, PlanSkip, PlanSkipReason};
 use crate::planner::{
     ActiveObservation, PlannerCandidate, PlannerOptions, TargetContext, WholeTargetMode,
     build_plan_with_active_observation,
 };
 use crate::policy::PolicyKind;
-use crate::scanner::{ScanItem, ScannerOptions, TargetCandidateKind, scan_roots};
+use crate::scanner::{
+    ScanItem, ScanSkip, ScanSkipReason, ScannerOptions, TargetCandidateKind, scan_roots,
+};
 
 pub struct BuildPlanFromScanItemsRequest<'a, I> {
     pub input: PlanInput,
@@ -265,11 +267,17 @@ fn build_plan_from_scan_items_with_active_observation_impl(
     } = request;
     let mut seen_target_roots = HashSet::new();
     let mut candidates = Vec::new();
-    let scanner_skipped_paths = scanner_options.skipped_paths.clone();
+    let mut skipped_paths = Vec::new();
+    let scanner_skipped_paths = &scanner_options.skipped_paths;
 
     for item in items {
-        let ScanItem::TargetCandidate(target_candidate) = item else {
-            continue;
+        let target_candidate = match item {
+            ScanItem::TargetCandidate(target_candidate) => target_candidate,
+            ScanItem::Skipped(skip) => {
+                skipped_paths.push(plan_skip_from_scan_skip(skip)?);
+                continue;
+            }
+            ScanItem::CargoProject(_) => continue,
         };
 
         if target_candidate.kind != TargetCandidateKind::CargoTargetDir {
@@ -325,14 +333,39 @@ fn build_plan_from_scan_items_with_active_observation_impl(
         }
     }
 
-    build_plan_with_active_observation(
+    let plan = build_plan_with_active_observation(
         input,
         policy,
         candidates,
         planner_options,
         active_observation,
         now,
-    )
+    )?;
+    Ok(Plan::with_skipped_paths(
+        plan.input,
+        plan.entries,
+        skipped_paths,
+    ))
+}
+
+fn plan_skip_from_scan_skip(skip: ScanSkip) -> ReclaimResult<PlanSkip> {
+    let (reason, message) = match skip.reason {
+        ScanSkipReason::DefaultIgnoredDir => (PlanSkipReason::DefaultIgnoredDir, None),
+        ScanSkipReason::ConfiguredIgnoredPath => (PlanSkipReason::ConfiguredIgnoredPath, None),
+        ScanSkipReason::SymlinkNotFollowed => (PlanSkipReason::SymlinkNotFollowed, None),
+        ScanSkipReason::CrossFilesystem => (PlanSkipReason::CrossFilesystem, None),
+        ScanSkipReason::WeakNameOnlySuppressed => (PlanSkipReason::WeakNameOnlySuppressed, None),
+        ScanSkipReason::AlreadyVisited => (PlanSkipReason::AlreadyVisited, None),
+        ScanSkipReason::CargoConfigUnsupported { message } => {
+            (PlanSkipReason::CargoConfigUnsupported, Some(message))
+        }
+        ScanSkipReason::CargoConfigProblem { message } => {
+            (PlanSkipReason::CargoConfigProblem, Some(message))
+        }
+        ScanSkipReason::ReadError { message } => (PlanSkipReason::ReadError, Some(message)),
+    };
+
+    PlanSkip::new(skip.path, reason, message)
 }
 
 fn has_skipped_descendant(target_root: &Path, inventory_options: &InventoryOptions) -> bool {

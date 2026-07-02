@@ -184,7 +184,10 @@ pub fn edit_persisted_plan(
         DESELECT_REASON,
     );
 
-    document.body.plan.totals = totals_from_entries(&document.body.plan.entries);
+    document.body.plan.totals = totals_from_entries(
+        &document.body.plan.entries,
+        document.body.plan.skipped_paths.len(),
+    );
     document.body.interactive_selection_modified = true;
     document.id = PlanId::from_body(&document.body)?;
 
@@ -343,12 +346,16 @@ fn apply_paths(
     edited_count
 }
 
-fn totals_from_entries(entries: &[PersistedPlanEntry]) -> PersistedPlanTotals {
+fn totals_from_entries(
+    entries: &[PersistedPlanEntry],
+    skipped_path_count: usize,
+) -> PersistedPlanTotals {
     let mut totals = PersistedPlanTotals {
         entry_count: entries.len(),
         total_bytes: 0,
         preserved_count: 0,
         delete_candidate_count: 0,
+        skipped_path_count,
     };
 
     for entry in entries {
@@ -768,6 +775,7 @@ mod tests {
             total_bytes: 11,
             preserved_count: 2,
             delete_candidate_count: 1,
+            skipped_path_count: 0,
         };
         document.id = PlanId::from_body(&document.body)?;
         let original = document.clone();
@@ -827,11 +835,13 @@ mod tests {
                     persisted_entry("target/debug/incremental", "requires_confirmation", 3),
                     persisted_entry("target/doc", "delete", 4),
                 ],
+                skipped_paths: Vec::new(),
                 totals: PersistedPlanTotals {
                     entry_count: 2,
                     total_bytes: 7,
                     preserved_count: 1,
                     delete_candidate_count: 1,
+                    skipped_path_count: 0,
                 },
             },
         };

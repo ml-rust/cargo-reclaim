@@ -10,17 +10,27 @@ pub struct Plan {
     pub schema_version: u16,
     pub input: PlanInput,
     pub entries: Vec<PlanEntry>,
+    pub skipped_paths: Vec<PlanSkip>,
     pub totals: PlanTotals,
 }
 
 impl Plan {
     pub fn new(input: PlanInput, entries: Vec<PlanEntry>) -> Self {
-        let totals = PlanTotals::from_entries(&entries);
+        Self::with_skipped_paths(input, entries, Vec::new())
+    }
+
+    pub fn with_skipped_paths(
+        input: PlanInput,
+        entries: Vec<PlanEntry>,
+        skipped_paths: Vec<PlanSkip>,
+    ) -> Self {
+        let totals = PlanTotals::from_entries_and_skips(&entries, &skipped_paths);
 
         Self {
             schema_version: PLAN_SCHEMA_VERSION,
             input,
             entries,
+            skipped_paths,
             totals,
         }
     }
@@ -55,6 +65,59 @@ impl PlanInput {
 
     pub fn from_root(root: impl Into<PathBuf>) -> ReclaimResult<Self> {
         Self::new([root.into()])
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanSkip {
+    pub path: PathBuf,
+    pub reason: PlanSkipReason,
+    pub message: Option<String>,
+}
+
+impl PlanSkip {
+    pub fn new(
+        path: impl Into<PathBuf>,
+        reason: PlanSkipReason,
+        message: Option<String>,
+    ) -> ReclaimResult<Self> {
+        let path = path.into();
+        require_non_empty_path(&path)?;
+
+        Ok(Self {
+            path,
+            reason,
+            message,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanSkipReason {
+    DefaultIgnoredDir,
+    ConfiguredIgnoredPath,
+    SymlinkNotFollowed,
+    CrossFilesystem,
+    WeakNameOnlySuppressed,
+    AlreadyVisited,
+    CargoConfigUnsupported,
+    CargoConfigProblem,
+    ReadError,
+}
+
+impl PlanSkipReason {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DefaultIgnoredDir => "default_ignored_dir",
+            Self::ConfiguredIgnoredPath => "configured_ignored_path",
+            Self::SymlinkNotFollowed => "symlink_not_followed",
+            Self::CrossFilesystem => "cross_filesystem",
+            Self::WeakNameOnlySuppressed => "weak_name_only_suppressed",
+            Self::AlreadyVisited => "already_visited",
+            Self::CargoConfigUnsupported => "cargo_config_unsupported",
+            Self::CargoConfigProblem => "cargo_config_problem",
+            Self::ReadError => "read_error",
+        }
     }
 }
 
@@ -127,12 +190,18 @@ pub struct PlanTotals {
     pub total_bytes: u64,
     pub preserved_count: usize,
     pub delete_candidate_count: usize,
+    pub skipped_path_count: usize,
 }
 
 impl PlanTotals {
     pub fn from_entries(entries: &[PlanEntry]) -> Self {
+        Self::from_entries_and_skips(entries, &[])
+    }
+
+    pub fn from_entries_and_skips(entries: &[PlanEntry], skipped_paths: &[PlanSkip]) -> Self {
         let mut totals = Self {
             entry_count: entries.len(),
+            skipped_path_count: skipped_paths.len(),
             ..Self::default()
         };
 

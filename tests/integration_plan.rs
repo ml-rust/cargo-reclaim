@@ -505,6 +505,38 @@ fn skipped_path_inside_target_root_is_pruned_from_plan_entries() -> Result<(), B
 }
 
 #[test]
+fn scanner_skips_are_carried_as_plan_diagnostics() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_scan_skip_diagnostics")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join(".git"))?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+
+    assert_eq!(plan.totals.skipped_path_count, 1);
+    assert_eq!(plan.skipped_paths[0].path, temp.path().join(".git"));
+    assert_eq!(
+        plan.skipped_paths[0].reason,
+        cargo_reclaim::PlanSkipReason::DefaultIgnoredDir
+    );
+    assert_eq!(plan.skipped_paths[0].message, None);
+    assert!(plan.entries.iter().any(|entry| {
+        entry.snapshot.path == temp.path().join("target/debug/incremental")
+            && entry.action == PlanAction::Delete
+    }));
+    Ok(())
+}
+
+#[test]
 fn whole_target_mode_falls_back_to_content_entries_when_skip_is_inside_target()
 -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_skip_whole_target")?;

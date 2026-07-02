@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use cargo_reclaim::{Plan, PlanEntry, PolicyKind};
 
-use super::labels::{action_label, artifact_label, policy_label};
+use super::labels::{action_label, artifact_label, policy_label, skip_reason_label};
 use crate::cli::{CliError, PlanMode};
 
 pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
@@ -149,6 +149,33 @@ pub(super) fn write_plan(
     )?;
     writeln!(output, "preserved/unknown: {}", plan.totals.preserved_count)?;
     writeln!(output, "estimated bytes: {}", plan.totals.total_bytes)?;
+    writeln!(
+        output,
+        "skipped scan paths: {}",
+        plan.totals.skipped_path_count
+    )?;
+
+    if !plan.skipped_paths.is_empty() {
+        writeln!(output)?;
+        writeln!(output, "skipped scan path details:")?;
+        for skip in &plan.skipped_paths {
+            match &skip.message {
+                Some(message) => writeln!(
+                    output,
+                    "  {}\t{}\t{}",
+                    skip_reason_label(skip.reason),
+                    display_path(&skip.path),
+                    display_text(message)
+                )?,
+                None => writeln!(
+                    output,
+                    "  {}\t{}",
+                    skip_reason_label(skip.reason),
+                    display_path(&skip.path)
+                )?,
+            }
+        }
+    }
 
     if plan.entries.is_empty() {
         writeln!(

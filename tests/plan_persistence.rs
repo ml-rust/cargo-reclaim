@@ -6,8 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use cargo_reclaim::{
     ArtifactClass, InventoryOptions, PERSISTED_PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan,
     PlanAction, PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError,
-    PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence, WholeTargetMode,
-    ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
+    PlanSkip, PlanSkipReason, PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions,
+    TargetEvidence, WholeTargetMode, ensure_plan_usable, load_plan_from_path, persist_plan,
+    save_plan_to_path,
 };
 use serde_json::json;
 
@@ -107,7 +108,59 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
             .as_deref()
             .is_some_and(|fingerprint| fingerprint.starts_with("sha256:"))
     );
+    assert_eq!(loaded.body.plan.totals.skipped_path_count, 0);
+    assert!(loaded.body.plan.skipped_paths.is_empty());
     ensure_plan_usable(&loaded, created_at + Duration::from_secs(60))?;
+    Ok(())
+}
+
+#[test]
+fn persists_plan_skipped_path_diagnostics() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("persistence_skip_diagnostics")?;
+    let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
+    let expires_at = created_at + Duration::from_secs(3_600);
+    let entry_path = temp.path.join("target/debug/incremental");
+    let skipped_path = temp.path.join("project/.cargo");
+    let plan = Plan::with_skipped_paths(
+        PlanInput::from_root(".")?,
+        sample_plan(entry_path, created_at)?.entries,
+        vec![PlanSkip::new(
+            skipped_path.clone(),
+            PlanSkipReason::CargoConfigProblem,
+            Some("config parse failed".to_string()),
+        )?],
+    );
+
+    let document = persist_plan(
+        &plan,
+        SavePlanOptions {
+            created_at,
+            expires_at,
+            interactive_selection_modified: false,
+            invocation: PlanInvocation::new(
+                PlanCommandKind::Plan,
+                PolicyKind::Balanced,
+                &ScannerOptions::default(),
+                &InventoryOptions::default(),
+                &PlannerOptions::default(),
+            ),
+        },
+    )?;
+    let value = serde_json::to_value(&document)?;
+
+    assert_eq!(value["plan"]["totals"]["skipped_path_count"], 1);
+    assert_eq!(
+        value["plan"]["skipped_paths"][0]["path"],
+        skipped_path.display().to_string()
+    );
+    assert_eq!(
+        value["plan"]["skipped_paths"][0]["reason"],
+        "cargo_config_problem"
+    );
+    assert_eq!(
+        value["plan"]["skipped_paths"][0]["message"],
+        "config parse failed"
+    );
     Ok(())
 }
 
@@ -191,6 +244,27 @@ fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Er
         invocation.planner_options.whole_target_mode,
         cargo_reclaim::PersistedWholeTargetMode::Off
     );
+    Ok(())
+}
+
+#[test]
+fn plan_snapshot_defaults_missing_skipped_path_diagnostics() -> Result<(), Box<dyn Error>> {
+    let snapshot: cargo_reclaim::PersistedPlanSnapshot = serde_json::from_value(json!({
+        "schema_version": 1,
+        "input": {
+            "roots": ["."]
+        },
+        "entries": [],
+        "totals": {
+            "entry_count": 0,
+            "total_bytes": 0,
+            "preserved_count": 0,
+            "delete_candidate_count": 0
+        }
+    }))?;
+
+    assert!(snapshot.skipped_paths.is_empty());
+    assert_eq!(snapshot.totals.skipped_path_count, 0);
     Ok(())
 }
 

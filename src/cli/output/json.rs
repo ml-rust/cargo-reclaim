@@ -2,11 +2,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cargo_reclaim::{PathSnapshot, Plan, PlanEntry, PlanTotals, PolicyKind, TargetEvidence};
+use cargo_reclaim::{
+    PathSnapshot, Plan, PlanEntry, PlanSkip, PlanTotals, PolicyKind, TargetEvidence,
+};
 use serde::Serialize;
 
 use super::labels::{
     action_label, artifact_label, evidence_kind_label, path_kind_label, policy_label,
+    skip_reason_label,
 };
 use crate::cli::{CliError, PlanMode};
 
@@ -30,6 +33,7 @@ struct JsonPlan {
     policy: &'static str,
     input: JsonInput,
     totals: JsonTotals,
+    skipped_paths: Vec<JsonPlanSkip>,
     entries: Vec<JsonEntry>,
 }
 
@@ -42,6 +46,11 @@ impl JsonPlan {
             policy: policy_label(policy),
             input: JsonInput::from_roots(&plan.input.roots),
             totals: JsonTotals::from_totals(plan.totals),
+            skipped_paths: plan
+                .skipped_paths
+                .iter()
+                .map(JsonPlanSkip::from_skip)
+                .collect(),
             entries: plan.entries.iter().map(JsonEntry::from_entry).collect(),
         }
     }
@@ -66,6 +75,7 @@ struct JsonTotals {
     total_bytes: u64,
     preserved_count: usize,
     delete_candidate_count: usize,
+    skipped_path_count: usize,
 }
 
 impl JsonTotals {
@@ -75,6 +85,25 @@ impl JsonTotals {
             total_bytes: totals.total_bytes,
             preserved_count: totals.preserved_count,
             delete_candidate_count: totals.delete_candidate_count,
+            skipped_path_count: totals.skipped_path_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonPlanSkip {
+    path: String,
+    reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+impl JsonPlanSkip {
+    fn from_skip(skip: &PlanSkip) -> Self {
+        Self {
+            path: path_string(&skip.path),
+            reason: skip_reason_label(skip.reason),
+            message: skip.message.clone(),
         }
     }
 }

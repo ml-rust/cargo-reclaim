@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::inventory::InventoryOptions;
 use crate::model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
-    PlanInput, PlanTotals, TargetEvidence,
+    PlanInput, PlanSkip, PlanSkipReason, PlanTotals, TargetEvidence,
 };
 use crate::planner::{PlannerOptions, WholeTargetMode};
 use crate::policy::PolicyKind;
@@ -157,6 +157,10 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PersistedWholeTargetMode {
@@ -181,6 +185,8 @@ pub struct PersistedPlanSnapshot {
     pub schema_version: u16,
     pub input: PersistedPlanInput,
     pub entries: Vec<PersistedPlanEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_paths: Vec<PersistedPlanSkip>,
     pub totals: PersistedPlanTotals,
 }
 
@@ -194,6 +200,11 @@ impl PersistedPlanSnapshot {
                 .iter()
                 .map(PersistedPlanEntry::from_entry)
                 .collect::<PlanPersistenceResult<Vec<_>>>()?,
+            skipped_paths: plan
+                .skipped_paths
+                .iter()
+                .map(PersistedPlanSkip::from_skip)
+                .collect(),
             totals: PersistedPlanTotals::from_totals(plan.totals),
         })
     }
@@ -208,6 +219,24 @@ impl PersistedPlanInput {
     fn from_input(input: &PlanInput) -> Self {
         Self {
             roots: input.roots.iter().map(path_string).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedPlanSkip {
+    pub path: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl PersistedPlanSkip {
+    fn from_skip(skip: &PlanSkip) -> Self {
+        Self {
+            path: path_string(&skip.path),
+            reason: skip_reason_label(skip.reason).to_string(),
+            message: skip.message.clone(),
         }
     }
 }
@@ -268,6 +297,8 @@ pub struct PersistedPlanTotals {
     pub total_bytes: u64,
     pub preserved_count: usize,
     pub delete_candidate_count: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped_path_count: usize,
 }
 
 impl PersistedPlanTotals {
@@ -277,6 +308,7 @@ impl PersistedPlanTotals {
             total_bytes: totals.total_bytes,
             preserved_count: totals.preserved_count,
             delete_candidate_count: totals.delete_candidate_count,
+            skipped_path_count: totals.skipped_path_count,
         }
     }
 }
@@ -423,6 +455,10 @@ fn action_label(action: &PlanAction) -> &'static str {
 
 fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
     artifact_class.label()
+}
+
+fn skip_reason_label(reason: PlanSkipReason) -> &'static str {
+    reason.label()
 }
 
 fn is_default_whole_target_mode(mode: &PersistedWholeTargetMode) -> bool {
