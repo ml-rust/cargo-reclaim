@@ -298,6 +298,119 @@ fn save_plan_flags_are_restricted_to_explicit_plan_saves() -> Result<(), Box<dyn
 }
 
 #[test]
+fn apply_validates_explicit_plan_without_deleting_files() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_apply_validate")?;
+    write_manifest(temp.path())?;
+    let artifact = temp.path().join("target/debug/incremental/cache.bin");
+    fs::create_dir_all(artifact.parent().unwrap())?;
+    fs::write(&artifact, b"abc")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+
+    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["apply", "--plan"])
+        .arg(&plan_path)
+        .output()?;
+
+    assert!(apply_output.status.success());
+    assert!(artifact.is_file());
+    let stdout = String::from_utf8(apply_output.stdout)?;
+    assert!(stdout.contains("cargo-reclaim apply validation"));
+    assert!(stdout.contains("validation only; no files were deleted or modified"));
+    assert!(stdout.contains("would delete: 1"));
+    assert!(stdout.contains("would delete bytes: 3"));
+    Ok(())
+}
+
+#[test]
+fn apply_json_reports_validation_without_deleting_files() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_apply_json")?;
+    write_manifest(temp.path())?;
+    let artifact = temp.path().join("target/debug/incremental/cache.bin");
+    fs::create_dir_all(artifact.parent().unwrap())?;
+    fs::write(&artifact, b"abc")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+
+    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["apply", "--plan"])
+        .arg(&plan_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(apply_output.status.success());
+    assert!(artifact.is_file());
+    let document: Value = serde_json::from_slice(&apply_output.stdout)?;
+    assert_eq!(document["command"], "apply");
+    assert_eq!(document["dry_run"], true);
+    assert_eq!(document["totals"]["would_delete_count"], 1);
+    assert_eq!(document["totals"]["would_delete_bytes"], 3);
+    assert_eq!(document["entries"][0]["status"], "would_delete");
+    Ok(())
+}
+
+#[test]
+fn apply_reports_stale_skip_after_target_changes() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_apply_stale")?;
+    write_manifest(temp.path())?;
+    let artifact = temp.path().join("target/debug/incremental/cache.bin");
+    fs::create_dir_all(artifact.parent().unwrap())?;
+    fs::write(&artifact, b"abc")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+    fs::write(&artifact, b"changed")?;
+
+    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["apply", "--plan"])
+        .arg(&plan_path)
+        .output()?;
+
+    assert!(apply_output.status.success());
+    let stdout = String::from_utf8(apply_output.stdout)?;
+    assert!(stdout.contains("stale skips: 1"));
+    assert!(stdout.contains("skip_stale_plan"));
+    Ok(())
+}
+
+#[test]
+fn apply_requires_explicit_plan_path_and_rejects_last_alias() -> Result<(), Box<dyn Error>> {
+    for args in [
+        vec!["apply"],
+        vec!["apply", "--json"],
+        vec!["apply", "last"],
+        vec!["apply", "--plan", "last"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args(args)
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ignore_option_suppresses_target_entries_end_to_end() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_ignore")?;
     write_manifest(temp.path())?;

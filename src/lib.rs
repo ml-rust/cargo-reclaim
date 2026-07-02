@@ -1,5 +1,6 @@
 pub mod classifier;
 pub mod error;
+pub mod executor;
 pub mod integration;
 pub mod inventory;
 pub mod model;
@@ -10,6 +11,9 @@ pub mod scanner;
 
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use error::{ReclaimError, ReclaimResult};
+pub use executor::{
+    ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, validate_persisted_plan_for_apply,
+};
 pub use integration::{build_plan_from_roots, build_plan_from_scan_items};
 pub use inventory::{
     InventoryOptions, planner_candidate_from_target_relative_path,

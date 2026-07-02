@@ -8,14 +8,16 @@ use cargo_reclaim::{
     InventoryOptions, PolicyKind, ReclaimError, ScannerOptions, build_plan_from_roots,
 };
 
+mod apply;
 mod output;
 mod persistence;
 
+use apply::{ApplyCommand, parse_apply_command, run_apply};
 use output::{write_help, write_plan};
 use persistence::{SavePlanRequest, parse_duration, save_plan};
 
 pub fn run() -> ExitCode {
-    match run_with_args(env::args_os().skip(1), &mut io::stdout(), &mut io::stderr()) {
+    match run_with_args(env::args_os().skip(1), &mut io::stdout()) {
         Ok(code) => code,
         Err(error) => {
             let code = error.exit_code();
@@ -28,7 +30,6 @@ pub fn run() -> ExitCode {
 fn run_with_args(
     args: impl IntoIterator<Item = OsString>,
     stdout: &mut impl Write,
-    stderr: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
     match parse_args(args)? {
         Command::Help => {
@@ -61,12 +62,9 @@ fn run_with_args(
             )?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::UnsupportedApply => {
-            writeln!(
-                stderr,
-                "cargo-reclaim: apply is not available yet; run `cargo-reclaim plan` for a dry-run plan"
-            )?;
-            Ok(ExitCode::from(2))
+        Command::Apply(command) => {
+            run_apply(&command, stdout)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -75,7 +73,7 @@ fn run_with_args(
 enum Command {
     Help,
     Plan(PlanCommand),
-    UnsupportedApply,
+    Apply(ApplyCommand),
 }
 
 #[derive(Debug)]
@@ -111,7 +109,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "-h" | "--help" | "help" => Ok(Command::Help),
         "scan" => parse_plan_command(PlanMode::Scan, args),
         "plan" => parse_plan_command(PlanMode::Plan, args),
-        "apply" => Ok(Command::UnsupportedApply),
+        "apply" => parse_apply_command(args).map(Command::Apply),
         command => Err(CliError::Usage(format!(
             "unknown command `{command}`; expected `scan`, `plan`, or `help`"
         ))),
