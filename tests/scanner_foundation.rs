@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use cargo_reclaim::scanner::{CargoConfigUnsupportedReason, resolve_project_output_dirs_with_env};
 use cargo_reclaim::{
     ScannerOptions, SkipReason, TargetDirOverride, TargetDirOverrideSource, TargetEvidence,
     classify_target_candidate, detect_cargo_project,
@@ -215,6 +216,185 @@ fn target_dir_override_rejects_empty_input() {
     assert!(TargetDirOverride::new("", "CARGO_TARGET_DIR").is_err());
     assert!(TargetDirOverride::new("target", " ").is_err());
     assert!(TargetDirOverrideSource::new(" ").is_err());
+}
+
+#[test]
+fn cargo_config_extensionless_file_wins_over_toml_file() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_precedence")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config"),
+        "[build]\ntarget-dir = \"extensionless-target\"\n",
+    )?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"toml-target\"\n",
+    )?;
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+
+    assert_eq!(dirs.dirs[0].path, temp.path().join("extensionless-target"));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_include_merges_before_including_file_and_skips_optional_missing()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_include")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/base.toml"),
+        "[build]\ntarget-dir = \"included-target\"\nbuild-dir = \"included-build\"\n",
+    )?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "include = [\"base.toml\", { path = \"missing.toml\", optional = true }]\n[build]\ntarget-dir = \"local-target\"\n",
+    )?;
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+
+    assert_eq!(dirs.dirs[0].path, temp.path().join("local-target"));
+    assert_eq!(dirs.dirs[1].path, temp.path().join("included-build"));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_reports_missing_required_include() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_required_include")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "include = [\"missing.toml\"]\n[build]\ntarget-dir = \"local-target\"\n",
+    )?;
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+
+    assert_eq!(dirs.dirs[0].path, temp.path().join("local-target"));
+    assert_eq!(dirs.problems.len(), 1);
+    assert!(dirs.problems[0].path.ends_with(".cargo/missing.toml"));
+    assert!(dirs.problems[0].message.contains("does not exist"));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_toml_relative_paths_are_relative_to_config_parent_project()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_relative")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"nested/../custom-target\"\n",
+    )?;
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+
+    assert_eq!(dirs.dirs[0].path, temp.path().join("custom-target"));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_environment_overrides_toml_and_direct_target_dir_env_wins()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_env")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"toml-target\"\n",
+    )?;
+    let env = env_for(temp.path()).into_iter().chain([
+        ("CARGO_TARGET_DIR".into(), "legacy-target".into()),
+        ("CARGO_BUILD_TARGET_DIR".into(), "direct-target".into()),
+    ]);
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env)?;
+
+    assert_eq!(dirs.dirs[0].path, temp.path().join("direct-target"));
+    assert_eq!(dirs.dirs[0].source.label, "CARGO_BUILD_TARGET_DIR");
+    Ok(())
+}
+
+#[test]
+fn cargo_config_build_dir_defaults_and_dedupes_with_target_dir() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_dedupe")?;
+    write_manifest(temp.path())?;
+
+    let default_dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+    assert!(default_dirs.dirs.is_empty());
+
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"same\"\nbuild-dir = \"same\"\n",
+    )?;
+
+    let deduped = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+    assert_eq!(deduped.dirs.len(), 1);
+    assert_eq!(deduped.dirs[0].path, temp.path().join("same"));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_build_dir_templates_resolve_workspace_root_and_cargo_cache_home()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_templates")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"target\"\nbuild-dir = \"{cargo-cache-home}/builds/{workspace-root}\"\n",
+    )?;
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+
+    assert_eq!(
+        dirs.dirs[1].path,
+        temp.path()
+            .join("cargo-home/builds")
+            .join(temp.path().strip_prefix("/").unwrap_or(temp.path()))
+    );
+    Ok(())
+}
+
+#[test]
+fn cargo_config_workspace_path_hash_template_is_reported_as_unsupported()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cargo_config_unsupported")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\nbuild-dir = \"{workspace-root}/{workspace-path-hash}\"\n",
+    )?;
+
+    let dirs = resolve_project_output_dirs_with_env(temp.path(), env_for(temp.path()))?;
+
+    assert!(dirs.dirs.is_empty());
+    assert_eq!(dirs.unsupported.len(), 1);
+    assert_eq!(
+        dirs.unsupported[0].reason,
+        CargoConfigUnsupportedReason::WorkspacePathHashTemplate
+    );
+    Ok(())
+}
+
+fn env_for(temp: &std::path::Path) -> Vec<(String, String)> {
+    vec![
+        (
+            "CARGO_HOME".to_string(),
+            temp.join("cargo-home").display().to_string(),
+        ),
+        ("HOME".to_string(), temp.join("home").display().to_string()),
+    ]
+}
+
+fn write_manifest(path: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    Ok(())
 }
 
 struct TestTemp {

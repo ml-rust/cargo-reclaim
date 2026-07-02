@@ -48,6 +48,39 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
 }
 
 #[test]
+fn configured_custom_target_builds_policy_plan_from_scanned_roots() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_configured_target_plan")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"custom-target\"\n",
+    )?;
+    fs::create_dir_all(temp.path().join("custom-target/debug/incremental"))?;
+    fs::write(
+        temp.path()
+            .join("custom-target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+
+    let incremental = entry_for(&plan, temp.path().join("custom-target/debug/incremental"))?;
+    assert_eq!(incremental.artifact_class, ArtifactClass::Incremental);
+    assert_eq!(incremental.action, PlanAction::Delete);
+    assert!(matches!(
+        incremental.evidence,
+        TargetEvidence::ConfiguredPath { ref source } if source.contains("build.target-dir")
+    ));
+    Ok(())
+}
+
+#[test]
 fn observe_policy_preserves_delete_capable_entries_from_scanned_roots() -> Result<(), Box<dyn Error>>
 {
     let temp = TestTemp::new("integration_observe_plan")?;

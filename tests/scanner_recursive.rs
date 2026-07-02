@@ -1,14 +1,18 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ScanItem, ScanSkipReason, ScannerOptions, TargetCandidate, TargetEvidence, scan_roots,
 };
 
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 fn scan_finds_project_and_adjacent_target() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_project_target")?;
     write_manifest(temp.path())?;
     fs::create_dir(temp.path().join("target"))?;
@@ -30,6 +34,7 @@ fn scan_finds_project_and_adjacent_target() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn scan_skips_default_ignored_dirs_without_recursing() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_default_ignores")?;
     for dir_name in [".git", ".cargo", "node_modules"] {
         let ignored = temp.path().join(dir_name);
@@ -56,6 +61,7 @@ fn scan_skips_default_ignored_dirs_without_recursing() -> Result<(), Box<dyn Err
 
 #[test]
 fn scan_suppresses_weak_name_only_targets_by_default() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_weak_default")?;
     let target = temp.path().join("target");
     fs::create_dir(&target)?;
@@ -73,6 +79,7 @@ fn scan_suppresses_weak_name_only_targets_by_default() -> Result<(), Box<dyn Err
 
 #[test]
 fn scan_emits_weak_name_only_targets_when_enabled() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_weak_allowed")?;
     let target = temp.path().join("target");
     fs::create_dir(&target)?;
@@ -95,6 +102,7 @@ fn scan_emits_weak_name_only_targets_when_enabled() -> Result<(), Box<dyn Error>
 #[test]
 #[cfg(unix)]
 fn scan_skips_symlinked_dirs_by_default() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     use std::os::unix::fs::symlink;
 
     let temp = TestTemp::new("recursive_symlink_default")?;
@@ -121,6 +129,7 @@ fn scan_skips_symlinked_dirs_by_default() -> Result<(), Box<dyn Error>> {
 #[test]
 #[cfg(unix)]
 fn scan_follows_symlinked_dirs_when_enabled() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     use std::os::unix::fs::symlink;
 
     let temp = TestTemp::new("recursive_symlink_follow")?;
@@ -148,6 +157,7 @@ fn scan_follows_symlinked_dirs_when_enabled() -> Result<(), Box<dyn Error>> {
 #[test]
 #[cfg(unix)]
 fn scan_following_symlinks_does_not_revisit_directory_cycles() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     use std::os::unix::fs::symlink;
 
     let temp = TestTemp::new("recursive_symlink_cycle")?;
@@ -174,6 +184,7 @@ fn scan_following_symlinks_does_not_revisit_directory_cycles() -> Result<(), Box
 
 #[test]
 fn scan_honors_configured_ignored_path() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_configured_ignore")?;
     let ignored = temp.path().join("ignored");
     fs::create_dir(&ignored)?;
@@ -201,6 +212,7 @@ fn scan_honors_configured_ignored_path() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn scan_nested_project_target_uses_nearest_project_context() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_nested_context")?;
     write_manifest(temp.path())?;
     let nested = temp.path().join("crates").join("member");
@@ -255,4 +267,10 @@ impl Drop for TestTemp {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+fn test_lock() -> Result<std::sync::MutexGuard<'static, ()>, Box<dyn Error>> {
+    ENV_LOCK
+        .lock()
+        .map_err(|_| std::io::Error::other("env lock poisoned").into())
 }

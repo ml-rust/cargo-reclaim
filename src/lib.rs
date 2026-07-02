@@ -45,7 +45,9 @@ pub use planner::{
 };
 pub use policy::PolicyKind;
 pub use scanner::{
+    CargoConfigProblem, CargoConfigUnsupported, CargoConfigUnsupportedReason, CargoOutputDirs,
     CargoProject, ScanItem, ScanSkip, ScanSkipReason, ScannerOptions, SkipReason, TargetCandidate,
     TargetCandidateKind, TargetDirOverride, TargetDirOverrideSource, classify_target_candidate,
-    detect_cargo_project, scan_roots,
+    detect_cargo_project, resolve_project_output_dirs, resolve_project_output_dirs_with_env,
+    scan_roots,
 };

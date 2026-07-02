@@ -55,6 +55,24 @@ pub fn classify_target_candidate(
     target_dir_override: Option<&TargetDirOverride>,
     options: &ScannerOptions,
 ) -> ReclaimResult<TargetCandidate> {
+    if let Some(target_dir_override) = target_dir_override {
+        classify_target_candidate_with_overrides(
+            path,
+            project,
+            std::slice::from_ref(target_dir_override),
+            options,
+        )
+    } else {
+        classify_target_candidate_with_overrides(path, project, &[], options)
+    }
+}
+
+pub(crate) fn classify_target_candidate_with_overrides(
+    path: impl AsRef<Path>,
+    project: Option<&CargoProject>,
+    target_dir_overrides: &[TargetDirOverride],
+    options: &ScannerOptions,
+) -> ReclaimResult<TargetCandidate> {
     let path = path.as_ref();
 
     if path
@@ -86,8 +104,9 @@ pub fn classify_target_candidate(
         ));
     }
 
-    if let Some(target_dir_override) = target_dir_override
-        && lexically_normalize(&target_dir_override.path) == normalized_path
+    if let Some(target_dir_override) = target_dir_overrides
+        .iter()
+        .find(|override_dir| lexically_normalize(&override_dir.path) == normalized_path)
     {
         return Ok(TargetCandidate::candidate(
             path.to_path_buf(),
