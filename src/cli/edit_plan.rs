@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::SystemTime;
@@ -12,6 +12,10 @@ use serde::Serialize;
 
 use super::{CliError, OutputFormat};
 
+mod interactive;
+
+use interactive::{is_confirmed, prompt_for_interactive_edit, write_interactive_cancel_report};
+
 #[derive(Debug)]
 pub(super) struct EditPlanCommand {
     pub(super) plan_path: PathBuf,
@@ -22,6 +26,7 @@ pub(super) struct EditPlanCommand {
 #[derive(Debug)]
 pub(super) enum EditPlanOperation {
     Edit(PlanEditRequest),
+    Interactive,
     List,
 }
 
@@ -37,6 +42,7 @@ pub(super) fn parse_edit_plan_command(
     let mut deselect_indices = Vec::new();
     let mut select_classes = Vec::new();
     let mut deselect_classes = Vec::new();
+    let mut interactive = false;
     let mut list = false;
     let mut output_format = OutputFormat::Terminal;
 
@@ -64,6 +70,10 @@ pub(super) fn parse_edit_plan_command(
             }
             "--list" => {
                 list = true;
+                index += 1;
+            }
+            "--interactive" => {
+                interactive = true;
                 index += 1;
             }
             "--select" => {
@@ -156,19 +166,32 @@ pub(super) fn parse_edit_plan_command(
         ));
     };
 
+    let has_edit_flags = !select.is_empty()
+        || !deselect.is_empty()
+        || !select_indices.is_empty()
+        || !deselect_indices.is_empty()
+        || !select_classes.is_empty()
+        || !deselect_classes.is_empty();
+
     let operation = if list {
-        if !select.is_empty()
-            || !deselect.is_empty()
-            || !select_indices.is_empty()
-            || !deselect_indices.is_empty()
-            || !select_classes.is_empty()
-            || !deselect_classes.is_empty()
-        {
+        if interactive {
+            return Err(CliError::Usage(
+                "`--interactive` cannot be combined with `--list`".to_string(),
+            ));
+        }
+        if has_edit_flags {
             return Err(CliError::Usage(
                 "`--list` cannot be combined with edit flags".to_string(),
             ));
         }
         EditPlanOperation::List
+    } else if interactive {
+        if has_edit_flags {
+            return Err(CliError::Usage(
+                "`--interactive` cannot be combined with edit flags".to_string(),
+            ));
+        }
+        EditPlanOperation::Interactive
     } else {
         EditPlanOperation::Edit(PlanEditRequest::new_with_class_selectors(
             select,
@@ -195,6 +218,26 @@ pub(super) fn run_edit_plan(
     match &command.operation {
         EditPlanOperation::Edit(request) => {
             let report = edit_persisted_plan(&mut document, request, SystemTime::now())?;
+            save_plan_to_path(&command.plan_path, &document)?;
+            write_edit_plan_report(output, command, &report)?;
+        }
+        EditPlanOperation::Interactive => {
+            ensure_plan_usable(&document, SystemTime::now())?;
+            let request = prompt_for_interactive_edit(&document)?;
+            let Some(request) = request else {
+                write_interactive_cancel_report(output, command)?;
+                return Ok(ExitCode::SUCCESS);
+            };
+            let mut stderr = io::stderr();
+            writeln!(stderr, "Save this selection to the persisted plan? [y/N]")?;
+            stderr.flush()?;
+            let mut confirmation = String::new();
+            io::stdin().read_line(&mut confirmation)?;
+            if !is_confirmed(confirmation.trim()) {
+                write_interactive_cancel_report(output, command)?;
+                return Ok(ExitCode::SUCCESS);
+            }
+            let report = edit_persisted_plan(&mut document, &request, SystemTime::now())?;
             save_plan_to_path(&command.plan_path, &document)?;
             write_edit_plan_report(output, command, &report)?;
         }
@@ -486,7 +529,7 @@ mod tests {
         assert_eq!(command.plan_path, PathBuf::from("plan.json"));
         let request = match command.operation {
             EditPlanOperation::Edit(request) => request,
-            EditPlanOperation::List => {
+            EditPlanOperation::Interactive | EditPlanOperation::List => {
                 return Err(CliError::Usage("expected edit operation".into()));
             }
         };
@@ -518,7 +561,7 @@ mod tests {
         assert_eq!(command.plan_path, PathBuf::from("plan.json"));
         let request = match command.operation {
             EditPlanOperation::Edit(request) => request,
-            EditPlanOperation::List => {
+            EditPlanOperation::Interactive | EditPlanOperation::List => {
                 return Err(CliError::Usage("expected edit operation".into()));
             }
         };
@@ -549,7 +592,7 @@ mod tests {
         assert_eq!(command.plan_path, PathBuf::from("plan.json"));
         let request = match command.operation {
             EditPlanOperation::Edit(request) => request,
-            EditPlanOperation::List => {
+            EditPlanOperation::Interactive | EditPlanOperation::List => {
                 return Err(CliError::Usage("expected edit operation".into()));
             }
         };
@@ -567,6 +610,16 @@ mod tests {
         assert_eq!(command.plan_path, PathBuf::from("plan.json"));
         assert!(matches!(command.operation, EditPlanOperation::List));
         assert_eq!(command.output_format, OutputFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_interactive_without_edits() -> Result<(), CliError> {
+        let command =
+            parse_edit_plan_command(["--plan", "plan.json", "--interactive"].map(OsString::from))?;
+
+        assert_eq!(command.plan_path, PathBuf::from("plan.json"));
+        assert!(matches!(command.operation, EditPlanOperation::Interactive));
         Ok(())
     }
 

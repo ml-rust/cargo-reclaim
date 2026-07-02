@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -193,6 +194,209 @@ fn edit_plan_selects_and_deselects_persisted_artifact_classes() -> Result<(), Bo
         .expect("docs entry");
     assert_eq!(docs["action"], "preserve");
     assert_eq!(docs["policy_reason"], "explicitly preserved by selection");
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_selects_entry_index() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_index")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "1\ny\n", &[])?;
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cargo-reclaim edit-plan interactive"));
+    assert!(stderr.contains("Selection:"));
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("cargo-reclaim edit-plan"));
+    assert!(stdout.contains("selected: 1"));
+
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(after["interactive_selection_modified"], true);
+    assert_eq!(after["plan"]["entries"][0]["action"], "delete");
+    assert_eq!(
+        after["plan"]["entries"][0]["policy_reason"],
+        "explicitly selected for deletion"
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_selects_project_group() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_project")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "p1\nyes\n", &[])?;
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Project groups:"));
+    assert!(stderr.contains("p1"));
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("selected: 2"));
+
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let entries = after["plan"]["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|entry| entry["action"] == "delete"));
+    assert_eq!(after["interactive_selection_modified"], true);
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_selects_whole_target_by_entry_index() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_whole_target")?;
+    let plan_path = write_whole_target_plan(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "1\ny\n", &[])?;
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("whole_target entries must be selected by entry number"));
+
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let entry = &after["plan"]["entries"][0];
+    assert_eq!(entry["artifact_class"], "whole_target");
+    assert_eq!(entry["action"], "delete");
+    assert_eq!(entry["policy_reason"], "explicitly selected for deletion");
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_rejects_whole_target_project_group() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_whole_target_project")?;
+    let plan_path = write_whole_target_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "p1\ny\n", &[])?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(!stderr.contains("Project groups:"));
+    assert!(stderr.contains("whole_target entries must be selected by entry number"));
+    assert!(stderr.contains("unknown project group `p1`"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_rejects_whole_target_class_selection() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_whole_target_class")?;
+    let plan_path = write_whole_target_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "c:whole_target\ny\n", &[])?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("whole_target must be selected by entry number"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_does_not_advertise_unknown_class_group() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_unknown_class")?;
+    let plan_path = write_plan_with_unknown_entry(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "none\n", &[])?;
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(!stderr.contains("c:unknown"));
+    assert!(stderr.contains("c:incremental"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_cancel_and_no_confirmation_leave_plan_unchanged()
+-> Result<(), Box<dyn Error>> {
+    for (name, input) in [("cancel", "cancel\n"), ("no", "1\nno\n")] {
+        let temp = TestTemp::new(&format!("cli_edit_plan_interactive_{name}"))?;
+        let plan_path = write_two_entry_plan(&temp)?;
+        let before = fs::read(&plan_path)?;
+
+        let output = edit_plan_interactive_output(&plan_path, input, &[])?;
+
+        assert!(output.status.success());
+        assert_eq!(fs::read(&plan_path)?, before);
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(stdout.contains("interactive selection was not saved"));
+        assert!(stdout.contains("plan unchanged"));
+    }
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_invalid_input_leaves_plan_unchanged() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_invalid")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "bogus\ny\n", &[])?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("cargo-reclaim edit-plan interactive"));
+    assert!(stderr.contains("interactive selection requires a positive 1-based entry index"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_json_writes_prompts_to_stderr_only() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_json")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "1\ny\n", &["--json"])?;
+
+    assert!(output.status.success());
+    let stdout_text = String::from_utf8(output.stdout)?;
+    let stdout: Value = serde_json::from_str(&stdout_text)?;
+    assert_eq!(stdout["command"], "edit-plan");
+    assert_eq!(stdout["selected_count"], 1);
+    assert!(!stdout_text.contains("Selection:"));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Selection:"));
+    assert!(stderr.contains("Save this selection"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_rejects_list_and_edit_flags_without_rewriting_plan()
+-> Result<(), Box<dyn Error>> {
+    for (name, args, message) in [
+        (
+            "list",
+            vec!["--interactive", "--list"],
+            "`--interactive` cannot be combined with `--list`",
+        ),
+        (
+            "edit_index",
+            vec!["--interactive", "--select-index", "1"],
+            "`--interactive` cannot be combined with edit flags",
+        ),
+        (
+            "edit_class",
+            vec!["--interactive", "--select-class", "docs"],
+            "`--interactive` cannot be combined with edit flags",
+        ),
+    ] {
+        let temp = TestTemp::new(&format!("cli_edit_plan_interactive_conflict_{name}"))?;
+        let plan_path = write_two_entry_plan(&temp)?;
+        let before = fs::read(&plan_path)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args(["edit-plan", "--plan"])
+            .arg(&plan_path)
+            .args(args)
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(fs::read(&plan_path)?, before);
+        assert!(String::from_utf8(output.stderr)?.contains(message));
+    }
     Ok(())
 }
 
@@ -614,6 +818,75 @@ fn write_two_entry_plan(temp: &TestTemp) -> Result<PathBuf, Box<dyn Error>> {
         .output()?;
     assert!(output.status.success());
     Ok(plan_path)
+}
+
+fn write_whole_target_plan(temp: &TestTemp) -> Result<PathBuf, Box<dyn Error>> {
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target"))?;
+    fs::write(
+        temp.path().join("target/CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55\n",
+    )?;
+    fs::write(temp.path().join("target/cache.bin"), b"abc")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--whole-target", "confirm", "--save-plan"])
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(output.status.success());
+    Ok(plan_path)
+}
+
+fn write_plan_with_unknown_entry(temp: &TestTemp) -> Result<PathBuf, Box<dyn Error>> {
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("target/mystery"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    fs::write(temp.path().join("target/mystery/blob"), b"unknown")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--save-plan"])
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(output.status.success());
+    let plan: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert!(
+        plan["plan"]["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .any(|entry| entry["artifact_class"] == "unknown")
+    );
+    Ok(plan_path)
+}
+
+fn edit_plan_interactive_output(
+    plan_path: &Path,
+    input: &str,
+    extra_args: &[&str],
+) -> Result<Output, Box<dyn Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(plan_path)
+        .arg("--interactive")
+        .args(extra_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let Some(stdin) = child.stdin.as_mut() else {
+        return Err("stdin was not piped".into());
+    };
+    stdin.write_all(input.as_bytes())?;
+    Ok(child.wait_with_output()?)
 }
 
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {

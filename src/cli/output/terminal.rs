@@ -19,7 +19,7 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "  apply   Validate or execute a persisted plan")?;
     writeln!(
         output,
-        "  edit-plan  List or edit explicit entries in a persisted plan"
+        "  edit-plan  List, edit, or interactively select entries in a persisted plan"
     )?;
     writeln!(
         output,
