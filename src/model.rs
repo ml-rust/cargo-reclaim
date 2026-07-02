@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::error::{ReclaimError, ReclaimResult};
 
@@ -36,17 +37,20 @@ pub struct PlanInput {
 
 impl PlanInput {
     pub fn new(roots: impl IntoIterator<Item = impl Into<PathBuf>>) -> ReclaimResult<Self> {
-        let roots = roots.into_iter().map(Into::into).collect::<Vec<PathBuf>>();
+        let mut validated_roots = Vec::new();
 
-        if roots.is_empty() {
+        for root in roots.into_iter().map(Into::into) {
+            require_non_empty_path(&root)?;
+            validated_roots.push(root);
+        }
+
+        if validated_roots.is_empty() {
             return Err(ReclaimError::EmptyPath);
         }
 
-        for root in &roots {
-            require_non_empty_path(root)?;
-        }
-
-        Ok(Self { roots })
+        Ok(Self {
+            roots: validated_roots,
+        })
     }
 
     pub fn from_root(root: impl Into<PathBuf>) -> ReclaimResult<Self> {
@@ -153,15 +157,40 @@ impl PlanTotals {
 pub struct PathSnapshot {
     pub path: PathBuf,
     pub size_bytes: u64,
+    pub path_kind: PathKind,
+    pub modified: Option<SystemTime>,
 }
 
 impl PathSnapshot {
     pub fn new(path: impl Into<PathBuf>, size_bytes: u64) -> ReclaimResult<Self> {
+        Self::with_details(path, size_bytes, PathKind::Unknown, None)
+    }
+
+    pub fn with_details(
+        path: impl Into<PathBuf>,
+        size_bytes: u64,
+        path_kind: PathKind,
+        modified: Option<SystemTime>,
+    ) -> ReclaimResult<Self> {
         let path = path.into();
         require_non_empty_path(&path)?;
 
-        Ok(Self { path, size_bytes })
+        Ok(Self {
+            path,
+            size_bytes,
+            path_kind,
+            modified,
+        })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PathKind {
+    File,
+    Directory,
+    Symlink,
+    #[default]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
