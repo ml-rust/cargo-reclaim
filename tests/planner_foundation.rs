@@ -1,8 +1,9 @@
 use std::error::Error;
+use std::time::{Duration, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    ArtifactClass, PathSnapshot, PlanAction, PlanInput, PlannerCandidate, PolicyKind,
-    TargetEvidence, build_plan, plan_candidate,
+    ArtifactClass, PathKind, PathSnapshot, PlanAction, PlanInput, PlannerCandidate, PlannerOptions,
+    PolicyKind, TargetEvidence, build_plan, plan_candidate, plan_candidate_with_options,
 };
 
 fn candidate(
@@ -13,6 +14,25 @@ fn candidate(
 ) -> Result<PlannerCandidate, Box<dyn Error>> {
     Ok(PlannerCandidate::new(
         PathSnapshot::new(path, size_bytes)?,
+        artifact_class,
+        evidence,
+    ))
+}
+
+fn candidate_with_modified(
+    path: &str,
+    size_bytes: u64,
+    artifact_class: ArtifactClass,
+    evidence: TargetEvidence,
+    modified_secs: u64,
+) -> Result<PlannerCandidate, Box<dyn Error>> {
+    Ok(PlannerCandidate::new(
+        PathSnapshot::with_details(
+            path,
+            size_bytes,
+            PathKind::Directory,
+            Some(UNIX_EPOCH + Duration::from_secs(modified_secs)),
+        )?,
         artifact_class,
         evidence,
     ))
@@ -32,6 +52,111 @@ fn strong_incremental_balanced_policy_yields_delete() -> Result<(), Box<dyn Erro
 
     assert_eq!(entry.action, PlanAction::Delete);
     assert!(!entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn recent_write_keep_window_skips_active_delete_candidate() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            90,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(!entry.requires_confirmation);
+    assert!(entry.policy_reason.contains("keep window"));
+    Ok(())
+}
+
+#[test]
+fn recent_write_keep_window_does_not_change_missing_mtime_candidate() -> Result<(), Box<dyn Error>>
+{
+    let entry = plan_candidate_with_options(
+        candidate(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
+fn recent_write_keep_window_does_not_mask_non_removable_class() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/deps",
+            100,
+            ArtifactClass::Deps,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            90,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    Ok(())
+}
+
+#[test]
+fn recent_write_keep_window_does_not_mask_weak_evidence_confirmation() -> Result<(), Box<dyn Error>>
+{
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::weak_name_only("target")?,
+            90,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    assert!(entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn default_planner_options_do_not_skip_recent_candidates() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate(
+        candidate_with_modified(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            100,
+        )?,
+        PolicyKind::Balanced,
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
     Ok(())
 }
 

@@ -62,6 +62,29 @@ fn scan_command_supports_observe_policy() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn plan_keep_recent_writes_reports_skip_active() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_keep_recent")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--keep-recent-writes", "1d"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("delete candidates: 0"));
+    assert!(stdout.contains("skip_active\tincremental\t3\t"));
+    assert!(stdout.contains("keep window"));
+    Ok(())
+}
+
+#[test]
 fn apply_flag_is_rejected_without_deleting_anything() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_reject_apply")?;
     write_manifest(temp.path())?;
@@ -141,6 +164,29 @@ fn plan_json_outputs_single_dry_run_document() -> Result<(), Box<dyn Error>> {
         .find(|entry| entry["artifact_class"] == "docs")
         .expect("docs entry");
     assert_eq!(docs["action"], "preserve");
+    Ok(())
+}
+
+#[test]
+fn plan_json_reports_recent_write_skip_active() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_plan_json_recent")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json", "--keep-recent-writes=1d"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["totals"]["delete_candidate_count"], 0);
+    assert_eq!(document["totals"]["preserved_count"], 1);
+    assert_eq!(document["entries"][0]["action"], "skip_active");
     Ok(())
 }
 
@@ -242,6 +288,35 @@ fn plan_save_plan_writes_persisted_document() -> Result<(), Box<dyn Error>> {
         persisted["plan"]["entries"][0]["artifact_class"],
         "incremental"
     );
+    Ok(())
+}
+
+#[test]
+fn save_plan_records_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_save_recent_plan")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .args(["--keep-recent-writes", "30m"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(
+        persisted["invocation"]["planner_options"]["recent_write_keep_window_seconds"],
+        30 * 60
+    );
+    assert_eq!(persisted["plan"]["entries"][0]["action"], "skip_active");
     Ok(())
 }
 

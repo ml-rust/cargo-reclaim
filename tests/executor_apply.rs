@@ -5,9 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ApplyEntryStatus, ArtifactClass, InventoryOptions, PathKind, PathSnapshot, Plan, PlanAction,
-    PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError, PolicyKind,
-    SavePlanOptions, ScannerOptions, TargetEvidence, execute_persisted_plan_apply, persist_plan,
-    validate_persisted_plan_for_apply,
+    PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError, PlannerOptions,
+    PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence, execute_persisted_plan_apply,
+    persist_plan, validate_persisted_plan_for_apply,
 };
 
 #[test]
@@ -181,6 +181,7 @@ fn persisted_plan_for_path(
                 PolicyKind::Balanced,
                 &ScannerOptions::default(),
                 &InventoryOptions::default(),
+                &PlannerOptions::default(),
             ),
         },
     )?)
@@ -218,6 +219,7 @@ fn persisted_plan_for_directory(
                 PolicyKind::Balanced,
                 &ScannerOptions::default(),
                 &InventoryOptions::default(),
+                &PlannerOptions::default(),
             ),
         },
     )?)

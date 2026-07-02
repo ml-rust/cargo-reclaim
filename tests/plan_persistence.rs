@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use cargo_reclaim::{
     ArtifactClass, InventoryOptions, PERSISTED_PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan,
     PlanAction, PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError,
-    PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence, ensure_plan_usable,
-    load_plan_from_path, persist_plan, save_plan_to_path,
+    PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence,
+    ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
 };
 
 #[test]
@@ -31,6 +31,9 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
                     ..ScannerOptions::default()
                 },
                 &InventoryOptions::default(),
+                &PlannerOptions {
+                    recent_write_keep_window: Some(Duration::from_secs(900)),
+                },
             ),
         },
     )?;
@@ -50,6 +53,14 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
     assert_eq!(
         loaded.body.invocation.scanner_options.ignored_paths,
         ["ignored"]
+    );
+    assert_eq!(
+        loaded
+            .body
+            .invocation
+            .planner_options
+            .recent_write_keep_window_seconds,
+        Some(900)
     );
     assert_eq!(
         loaded.body.plan.entries[0]
@@ -78,6 +89,7 @@ fn rejects_expired_incompatible_and_mutated_documents() -> Result<(), Box<dyn Er
                 PolicyKind::Balanced,
                 &ScannerOptions::default(),
                 &InventoryOptions::default(),
+                &PlannerOptions::default(),
             ),
         },
     )?;

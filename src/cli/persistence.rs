@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use cargo_reclaim::{
-    InventoryOptions, Plan, PlanCommandKind, PlanInvocation, PolicyKind, SavePlanOptions,
-    ScannerOptions, persist_plan, save_plan_to_path,
+    InventoryOptions, Plan, PlanCommandKind, PlanInvocation, PlannerOptions, PolicyKind,
+    SavePlanOptions, ScannerOptions, persist_plan, save_plan_to_path,
 };
 
 use super::{CliError, PlanMode};
@@ -63,6 +63,7 @@ pub(super) fn save_plan(
     policy: PolicyKind,
     scanner_options: &ScannerOptions,
     inventory_options: &InventoryOptions,
+    planner_options: &PlannerOptions,
     request: &SavePlanRequest,
 ) -> Result<(), CliError> {
     let created_at = SystemTime::now();
@@ -77,7 +78,13 @@ pub(super) fn save_plan(
             ));
         }
     };
-    let invocation = PlanInvocation::new(command, policy, scanner_options, inventory_options);
+    let invocation = PlanInvocation::new(
+        command,
+        policy,
+        scanner_options,
+        inventory_options,
+        planner_options,
+    );
     let document = persist_plan(
         plan,
         SavePlanOptions {

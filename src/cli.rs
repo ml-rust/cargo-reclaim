@@ -3,9 +3,11 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use cargo_reclaim::{
-    InventoryOptions, PolicyKind, ReclaimError, ScannerOptions, build_plan_from_roots,
+    InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions,
+    build_plan_from_roots_with_options,
 };
 
 mod apply;
@@ -37,11 +39,13 @@ fn run_with_args(
             Ok(ExitCode::SUCCESS)
         }
         Command::Plan(command) => {
-            let plan = build_plan_from_roots(
+            let plan = build_plan_from_roots_with_options(
                 command.roots,
                 command.policy,
                 &command.scanner_options,
                 &command.inventory_options,
+                &command.planner_options,
+                SystemTime::now(),
             )?;
             if let Some(request) = command.save_plan.as_ref() {
                 save_plan(
@@ -50,6 +54,7 @@ fn run_with_args(
                     command.policy,
                     &command.scanner_options,
                     &command.inventory_options,
+                    &command.planner_options,
                     request,
                 )?;
             }
@@ -82,6 +87,7 @@ struct PlanCommand {
     save_plan: Option<SavePlanRequest>,
     scanner_options: ScannerOptions,
     inventory_options: InventoryOptions,
+    planner_options: PlannerOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +130,7 @@ fn parse_plan_command(
     let mut expires_in = None;
     let mut scanner_options = ScannerOptions::default();
     let mut inventory_options = InventoryOptions::default();
+    let mut planner_options = PlannerOptions::default();
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -161,6 +168,16 @@ fn parse_plan_command(
                 inventory_options.follow_symlinks = true;
             }
             "--cross-filesystems" => scanner_options.cross_filesystems = true,
+            "--keep-recent-writes" => {
+                planner_options.recent_write_keep_window = Some(parse_duration(&next_value(
+                    &mut args,
+                    "--keep-recent-writes",
+                )?)?);
+            }
+            value if value.starts_with("--keep-recent-writes=") => {
+                planner_options.recent_write_keep_window =
+                    Some(parse_duration(&value["--keep-recent-writes=".len()..])?);
+            }
             "--json" => output_format = OutputFormat::Json,
             "--save-plan" => {
                 if mode != PlanMode::Plan {
@@ -219,6 +236,7 @@ fn parse_plan_command(
         save_plan,
         scanner_options,
         inventory_options,
+        planner_options,
     }))
 }
 

@@ -8,6 +8,7 @@ use crate::model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
     PlanInput, PlanTotals, TargetEvidence,
 };
+use crate::planner::PlannerOptions;
 use crate::policy::PolicyKind;
 use crate::scanner::ScannerOptions;
 
@@ -47,6 +48,8 @@ pub struct PlanInvocation {
     pub policy: String,
     pub scanner_options: PersistedScannerOptions,
     pub inventory_options: PersistedInventoryOptions,
+    #[serde(default)]
+    pub planner_options: PersistedPlannerOptions,
 }
 
 impl PlanInvocation {
@@ -55,12 +58,14 @@ impl PlanInvocation {
         policy: PolicyKind,
         scanner_options: &ScannerOptions,
         inventory_options: &InventoryOptions,
+        planner_options: &PlannerOptions,
     ) -> Self {
         Self {
             command,
             policy: policy_label(policy).to_string(),
             scanner_options: PersistedScannerOptions::from_options(scanner_options),
             inventory_options: PersistedInventoryOptions::from_options(inventory_options),
+            planner_options: PersistedPlannerOptions::from_options(planner_options),
         }
     }
 }
@@ -99,6 +104,21 @@ impl PersistedInventoryOptions {
     fn from_options(options: &InventoryOptions) -> Self {
         Self {
             follow_symlinks: options.follow_symlinks,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PersistedPlannerOptions {
+    pub recent_write_keep_window_seconds: Option<u64>,
+}
+
+impl PersistedPlannerOptions {
+    fn from_options(options: &PlannerOptions) -> Self {
+        Self {
+            recent_write_keep_window_seconds: options
+                .recent_write_keep_window
+                .map(|duration| duration.as_secs()),
         }
     }
 }

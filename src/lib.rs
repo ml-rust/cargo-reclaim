@@ -15,7 +15,10 @@ pub use executor::{
     ApplyEntryResult, ApplyEntryStatus, ApplyReport, ApplyTotals, execute_persisted_plan_apply,
     validate_persisted_plan_for_apply,
 };
-pub use integration::{build_plan_from_roots, build_plan_from_scan_items};
+pub use integration::{
+    build_plan_from_roots, build_plan_from_roots_with_options, build_plan_from_scan_items,
+    build_plan_from_scan_items_with_options,
+};
 pub use inventory::{
     InventoryOptions, planner_candidate_from_target_relative_path,
     planner_candidates_from_target_root, snapshot_target_relative_path,
@@ -27,12 +30,15 @@ pub use model::{
 pub use persistence::{
     PERSISTED_PLAN_SCHEMA_VERSION, PersistedEvidence, PersistedInventoryOptions,
     PersistedPathSnapshot, PersistedPlan, PersistedPlanBody, PersistedPlanEntry,
-    PersistedPlanInput, PersistedPlanSnapshot, PersistedPlanTotals, PersistedScannerOptions,
-    PersistedTimestamp, PlanCommandKind, PlanId, PlanInvocation, PlanPersistenceError,
-    PlanPersistenceResult, SavePlanOptions, ensure_plan_usable, load_plan_from_path, persist_plan,
-    save_plan_to_path,
+    PersistedPlanInput, PersistedPlanSnapshot, PersistedPlanTotals, PersistedPlannerOptions,
+    PersistedScannerOptions, PersistedTimestamp, PlanCommandKind, PlanId, PlanInvocation,
+    PlanPersistenceError, PlanPersistenceResult, SavePlanOptions, ensure_plan_usable,
+    load_plan_from_path, persist_plan, save_plan_to_path,
 };
-pub use planner::{PlannerCandidate, build_plan, plan_candidate};
+pub use planner::{
+    PlannerCandidate, PlannerOptions, build_plan, build_plan_with_options, plan_candidate,
+    plan_candidate_with_options,
+};
 pub use policy::PolicyKind;
 pub use scanner::{
     CargoProject, ScanItem, ScanSkip, ScanSkipReason, ScannerOptions, SkipReason, TargetCandidate,

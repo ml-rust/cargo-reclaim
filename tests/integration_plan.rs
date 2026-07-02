@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    ArtifactClass, InventoryOptions, PlanAction, PolicyKind, ScannerOptions, TargetCandidate,
-    TargetCandidateKind, TargetEvidence, build_plan_from_roots, build_plan_from_scan_items,
+    ArtifactClass, InventoryOptions, PlanAction, PlannerOptions, PolicyKind, ScannerOptions,
+    TargetCandidate, TargetCandidateKind, TargetEvidence, build_plan_from_roots,
+    build_plan_from_roots_with_options, build_plan_from_scan_items,
     planner_candidates_from_target_root,
 };
 
@@ -67,6 +68,34 @@ fn observe_policy_preserves_delete_capable_entries_from_scanned_roots() -> Resul
     let incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
     assert_eq!(incremental.action, PlanAction::Preserve);
     assert_eq!(plan.totals.delete_candidate_count, 0);
+    Ok(())
+}
+
+#[test]
+fn recent_write_keep_window_skips_scanned_delete_candidates() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_recent_write")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            recent_write_keep_window: Some(std::time::Duration::from_secs(24 * 60 * 60)),
+        },
+        SystemTime::now(),
+    )?;
+
+    let incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
+    assert_eq!(incremental.action, PlanAction::SkipActive);
+    assert_eq!(plan.totals.delete_candidate_count, 0);
+    assert_eq!(plan.totals.preserved_count, 1);
     Ok(())
 }
 

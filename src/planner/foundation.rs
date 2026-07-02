@@ -1,12 +1,16 @@
+use std::time::SystemTime;
+
 use crate::ReclaimResult;
 use crate::model::{ArtifactClass, PlanAction, PlanEntry};
 use crate::policy::PolicyKind;
 
-use super::PlannerCandidate;
+use super::{PlannerCandidate, PlannerOptions};
 
 pub(super) fn plan_candidate_for_policy(
     policy: PolicyKind,
     candidate: PlannerCandidate,
+    options: &PlannerOptions,
+    now: SystemTime,
 ) -> ReclaimResult<PlanEntry> {
     let PlannerCandidate {
         snapshot,
@@ -43,7 +47,16 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
-    if is_removable_for_policy(policy, artifact_class) && evidence.is_weak_name_only() {
+    if !is_removable_for_policy(policy, artifact_class) {
+        return PlanEntry::preserved(
+            snapshot,
+            artifact_class,
+            evidence,
+            "artifact class is not removable for the selected policy",
+        );
+    }
+
+    if evidence.is_weak_name_only() {
         return PlanEntry::new(
             snapshot,
             artifact_class,
@@ -51,6 +64,17 @@ pub(super) fn plan_candidate_for_policy(
             PlanAction::RequiresConfirmation,
             "name-only evidence is below the default delete confidence threshold",
             true,
+        );
+    }
+
+    if is_recently_modified(&snapshot.modified, options, now) {
+        return PlanEntry::new(
+            snapshot,
+            artifact_class,
+            evidence,
+            PlanAction::SkipActive,
+            "recent target writes are inside the active-project keep window",
+            false,
         );
     }
 
@@ -70,6 +94,23 @@ pub(super) fn plan_candidate_for_policy(
         evidence,
         "artifact class is not removable for the selected policy",
     )
+}
+
+fn is_recently_modified(
+    modified: &Option<SystemTime>,
+    options: &PlannerOptions,
+    now: SystemTime,
+) -> bool {
+    let Some(keep_window) = options.recent_write_keep_window else {
+        return false;
+    };
+    let Some(modified) = *modified else {
+        return false;
+    };
+
+    now.duration_since(modified)
+        .map(|age| age <= keep_window)
+        .unwrap_or(true)
 }
 
 fn is_removable_for_policy(policy: PolicyKind, artifact_class: ArtifactClass) -> bool {

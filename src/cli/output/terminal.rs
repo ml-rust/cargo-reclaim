@@ -40,6 +40,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  --keep-recent-writes <dur>   Preserve delete candidates modified within s, m, h, or d"
+    )?;
+    writeln!(
+        output,
         "  --json                       Emit one dry-run JSON plan document"
     )?;
     Ok(())

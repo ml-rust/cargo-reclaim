@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use crate::error::ReclaimResult;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root};
 use crate::model::{Plan, PlanInput};
-use crate::planner::build_plan;
+use crate::planner::{PlannerOptions, build_plan_with_options};
 use crate::policy::PolicyKind;
 use crate::scanner::{ScanItem, ScannerOptions, TargetCandidateKind, scan_roots};
 
@@ -14,11 +15,37 @@ pub fn build_plan_from_roots(
     scanner_options: &ScannerOptions,
     inventory_options: &InventoryOptions,
 ) -> ReclaimResult<Plan> {
+    build_plan_from_roots_with_options(
+        roots,
+        policy,
+        scanner_options,
+        inventory_options,
+        &PlannerOptions::default(),
+        SystemTime::now(),
+    )
+}
+
+pub fn build_plan_from_roots_with_options(
+    roots: impl IntoIterator<Item = impl Into<PathBuf>>,
+    policy: PolicyKind,
+    scanner_options: &ScannerOptions,
+    inventory_options: &InventoryOptions,
+    planner_options: &PlannerOptions,
+    now: SystemTime,
+) -> ReclaimResult<Plan> {
     let roots = roots.into_iter().map(Into::into).collect::<Vec<_>>();
     let input = PlanInput::new(roots.clone())?;
     let items = scan_roots(roots, scanner_options)?;
 
-    build_plan_from_scan_items(input, policy, items, scanner_options, inventory_options)
+    build_plan_from_scan_items_with_options(
+        input,
+        policy,
+        items,
+        scanner_options,
+        inventory_options,
+        planner_options,
+        now,
+    )
 }
 
 pub fn build_plan_from_scan_items(
@@ -27,6 +54,26 @@ pub fn build_plan_from_scan_items(
     items: impl IntoIterator<Item = ScanItem>,
     scanner_options: &ScannerOptions,
     inventory_options: &InventoryOptions,
+) -> ReclaimResult<Plan> {
+    build_plan_from_scan_items_with_options(
+        input,
+        policy,
+        items,
+        scanner_options,
+        inventory_options,
+        &PlannerOptions::default(),
+        SystemTime::now(),
+    )
+}
+
+pub fn build_plan_from_scan_items_with_options(
+    input: PlanInput,
+    policy: PolicyKind,
+    items: impl IntoIterator<Item = ScanItem>,
+    scanner_options: &ScannerOptions,
+    inventory_options: &InventoryOptions,
+    planner_options: &PlannerOptions,
+    now: SystemTime,
 ) -> ReclaimResult<Plan> {
     let mut seen_target_roots = HashSet::new();
     let mut candidates = Vec::new();
@@ -58,5 +105,5 @@ pub fn build_plan_from_scan_items(
         )?);
     }
 
-    build_plan(input, policy, candidates)
+    build_plan_with_options(input, policy, candidates, planner_options, now)
 }
