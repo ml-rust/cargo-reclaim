@@ -168,6 +168,160 @@ fn plan_json_outputs_single_dry_run_document() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn plan_json_whole_target_confirm_emits_single_confirmation_entry() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_whole_target_confirm")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("target/doc"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json", "--whole-target=confirm"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    let entries = document["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["artifact_class"], "whole_target");
+    assert_eq!(entries[0]["action"], "requires_confirmation");
+    assert_eq!(entries[0]["requires_confirmation"], true);
+    assert_eq!(
+        entries[0]["snapshot"]["path"],
+        temp.path().join("target").display().to_string()
+    );
+    Ok(())
+}
+
+#[test]
+fn plan_json_whole_target_delete_emits_single_delete_entry() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_whole_target_delete")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args([
+            "plan",
+            "--json",
+            "--policy",
+            "aggressive",
+            "--whole-target",
+            "delete",
+        ])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    let entries = document["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["artifact_class"], "whole_target");
+    assert_eq!(entries[0]["action"], "delete");
+    assert_eq!(entries[0]["requires_confirmation"], false);
+    Ok(())
+}
+
+#[test]
+fn whole_target_delete_requires_aggressive_policy() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_whole_target_delete_balanced")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json", "--whole-target", "delete"])
+        .arg(temp.path())
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)?.contains("aggressive"));
+    Ok(())
+}
+
+#[test]
+fn config_whole_target_delete_requires_unattended_allow_flag() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_config_whole_target_gate")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let config_path = temp.path().join("reclaim.toml");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+roots = ["."]
+
+[policy]
+mode = "aggressive"
+whole_target = "delete"
+"#,
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json", "--config"])
+        .arg(&config_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)?.contains("allow_unattended_whole_target_delete"));
+    Ok(())
+}
+
+#[test]
+fn config_whole_target_delete_with_allow_flag_uses_aggressive_policy() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("cli_config_whole_target_delete")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let config_path = temp.path().join("reclaim.toml");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+roots = ["."]
+
+[policy]
+mode = "aggressive"
+whole_target = "delete"
+allow_unattended_whole_target_delete = true
+"#,
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json", "--config"])
+        .arg(&config_path)
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    let entries = document["entries"].as_array().expect("entries array");
+    assert_eq!(document["policy"], "aggressive");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["artifact_class"], "whole_target");
+    assert_eq!(entries[0]["action"], "delete");
+    Ok(())
+}
+
+#[test]
 fn plan_json_reports_recent_write_skip_active() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_plan_json_recent")?;
     write_manifest(temp.path())?;

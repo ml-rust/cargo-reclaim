@@ -15,6 +15,6 @@ pub use cargo_config::{
 pub use error::ConfigError;
 pub use model::{
     BackgroundConfig, BackgroundMode, PolicyThresholdConfig, ReclaimConfig, ScannerConfig,
-    SchedulerConfig,
+    SchedulerConfig, WholeTargetConfig,
 };
 pub use parse::{load_config_from_path, parse_config};

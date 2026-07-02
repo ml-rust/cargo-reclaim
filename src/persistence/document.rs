@@ -8,7 +8,7 @@ use crate::model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
     PlanInput, PlanTotals, TargetEvidence,
 };
-use crate::planner::PlannerOptions;
+use crate::planner::{PlannerOptions, WholeTargetMode};
 use crate::policy::PolicyKind;
 use crate::scanner::ScannerOptions;
 
@@ -123,6 +123,8 @@ impl PersistedInventoryOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PersistedPlannerOptions {
     pub recent_write_keep_window_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_default_whole_target_mode")]
+    pub whole_target_mode: PersistedWholeTargetMode,
 }
 
 impl PersistedPlannerOptions {
@@ -131,6 +133,26 @@ impl PersistedPlannerOptions {
             recent_write_keep_window_seconds: options
                 .recent_write_keep_window
                 .map(|duration| duration.as_secs()),
+            whole_target_mode: PersistedWholeTargetMode::from_mode(options.whole_target_mode),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedWholeTargetMode {
+    #[default]
+    Off,
+    Confirm,
+    DeleteConfirmed,
+}
+
+impl PersistedWholeTargetMode {
+    fn from_mode(mode: WholeTargetMode) -> Self {
+        match mode {
+            WholeTargetMode::Off => Self::Off,
+            WholeTargetMode::Confirm => Self::Confirm,
+            WholeTargetMode::DeleteConfirmed => Self::DeleteConfirmed,
         }
     }
 }
@@ -356,6 +378,7 @@ fn action_label(action: &PlanAction) -> &'static str {
 
 fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
     match artifact_class {
+        ArtifactClass::WholeTarget => "whole_target",
         ArtifactClass::Incremental => "incremental",
         ArtifactClass::Deps => "deps",
         ArtifactClass::BuildScripts => "build_scripts",
@@ -372,6 +395,10 @@ fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
         ArtifactClass::FinalWasm => "final_wasm",
         ArtifactClass::Unknown => "unknown",
     }
+}
+
+fn is_default_whole_target_mode(mode: &PersistedWholeTargetMode) -> bool {
+    *mode == PersistedWholeTargetMode::Off
 }
 
 fn path_kind_label(path_kind: PathKind) -> &'static str {

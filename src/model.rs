@@ -211,6 +211,7 @@ impl PlanAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArtifactClass {
+    WholeTarget,
     Incremental,
     Deps,
     BuildScripts,

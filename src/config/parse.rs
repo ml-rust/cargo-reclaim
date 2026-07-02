@@ -52,6 +52,8 @@ pub(super) struct ConfigDocument {
 #[derive(Debug, Deserialize)]
 pub(super) struct PolicyConfig {
     pub mode: Option<String>,
+    pub whole_target: Option<String>,
+    pub allow_unattended_whole_target_delete: Option<bool>,
     pub keep_recent_projects: Option<String>,
     pub max_target_size: Option<String>,
     pub unattended_allowed: Option<bool>,
@@ -87,6 +89,8 @@ ignore = ["projects/pinned"]
 
 [policy]
 mode = "conservative"
+whole_target = "confirm"
+allow_unattended_whole_target_delete = false
 keep_recent_projects = "3 days"
 max_target_size = "5 GiB"
 unattended_allowed = true
@@ -125,6 +129,11 @@ field = true
         assert_eq!(config.roots, [PathBuf::from("projects")]);
         assert_eq!(config.ignored_paths, [PathBuf::from("projects/pinned")]);
         assert_eq!(config.policy.as_deref(), Some("conservative"));
+        assert_eq!(
+            config.whole_target,
+            Some(crate::config::WholeTargetConfig::Confirm)
+        );
+        assert_eq!(config.allow_unattended_whole_target_delete, Some(false));
         assert_eq!(
             config
                 .recent_write_keep_window
@@ -234,5 +243,13 @@ log_dir = "logs"
                 Err(super::ConfigError::InvalidPercentage(_))
             ));
         }
+    }
+
+    #[test]
+    fn rejects_invalid_whole_target_mode() {
+        assert!(matches!(
+            parse_config("version = 1\n[policy]\nwhole_target = \"remove\""),
+            Err(super::ConfigError::InvalidWholeTargetMode(value)) if value == "remove"
+        ));
     }
 }

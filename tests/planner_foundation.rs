@@ -3,7 +3,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ArtifactClass, PathKind, PathSnapshot, PlanAction, PlanInput, PlannerCandidate, PlannerOptions,
-    PolicyKind, TargetEvidence, build_plan, plan_candidate, plan_candidate_with_options,
+    PolicyKind, TargetEvidence, WholeTargetMode, build_plan, plan_candidate,
+    plan_candidate_with_active_observation, plan_candidate_with_options,
 };
 
 fn candidate(
@@ -68,6 +69,7 @@ fn recent_write_keep_window_skips_active_delete_candidate() -> Result<(), Box<dy
         PolicyKind::Balanced,
         &PlannerOptions {
             recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
         },
         UNIX_EPOCH + Duration::from_secs(100),
     )?;
@@ -91,6 +93,7 @@ fn recent_write_keep_window_does_not_change_missing_mtime_candidate() -> Result<
         PolicyKind::Balanced,
         &PlannerOptions {
             recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
         },
         UNIX_EPOCH + Duration::from_secs(100),
     )?;
@@ -112,6 +115,7 @@ fn recent_write_keep_window_does_not_mask_non_removable_class() -> Result<(), Bo
         PolicyKind::Balanced,
         &PlannerOptions {
             recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
         },
         UNIX_EPOCH + Duration::from_secs(100),
     )?;
@@ -134,6 +138,7 @@ fn recent_write_keep_window_does_not_mask_weak_evidence_confirmation() -> Result
         PolicyKind::Balanced,
         &PlannerOptions {
             recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
         },
         UNIX_EPOCH + Duration::from_secs(100),
     )?;
@@ -157,6 +162,141 @@ fn default_planner_options_do_not_skip_recent_candidates() -> Result<(), Box<dyn
     )?;
 
     assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
+fn whole_target_confirm_mode_requires_confirmation() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate(
+            "target",
+            100,
+            ArtifactClass::WholeTarget,
+            TargetEvidence::project_context("Cargo.toml")?,
+        )?,
+        PolicyKind::Aggressive,
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::Confirm,
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    assert!(entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn whole_target_delete_confirmed_requires_aggressive_policy() -> Result<(), Box<dyn Error>> {
+    let balanced = plan_candidate_with_options(
+        candidate(
+            "target",
+            100,
+            ArtifactClass::WholeTarget,
+            TargetEvidence::project_context("Cargo.toml")?,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+    let aggressive = plan_candidate_with_options(
+        candidate(
+            "target",
+            100,
+            ArtifactClass::WholeTarget,
+            TargetEvidence::project_context("Cargo.toml")?,
+        )?,
+        PolicyKind::Aggressive,
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(balanced.action, PlanAction::RequiresConfirmation);
+    assert!(balanced.requires_confirmation);
+    assert_eq!(aggressive.action, PlanAction::Delete);
+    assert!(!aggressive.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn whole_target_name_only_evidence_never_direct_deletes() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate(
+            "target",
+            100,
+            ArtifactClass::WholeTarget,
+            TargetEvidence::weak_name_only("target")?,
+        )?,
+        PolicyKind::Aggressive,
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    assert!(entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn whole_target_delete_confirmed_respects_recent_keep_window() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target",
+            100,
+            ArtifactClass::WholeTarget,
+            TargetEvidence::project_context("Cargo.toml")?,
+            90,
+        )?,
+        PolicyKind::Aggressive,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(!entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn whole_target_delete_confirmed_respects_active_observation() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_active_observation(
+        candidate(
+            "/workspace/project/target",
+            100,
+            ArtifactClass::WholeTarget,
+            TargetEvidence::project_context("Cargo.toml")?,
+        )?
+        .with_target_context(
+            cargo_reclaim::TargetContext::new("/workspace/project/target")
+                .with_project_root("/workspace/project"),
+        ),
+        PolicyKind::Aggressive,
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        &cargo_reclaim::ActiveObservation::complete([cargo_reclaim::ObservedCargoProcess::new(
+            cargo_reclaim::CargoTool::Cargo,
+        )
+        .with_cwd("/workspace/project/src")]),
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(!entry.requires_confirmation);
     Ok(())
 }
 
@@ -340,6 +480,11 @@ fn build_plan_preserves_candidate_order_and_derives_totals() -> Result<(), Box<d
 #[test]
 fn planner_entries_have_non_empty_policy_reasons() -> Result<(), Box<dyn Error>> {
     for (artifact_class, evidence, policy) in [
+        (
+            ArtifactClass::WholeTarget,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            PolicyKind::Balanced,
+        ),
         (
             ArtifactClass::Incremental,
             TargetEvidence::strong_marker("CACHEDIR.TAG")?,

@@ -1,10 +1,13 @@
 use std::time::SystemTime;
 
 use crate::ReclaimResult;
-use crate::model::{ArtifactClass, PlanAction, PlanEntry};
+use crate::model::{ArtifactClass, PathSnapshot, PlanAction, PlanEntry, TargetEvidence};
 use crate::policy::PolicyKind;
 
-use super::{ActiveObservation, PlannerCandidate, PlannerOptions, ProcessView, TargetContext};
+use super::{
+    ActiveObservation, PlannerCandidate, PlannerOptions, ProcessView, TargetContext,
+    WholeTargetMode,
+};
 
 pub(super) fn plan_candidate_for_policy(
     policy: PolicyKind,
@@ -19,6 +22,18 @@ pub(super) fn plan_candidate_for_policy(
         evidence,
         target_context,
     } = candidate;
+
+    if artifact_class == ArtifactClass::WholeTarget {
+        return plan_whole_target_candidate(
+            policy,
+            snapshot,
+            evidence,
+            target_context,
+            options,
+            active_observation,
+            now,
+        );
+    }
 
     if artifact_class == ArtifactClass::Unknown {
         return PlanEntry::new(
@@ -107,6 +122,86 @@ pub(super) fn plan_candidate_for_policy(
         evidence,
         "artifact class is not removable for the selected policy",
     )
+}
+
+fn plan_whole_target_candidate(
+    policy: PolicyKind,
+    snapshot: PathSnapshot,
+    evidence: TargetEvidence,
+    target_context: Option<TargetContext>,
+    options: &PlannerOptions,
+    active_observation: &ActiveObservation,
+    now: SystemTime,
+) -> ReclaimResult<PlanEntry> {
+    match options.whole_target_mode {
+        WholeTargetMode::Off => PlanEntry::preserved(
+            snapshot,
+            ArtifactClass::WholeTarget,
+            evidence,
+            "whole-target planning is disabled",
+        ),
+        WholeTargetMode::Confirm => PlanEntry::new(
+            snapshot,
+            ArtifactClass::WholeTarget,
+            evidence,
+            PlanAction::RequiresConfirmation,
+            "whole-target deletion requires explicit confirmation",
+            true,
+        ),
+        WholeTargetMode::DeleteConfirmed => {
+            if evidence.is_weak_name_only() {
+                return PlanEntry::new(
+                    snapshot,
+                    ArtifactClass::WholeTarget,
+                    evidence,
+                    PlanAction::RequiresConfirmation,
+                    "name-only evidence is below the whole-target delete confidence threshold",
+                    true,
+                );
+            }
+
+            if is_recently_modified(&snapshot.modified, options, now) {
+                return PlanEntry::new(
+                    snapshot,
+                    ArtifactClass::WholeTarget,
+                    evidence,
+                    PlanAction::SkipActive,
+                    "recent target writes are inside the active-project keep window",
+                    false,
+                );
+            }
+
+            if let Some(reason) = active_skip_reason(target_context.as_ref(), active_observation) {
+                return PlanEntry::new(
+                    snapshot,
+                    ArtifactClass::WholeTarget,
+                    evidence,
+                    PlanAction::SkipActive,
+                    reason,
+                    false,
+                );
+            }
+
+            if policy == PolicyKind::Aggressive {
+                return PlanEntry::delete(
+                    snapshot,
+                    ArtifactClass::WholeTarget,
+                    evidence,
+                    "aggressive policy permits confirmed whole-target deletion",
+                    false,
+                );
+            }
+
+            PlanEntry::new(
+                snapshot,
+                ArtifactClass::WholeTarget,
+                evidence,
+                PlanAction::RequiresConfirmation,
+                "whole-target deletion requires aggressive policy after confirmation",
+                true,
+            )
+        }
+    }
 }
 
 fn active_skip_reason(

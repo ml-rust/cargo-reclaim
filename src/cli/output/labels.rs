@@ -23,6 +23,7 @@ pub(super) fn action_label(action: &PlanAction) -> &'static str {
 
 pub(super) fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
     match artifact_class {
+        ArtifactClass::WholeTarget => "whole_target",
         ArtifactClass::Incremental => "incremental",
         ArtifactClass::Deps => "deps",
         ArtifactClass::BuildScripts => "build_scripts",
@@ -83,6 +84,7 @@ mod tests {
             "requires_confirmation"
         );
 
+        assert_eq!(artifact_label(ArtifactClass::WholeTarget), "whole_target");
         assert_eq!(artifact_label(ArtifactClass::Incremental), "incremental");
         assert_eq!(artifact_label(ArtifactClass::Deps), "deps");
         assert_eq!(artifact_label(ArtifactClass::BuildScripts), "build_scripts");

@@ -7,7 +7,7 @@ use cargo_reclaim::{
     ApplyEntryStatus, ArtifactClass, InventoryOptions, PathKind, PathSnapshot, Plan, PlanAction,
     PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError, PlannerOptions,
     PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence, execute_persisted_plan_apply,
-    persist_plan, validate_persisted_plan_for_apply,
+    persist_plan, snapshot_path, validate_persisted_plan_for_apply,
 };
 
 #[test]
@@ -93,6 +93,93 @@ fn apply_execution_deletes_revalidated_directory() -> Result<(), Box<dyn Error>>
     assert_eq!(report.entries[0].status, ApplyEntryStatus::Deleted);
     assert_eq!(report.totals.applied_count, 1);
     assert!(!directory.exists());
+    Ok(())
+}
+
+#[test]
+fn apply_execution_deletes_revalidated_whole_target() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("apply_execute_whole_target")?;
+    write_manifest(&temp.path)?;
+    let target = temp.path.join("target");
+    fs::create_dir_all(target.join("debug/incremental"))?;
+    fs::write(target.join("debug/incremental/cache.bin"), b"abc")?;
+    let document = persisted_whole_target_plan_for_project(&target, temp.path.join("Cargo.toml"))?;
+
+    let report = execute_persisted_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.entries[0].status, ApplyEntryStatus::Deleted);
+    assert_eq!(report.totals.applied_count, 1);
+    assert!(!target.exists());
+    Ok(())
+}
+
+#[test]
+fn apply_execution_skips_whole_target_when_project_manifest_is_missing()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("apply_whole_target_missing_manifest")?;
+    write_manifest(&temp.path)?;
+    let manifest = temp.path.join("Cargo.toml");
+    let target = temp.path.join("target");
+    fs::create_dir_all(target.join("debug/incremental"))?;
+    fs::write(target.join("debug/incremental/cache.bin"), b"abc")?;
+    let document = persisted_whole_target_plan_for_project(&target, &manifest)?;
+    fs::remove_file(manifest)?;
+
+    let report = execute_persisted_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.entries[0].status, ApplyEntryStatus::SkipStalePlan);
+    assert!(report.entries[0].reason.contains("project manifest"));
+    assert!(target.is_dir());
+    Ok(())
+}
+
+#[test]
+fn apply_execution_skips_whole_target_when_marker_is_missing() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("apply_whole_target_missing_marker")?;
+    let target = temp.path.join("target");
+    fs::create_dir_all(target.join("debug/incremental"))?;
+    fs::write(
+        target.join("CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55",
+    )?;
+    fs::write(target.join("debug/incremental/cache.bin"), b"abc")?;
+    let document =
+        persisted_whole_target_plan(&target, TargetEvidence::strong_marker("CACHEDIR.TAG")?)?;
+    let marker_size = fs::metadata(target.join("CACHEDIR.TAG"))?.len();
+    fs::remove_file(target.join("CACHEDIR.TAG"))?;
+    fs::write(
+        target.join("same-size-placeholder"),
+        vec![b'x'; marker_size as usize],
+    )?;
+
+    let report = execute_persisted_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.entries[0].status, ApplyEntryStatus::SkipStalePlan);
+    assert!(report.entries[0].reason.contains("skip_stale_plan"));
+    assert!(target.is_dir());
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn apply_execution_skips_whole_target_replaced_by_symlink() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::symlink;
+
+    let temp = TestTemp::new("apply_whole_target_symlink")?;
+    write_manifest(&temp.path)?;
+    let target = temp.path.join("target");
+    fs::create_dir_all(target.join("debug/incremental"))?;
+    fs::write(target.join("debug/incremental/cache.bin"), b"abc")?;
+    let document = persisted_whole_target_plan_for_project(&target, temp.path.join("Cargo.toml"))?;
+    fs::remove_dir_all(&target)?;
+    fs::create_dir(temp.path.join("replacement"))?;
+    symlink(temp.path.join("replacement"), &target)?;
+
+    let report = execute_persisted_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.entries[0].status, ApplyEntryStatus::SkipStalePlan);
+    assert!(report.entries[0].reason.contains("symlink"));
+    assert!(target.exists());
     Ok(())
 }
 
@@ -223,6 +310,53 @@ fn persisted_plan_for_directory(
             ),
         },
     )?)
+}
+
+fn persisted_whole_target_plan_for_project(
+    target: impl Into<PathBuf>,
+    manifest: impl Into<PathBuf>,
+) -> Result<cargo_reclaim::PersistedPlan, Box<dyn Error>> {
+    persisted_whole_target_plan(target, TargetEvidence::project_context(manifest.into())?)
+}
+
+fn persisted_whole_target_plan(
+    target: impl Into<PathBuf>,
+    evidence: TargetEvidence,
+) -> Result<cargo_reclaim::PersistedPlan, Box<dyn Error>> {
+    let target = target.into();
+    let snapshot = snapshot_path(&target, &InventoryOptions::default())?;
+    let entry = PlanEntry::new(
+        snapshot,
+        ArtifactClass::WholeTarget,
+        evidence,
+        PlanAction::Delete,
+        "aggressive policy permits confirmed whole-target deletion",
+        false,
+    )?;
+    let plan = Plan::new(PlanInput::from_root(".")?, vec![entry]);
+    Ok(persist_plan(
+        &plan,
+        SavePlanOptions {
+            created_at: UNIX_EPOCH + Duration::from_secs(1_000),
+            expires_at: UNIX_EPOCH + Duration::from_secs(2_000),
+            interactive_selection_modified: true,
+            invocation: PlanInvocation::new(
+                PlanCommandKind::Plan,
+                PolicyKind::Aggressive,
+                &ScannerOptions::default(),
+                &InventoryOptions::default(),
+                &PlannerOptions {
+                    whole_target_mode: cargo_reclaim::WholeTargetMode::DeleteConfirmed,
+                    ..PlannerOptions::default()
+                },
+            ),
+        },
+    )?)
+}
+
+fn write_manifest(path: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    Ok(())
 }
 
 struct TestTemp {

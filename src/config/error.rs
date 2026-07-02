@@ -13,6 +13,7 @@ pub enum ConfigError {
     InvalidSize(String),
     InvalidPercentage(String),
     InvalidBackgroundMode(String),
+    InvalidWholeTargetMode(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -36,6 +37,9 @@ impl fmt::Display for ConfigError {
             }
             Self::InvalidBackgroundMode(value) => {
                 write!(formatter, "invalid background mode `{value}`")
+            }
+            Self::InvalidWholeTargetMode(value) => {
+                write!(formatter, "invalid whole-target mode `{value}`")
             }
         }
     }

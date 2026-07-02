@@ -4,6 +4,8 @@ ignore = ["projects/pinned"]
 
 [policy]
 mode = "conservative"
+whole_target = "off"
+allow_unattended_whole_target_delete = false
 keep_recent_projects = "3 days"
 max_target_size = "5 GiB"
 unattended_allowed = false

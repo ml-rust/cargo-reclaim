@@ -10,4 +10,4 @@ pub use build::{
     plan_candidate_with_active_observation, plan_candidate_with_options,
 };
 pub use candidate::PlannerCandidate;
-pub use options::PlannerOptions;
+pub use options::{PlannerOptions, WholeTargetMode};

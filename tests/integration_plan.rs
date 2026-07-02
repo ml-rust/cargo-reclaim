@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cargo_reclaim::{
     ActiveObservation, ActiveObservationProvider, ActiveObservationScope, ArtifactClass, CargoTool,
     InventoryOptions, ObservedCargoProcess, PlanAction, PlannerOptions, PolicyKind, ScannerOptions,
-    TargetCandidate, TargetCandidateKind, TargetEvidence, build_plan_from_roots,
+    TargetCandidate, TargetCandidateKind, TargetEvidence, WholeTargetMode, build_plan_from_roots,
     build_plan_from_roots_with_active_observation,
     build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
     build_plan_from_scan_items, planner_candidates_from_target_root,
@@ -123,6 +123,7 @@ fn recent_write_keep_window_skips_scanned_delete_candidates() -> Result<(), Box<
         &InventoryOptions::default(),
         &PlannerOptions {
             recent_write_keep_window: Some(std::time::Duration::from_secs(24 * 60 * 60)),
+            ..PlannerOptions::default()
         },
         SystemTime::now(),
     )?;
@@ -131,6 +132,103 @@ fn recent_write_keep_window_skips_scanned_delete_candidates() -> Result<(), Box<
     assert_eq!(incremental.action, PlanAction::SkipActive);
     assert_eq!(plan.totals.delete_candidate_count, 0);
     assert_eq!(plan.totals.preserved_count, 1);
+    Ok(())
+}
+
+#[test]
+fn whole_target_mode_emits_target_root_candidate_and_skips_children() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("integration_whole_target_confirm")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("target/doc"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::Confirm,
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    assert_eq!(plan.entries.len(), 1);
+    let entry = entry_for(&plan, temp.path().join("target"))?;
+    assert_eq!(entry.artifact_class, ArtifactClass::WholeTarget);
+    assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    assert_eq!(entry.snapshot.size_bytes, 7);
+    assert!(entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn whole_target_confirmed_delete_requires_aggressive_non_weak_target() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("integration_whole_target_delete")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Aggressive,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    let entry = entry_for(&plan, temp.path().join("target"))?;
+    assert_eq!(entry.artifact_class, ArtifactClass::WholeTarget);
+    assert_eq!(entry.action, PlanAction::Delete);
+    assert!(!entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn whole_target_name_only_target_stays_confirmation_only_when_allowed() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("integration_whole_target_weak")?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Aggressive,
+        &ScannerOptions {
+            allow_name_only_targets: true,
+            ..ScannerOptions::default()
+        },
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    let entry = entry_for(&plan, temp.path().join("target"))?;
+    assert_eq!(entry.artifact_class, ArtifactClass::WholeTarget);
+    assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    assert!(entry.requires_confirmation);
+    assert_eq!(entry.evidence, TargetEvidence::weak_name_only("target")?);
     Ok(())
 }
 

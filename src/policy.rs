@@ -1,6 +1,7 @@
 use crate::model::{ArtifactClass, PlanAction, TargetEvidence};
 
 const DEFAULT_PROTECTED_OUTPUTS: &[ArtifactClass] = &[
+    ArtifactClass::WholeTarget,
     ArtifactClass::Docs,
     ArtifactClass::Package,
     ArtifactClass::Timings,

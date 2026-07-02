@@ -69,6 +69,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  --whole-target <mode>        off, confirm, delete; delete requires aggressive policy"
+    )?;
+    writeln!(
+        output,
         "  --ignore <path>              Skip a path while scanning"
     )?;
     writeln!(

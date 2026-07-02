@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use cargo_reclaim::{
     ArtifactClass, InventoryOptions, PERSISTED_PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan,
     PlanAction, PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError,
-    PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence,
+    PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence, WholeTargetMode,
     ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
 };
 use serde_json::json;
@@ -34,6 +34,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
                 &InventoryOptions::default(),
                 &PlannerOptions {
                     recent_write_keep_window: Some(Duration::from_secs(900)),
+                    ..PlannerOptions::default()
                 },
             ),
         },
@@ -143,6 +144,55 @@ fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Er
     assert_eq!(
         invocation.planner_options.recent_write_keep_window_seconds,
         None
+    );
+    assert_eq!(
+        invocation.planner_options.whole_target_mode,
+        cargo_reclaim::PersistedWholeTargetMode::Off
+    );
+    Ok(())
+}
+
+#[test]
+fn persists_whole_target_artifact_class_and_planner_mode() -> Result<(), Box<dyn Error>> {
+    let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
+    let expires_at = created_at + Duration::from_secs(3_600);
+    let entry = PlanEntry::new(
+        PathSnapshot::with_details("target", 3, PathKind::Directory, Some(created_at))?,
+        ArtifactClass::WholeTarget,
+        TargetEvidence::project_context("Cargo.toml")?,
+        PlanAction::RequiresConfirmation,
+        "whole-target deletion requires explicit confirmation",
+        true,
+    )?;
+    let plan = Plan::new(PlanInput::from_root(".")?, vec![entry]);
+
+    let document = persist_plan(
+        &plan,
+        SavePlanOptions {
+            created_at,
+            expires_at,
+            interactive_selection_modified: false,
+            invocation: PlanInvocation::new(
+                PlanCommandKind::Plan,
+                PolicyKind::Aggressive,
+                &ScannerOptions::default(),
+                &InventoryOptions::default(),
+                &PlannerOptions {
+                    whole_target_mode: WholeTargetMode::Confirm,
+                    ..PlannerOptions::default()
+                },
+            ),
+        },
+    )?;
+    let value = serde_json::to_value(&document)?;
+
+    assert_eq!(
+        value["plan"]["entries"][0]["artifact_class"],
+        "whole_target"
+    );
+    assert_eq!(
+        value["invocation"]["planner_options"]["whole_target_mode"],
+        "confirm"
     );
     Ok(())
 }

@@ -4,10 +4,12 @@ use std::time::SystemTime;
 
 use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::ReclaimResult;
+use crate::inventory::snapshot_path;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
-use crate::model::{Plan, PlanInput};
+use crate::model::{ArtifactClass, Plan, PlanInput};
 use crate::planner::{
-    ActiveObservation, PlannerOptions, TargetContext, build_plan_with_active_observation,
+    ActiveObservation, PlannerCandidate, PlannerOptions, TargetContext, WholeTargetMode,
+    build_plan_with_active_observation,
 };
 use crate::policy::PolicyKind;
 use crate::scanner::{ScanItem, ScannerOptions, TargetCandidateKind, scan_roots};
@@ -288,12 +290,23 @@ fn build_plan_from_scan_items_with_active_observation_impl(
             .target_context
             .unwrap_or_else(|| TargetContext::new(&target_candidate.path));
 
-        candidates.extend(planner_candidates_from_target_root_with_context(
-            &target_candidate.path,
-            evidence,
-            target_context,
-            inventory_options,
-        )?);
+        if planner_options.whole_target_mode == WholeTargetMode::Off {
+            candidates.extend(planner_candidates_from_target_root_with_context(
+                &target_candidate.path,
+                evidence,
+                target_context,
+                inventory_options,
+            )?);
+        } else {
+            candidates.push(
+                PlannerCandidate::new(
+                    snapshot_path(&target_candidate.path, inventory_options)?,
+                    ArtifactClass::WholeTarget,
+                    evidence,
+                )
+                .with_target_context(target_context),
+            );
+        }
     }
 
     build_plan_with_active_observation(

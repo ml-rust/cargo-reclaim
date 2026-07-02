@@ -29,6 +29,7 @@ fn user_facing_outputs_are_protected_by_default() {
     let protected = PolicyKind::default_protected_outputs();
 
     for artifact_class in [
+        ArtifactClass::WholeTarget,
         ArtifactClass::Docs,
         ArtifactClass::Package,
         ArtifactClass::Timings,

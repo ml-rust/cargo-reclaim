@@ -16,6 +16,8 @@ pub struct ReclaimConfig {
     pub roots: Vec<PathBuf>,
     pub ignored_paths: Vec<PathBuf>,
     pub policy: Option<String>,
+    pub whole_target: Option<WholeTargetConfig>,
+    pub allow_unattended_whole_target_delete: Option<bool>,
     pub policy_thresholds: PolicyThresholdConfig,
     pub background: BackgroundConfig,
     pub scanner: ScannerConfig,
@@ -44,6 +46,7 @@ impl ReclaimConfig {
             .and_then(|planner| planner.recent_write_keep_window.as_deref())
             .map(parse_config_duration)
             .transpose()?;
+        let policy = document.policy.as_ref();
         let policy_thresholds = document
             .policy
             .as_ref()
@@ -68,7 +71,13 @@ impl ReclaimConfig {
                 .into_iter()
                 .map(|path| resolve_config_path(path, relative_base))
                 .collect(),
-            policy: document.policy.and_then(|policy| policy.mode),
+            policy: policy.and_then(|policy| policy.mode.clone()),
+            whole_target: policy
+                .and_then(|policy| policy.whole_target.as_deref())
+                .map(WholeTargetConfig::parse)
+                .transpose()?,
+            allow_unattended_whole_target_delete: policy
+                .and_then(|policy| policy.allow_unattended_whole_target_delete),
             policy_thresholds,
             background,
             scanner: document.scanner.unwrap_or_default(),
@@ -79,6 +88,24 @@ impl ReclaimConfig {
             recent_write_keep_window: planner_recent_write_keep_window
                 .or(policy_keep_recent_projects),
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WholeTargetConfig {
+    Off,
+    Confirm,
+    Delete,
+}
+
+impl WholeTargetConfig {
+    fn parse(value: &str) -> Result<Self, ConfigError> {
+        match value {
+            "off" => Ok(Self::Off),
+            "confirm" => Ok(Self::Confirm),
+            "delete" => Ok(Self::Delete),
+            _ => Err(ConfigError::InvalidWholeTargetMode(value.to_string())),
+        }
     }
 }
 

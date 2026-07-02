@@ -10,6 +10,7 @@ use crate::persistence::{
 const SELECT_REASON: &str = "explicitly selected for deletion";
 const DESELECT_REASON: &str = "explicitly preserved by selection";
 const CANONICAL_ARTIFACT_CLASSES: &[&str] = &[
+    "whole_target",
     "incremental",
     "deps",
     "build_scripts",
@@ -266,7 +267,8 @@ fn validate_class_labels(labels: &[String], action: ClassEditAction) -> Result<(
                 label: label.clone(),
             });
         }
-        if action == ClassEditAction::Select && label == "unknown" {
+        if action == ClassEditAction::Select && matches!(label.as_str(), "unknown" | "whole_target")
+        {
             return Err(PlanEditError::ProtectedArtifactClass {
                 label: label.clone(),
             });

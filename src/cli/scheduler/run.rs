@@ -11,7 +11,7 @@ use cargo_reclaim::{
     WatcherThresholds, load_config_from_path, platform_active_observation_provider,
     run_background_cleanup_cycle, scan_roots, snapshot_path,
 };
-use cargo_reclaim::{ScanItem, TargetCandidateKind};
+use cargo_reclaim::{ScanItem, TargetCandidateKind, WholeTargetConfig, WholeTargetMode};
 
 use super::super::{
     CliError, OutputFormat, inline_config_path, next_path, next_value, parse_policy,
@@ -121,6 +121,7 @@ pub(super) fn run_scheduler_cycle(
     let allow_apply =
         command.allow_apply || config.scheduler.allow_unattended_cleanup.unwrap_or(false);
     validate_run_apply_policy(mode, allow_apply, policy, &config)?;
+    validate_whole_target_policy(policy, &config)?;
     let roots = run_roots(&config);
     let scanner_options = scanner_options_from_config(&config);
     let inventory_options = inventory_options_from_config(&config);
@@ -207,6 +208,29 @@ fn validate_run_apply_policy(
     Ok(())
 }
 
+fn validate_whole_target_policy(
+    policy: PolicyKind,
+    config: &cargo_reclaim::ReclaimConfig,
+) -> Result<(), CliError> {
+    if config.whole_target != Some(WholeTargetConfig::Delete) {
+        return Ok(());
+    }
+
+    if policy != PolicyKind::Aggressive {
+        return Err(CliError::Usage(
+            "config whole_target = \"delete\" requires aggressive policy".to_string(),
+        ));
+    }
+    if !config.allow_unattended_whole_target_delete.unwrap_or(false) {
+        return Err(CliError::Usage(
+            "config whole_target = \"delete\" requires allow_unattended_whole_target_delete = true"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 fn run_roots(config: &cargo_reclaim::ReclaimConfig) -> Vec<PathBuf> {
     if config.roots.is_empty() {
         vec![PathBuf::from(".")]
@@ -233,6 +257,18 @@ fn inventory_options_from_config(config: &cargo_reclaim::ReclaimConfig) -> Inven
 fn planner_options_from_config(config: &cargo_reclaim::ReclaimConfig) -> PlannerOptions {
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
+        whole_target_mode: config
+            .whole_target
+            .map(whole_target_mode_from_config)
+            .unwrap_or_default(),
+    }
+}
+
+fn whole_target_mode_from_config(value: WholeTargetConfig) -> WholeTargetMode {
+    match value {
+        WholeTargetConfig::Off => WholeTargetMode::Off,
+        WholeTargetConfig::Confirm => WholeTargetMode::Confirm,
+        WholeTargetConfig::Delete => WholeTargetMode::DeleteConfirmed,
     }
 }
 

@@ -304,6 +304,79 @@ fn run_threshold_mode_uses_measured_target_size() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn run_config_whole_target_confirm_persists_root_entry() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_run_whole_target")?;
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join("target/debug/incremental"))?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    fs::write(project.join("target/debug/incremental/cache.bin"), b"cache")?;
+    let config_path = write_config(
+        temp.path(),
+        &format!(
+            "roots = [{}]\n[policy]\nwhole_target = \"confirm\"\n",
+            toml_string(&project)
+        ),
+    )?;
+    let log_path = temp.path().join("scheduler.jsonl");
+    let plan_path = temp.path().join("plans/run.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "run", "--config"])
+        .arg(&config_path)
+        .args(["--run-id", "run-whole-target", "--log-path"])
+        .arg(&log_path)
+        .arg("--plan-path")
+        .arg(&plan_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let entries = persisted["plan"]["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["artifact_class"], "whole_target");
+    assert_eq!(entries[0]["action"], "requires_confirmation");
+    assert_eq!(
+        persisted["invocation"]["planner_options"]["whole_target_mode"],
+        "confirm"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_config_whole_target_delete_requires_allow_flag() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_run_whole_target_gate")?;
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join("target/debug/incremental"))?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    fs::write(project.join("target/debug/incremental/cache.bin"), b"cache")?;
+    let config_path = write_config(
+        temp.path(),
+        &format!(
+            "roots = [{}]\n[policy]\nmode = \"aggressive\"\nwhole_target = \"delete\"\n",
+            toml_string(&project)
+        ),
+    )?;
+    let log_path = temp.path().join("scheduler.jsonl");
+    let plan_path = temp.path().join("plans/run.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "run", "--config"])
+        .arg(&config_path)
+        .args(["--run-id", "run-whole-target-gate", "--log-path"])
+        .arg(&log_path)
+        .arg("--plan-path")
+        .arg(&plan_path)
+        .arg("--json")
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)?.contains("allow_unattended_whole_target_delete"));
+    assert!(!plan_path.exists());
+    Ok(())
+}
+
+#[test]
 fn run_missing_required_flags_exit_usage_code() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_scheduler_run_usage")?;
     let config_path = write_config(temp.path(), "")?;

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use cargo_reclaim::{
-    InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions,
-    load_config_from_path, platform_active_observation_provider,
+    InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions, WholeTargetConfig,
+    WholeTargetMode, load_config_from_path, platform_active_observation_provider,
 };
 
 mod apply;
@@ -147,6 +147,7 @@ fn parse_plan_command(
     let mut cli_allow_name_only_targets = false;
     let mut cli_cross_filesystems = false;
     let mut cli_recent_write_keep_window = false;
+    let mut whole_target_source = None;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -176,6 +177,16 @@ fn parse_plan_command(
             }
             value if value.starts_with("--policy=") => {
                 policy = Some(parse_policy(&value["--policy=".len()..])?);
+            }
+            "--whole-target" => {
+                planner_options.whole_target_mode =
+                    parse_whole_target_mode(&next_value(&mut args, "--whole-target")?)?;
+                whole_target_source = Some(WholeTargetSource::Cli);
+            }
+            value if value.starts_with("--whole-target=") => {
+                planner_options.whole_target_mode =
+                    parse_whole_target_mode(&value["--whole-target=".len()..])?;
+                whole_target_source = Some(WholeTargetSource::Cli);
             }
             "--config" => {
                 config_path = Some(next_path(&mut args, "--config")?);
@@ -293,6 +304,16 @@ fn parse_plan_command(
         if !cli_recent_write_keep_window {
             planner_options.recent_write_keep_window = config.recent_write_keep_window;
         }
+        if whole_target_source.is_none()
+            && let Some(whole_target) = config.whole_target
+        {
+            planner_options.whole_target_mode = whole_target_mode_from_config(whole_target);
+            whole_target_source = Some(WholeTargetSource::Config {
+                allow_unattended_delete: config
+                    .allow_unattended_whole_target_delete
+                    .unwrap_or(false),
+            });
+        }
     }
     let inventory_options = InventoryOptions {
         follow_symlinks: scanner_options.follow_symlinks,
@@ -310,7 +331,14 @@ fn parse_plan_command(
         scanner_options,
         inventory_options,
         planner_options,
+        whole_target_source,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WholeTargetSource {
+    Cli,
+    Config { allow_unattended_delete: bool },
 }
 
 struct FinishPlanCommand {
@@ -325,9 +353,28 @@ struct FinishPlanCommand {
     scanner_options: ScannerOptions,
     inventory_options: InventoryOptions,
     planner_options: PlannerOptions,
+    whole_target_source: Option<WholeTargetSource>,
 }
 
 fn finish_plan_command(mut command: FinishPlanCommand) -> Result<Command, CliError> {
+    if command.planner_options.whole_target_mode == WholeTargetMode::DeleteConfirmed {
+        if command.policy != PolicyKind::Aggressive {
+            return Err(CliError::Usage(
+                "`--whole-target delete` requires `--policy aggressive`".to_string(),
+            ));
+        }
+        if matches!(
+            command.whole_target_source,
+            Some(WholeTargetSource::Config {
+                allow_unattended_delete: false
+            })
+        ) {
+            return Err(CliError::Usage(
+                "config whole_target = \"delete\" requires allow_unattended_whole_target_delete = true".to_string(),
+            ));
+        }
+    }
+
     if let Some(expires_in) = command.expires_in {
         let Some(save_plan) = command.save_plan.as_mut() else {
             return Err(CliError::Usage(
@@ -427,6 +474,25 @@ fn parse_policy(value: &str) -> Result<PolicyKind, CliError> {
         _ => Err(CliError::Usage(format!(
             "unknown policy `{value}`; expected observe, conservative, balanced, aggressive, or custom"
         ))),
+    }
+}
+
+fn parse_whole_target_mode(value: &str) -> Result<WholeTargetMode, CliError> {
+    match value {
+        "off" => Ok(WholeTargetMode::Off),
+        "confirm" => Ok(WholeTargetMode::Confirm),
+        "delete" => Ok(WholeTargetMode::DeleteConfirmed),
+        _ => Err(CliError::Usage(format!(
+            "unknown whole-target mode `{value}`; expected off, confirm, or delete"
+        ))),
+    }
+}
+
+fn whole_target_mode_from_config(value: WholeTargetConfig) -> WholeTargetMode {
+    match value {
+        WholeTargetConfig::Off => WholeTargetMode::Off,
+        WholeTargetConfig::Confirm => WholeTargetMode::Confirm,
+        WholeTargetConfig::Delete => WholeTargetMode::DeleteConfirmed,
     }
 }
 
@@ -605,6 +671,8 @@ mod tests {
                 "--allow-name-only-targets",
                 "--follow-symlinks",
                 "--cross-filesystems",
+                "--whole-target",
+                "confirm",
                 "workspace",
             ]
             .map(OsString::from),
@@ -624,6 +692,10 @@ mod tests {
         assert!(command.scanner_options.follow_symlinks);
         assert!(command.inventory_options.follow_symlinks);
         assert!(command.scanner_options.cross_filesystems);
+        assert_eq!(
+            command.planner_options.whole_target_mode,
+            WholeTargetMode::Confirm
+        );
         Ok(())
     }
 
@@ -640,6 +712,8 @@ ignore = ["configured-root/target"]
 
 [policy]
 mode = "observe"
+whole_target = "delete"
+allow_unattended_whole_target_delete = false
 
 [scanner]
 follow_symlinks = true
@@ -656,6 +730,7 @@ recent_write_keep_window = "2h"
             OsString::from("--config"),
             config_path.clone().into_os_string(),
             OsString::from("--policy=aggressive"),
+            OsString::from("--whole-target=off"),
             OsString::from("--ignore"),
             OsString::from("cli-ignore"),
             OsString::from("--keep-recent-writes=30m"),
@@ -687,6 +762,10 @@ recent_write_keep_window = "2h"
                 .expect("cli keep window")
                 .as_secs(),
             30 * 60
+        );
+        assert_eq!(
+            command.planner_options.whole_target_mode,
+            WholeTargetMode::Off
         );
         Ok(())
     }

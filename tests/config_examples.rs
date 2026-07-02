@@ -2,7 +2,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cargo_reclaim::{BackgroundMode, parse_config};
+use cargo_reclaim::{BackgroundMode, WholeTargetConfig, parse_config};
 
 #[test]
 fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), Box<dyn Error>> {
@@ -12,6 +12,8 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
     assert_eq!(config.roots, [PathBuf::from("projects")]);
     assert_eq!(config.ignored_paths, [PathBuf::from("projects/pinned")]);
     assert_eq!(config.policy.as_deref(), Some("conservative"));
+    assert_eq!(config.whole_target, Some(WholeTargetConfig::Off));
+    assert_eq!(config.allow_unattended_whole_target_delete, Some(false));
     assert_eq!(
         config.policy_thresholds.max_target_size_bytes,
         Some(5 * 1024 * 1024 * 1024)

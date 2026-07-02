@@ -47,8 +47,8 @@ pub use classifier::{Classifier, classify_target_relative_path};
 pub use config::{
     BackgroundConfig, BackgroundMode, CARGO_CONFIG_RECOMMEND_SCHEMA_VERSION, CargoConfigOutputDir,
     CargoConfigRecommendReport, CargoConfigRecommendRequest, CargoConfigRecommendation,
-    ConfigError, PolicyThresholdConfig, ReclaimConfig, build_cargo_config_recommend_report,
-    load_config_from_path, parse_config,
+    ConfigError, PolicyThresholdConfig, ReclaimConfig, WholeTargetConfig,
+    build_cargo_config_recommend_report, load_config_from_path, parse_config,
 };
 pub use error::{ReclaimError, ReclaimResult};
 pub use executor::{
@@ -77,14 +77,14 @@ pub use persistence::{
     PERSISTED_PLAN_SCHEMA_VERSION, PersistedEvidence, PersistedInventoryOptions,
     PersistedPathSnapshot, PersistedPlan, PersistedPlanBody, PersistedPlanEntry,
     PersistedPlanInput, PersistedPlanSnapshot, PersistedPlanTotals, PersistedPlannerOptions,
-    PersistedScannerOptions, PersistedTimestamp, PlanCommandKind, PlanId, PlanInvocation,
-    PlanPersistenceError, PlanPersistenceResult, SavePlanOptions, ensure_plan_usable,
-    load_plan_from_path, persist_plan, save_plan_to_path,
+    PersistedScannerOptions, PersistedTimestamp, PersistedWholeTargetMode, PlanCommandKind, PlanId,
+    PlanInvocation, PlanPersistenceError, PlanPersistenceResult, SavePlanOptions,
+    ensure_plan_usable, load_plan_from_path, persist_plan, save_plan_to_path,
 };
 pub use plan_edit::{PlanEditError, PlanEditReport, PlanEditRequest, edit_persisted_plan};
 pub use planner::{
     ActiveObservation, CargoTool, ObservedCargoProcess, PlannerCandidate, PlannerOptions,
-    ProcessView, TargetContext, build_plan, build_plan_with_active_observation,
+    ProcessView, TargetContext, WholeTargetMode, build_plan, build_plan_with_active_observation,
     build_plan_with_options, plan_candidate, plan_candidate_with_active_observation,
     plan_candidate_with_options,
 };
