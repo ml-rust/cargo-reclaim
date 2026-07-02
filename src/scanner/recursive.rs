@@ -90,6 +90,10 @@ fn scan_path(
     emitted_targets: &mut HashSet<PathBuf>,
     items: &mut Vec<ScanItem>,
 ) -> ReclaimResult<()> {
+    if is_configured_skipped(path, options) {
+        return Ok(());
+    }
+
     if is_configured_ignored(path, options) {
         push_skipped(items, path, ScanSkipReason::ConfiguredIgnoredPath);
         return Ok(());
@@ -208,6 +212,10 @@ fn emit_configured_output_dir(
     items: &mut Vec<ScanItem>,
 ) -> ReclaimResult<()> {
     let path = output_dir.path.as_path();
+
+    if is_configured_skipped(path, options) {
+        return Ok(());
+    }
 
     if is_configured_ignored(path, options) {
         push_skipped(items, path, ScanSkipReason::ConfiguredIgnoredPath);
@@ -392,6 +400,23 @@ fn is_configured_ignored(path: &Path, options: &ScannerOptions) -> bool {
         .ignored_paths
         .iter()
         .any(|ignored| lexically_normalize(ignored) == normalized_path)
+}
+
+fn is_configured_skipped(path: &Path, options: &ScannerOptions) -> bool {
+    let Some(path) = real_path(path) else {
+        return false;
+    };
+    options.skipped_paths.iter().any(|skipped| {
+        real_path(skipped).is_some_and(|skipped| path == skipped || path.starts_with(skipped))
+    })
+}
+
+fn real_path(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok().or_else(|| {
+        let parent = path.parent()?;
+        let file_name = path.file_name()?;
+        Some(fs::canonicalize(parent).ok()?.join(file_name))
+    })
 }
 
 fn lexically_normalize(path: &Path) -> PathBuf {

@@ -9,8 +9,8 @@ use crate::model::{ArtifactClass, TargetEvidence};
 use crate::planner::{PlannerCandidate, TargetContext};
 
 use super::foundation::{
-    InventoryOptions, planner_candidate_from_target_relative_path_with_context,
-    target_context_from_evidence,
+    InventoryOptions, is_configured_skipped,
+    planner_candidate_from_target_relative_path_with_context, target_context_from_evidence,
 };
 
 pub fn planner_candidates_from_target_root(
@@ -71,6 +71,10 @@ fn collect_child_candidates(
     candidates: &mut Vec<PlannerCandidate>,
 ) -> ReclaimResult<()> {
     let full_path = target_root.join(&child_path);
+    if is_configured_skipped(&full_path, options) {
+        return Ok(());
+    }
+
     let symlink_metadata = fs::symlink_metadata(&full_path)
         .map_err(|error| inventory_read_error(&full_path, error))?;
 

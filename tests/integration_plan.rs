@@ -88,6 +88,72 @@ fn scanned_project_target_descends_into_deps_for_removable_intermediates()
 }
 
 #[test]
+fn skipped_path_inside_target_root_is_pruned_from_plan_entries() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_skip_inside_target")?;
+    write_manifest(temp.path())?;
+    let skipped = temp.path().join("target/debug/incremental");
+    fs::create_dir_all(&skipped)?;
+    fs::create_dir_all(temp.path().join("target/doc"))?;
+    fs::write(skipped.join("cache.bin"), b"abc")?;
+    fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
+
+    let plan = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions {
+            skipped_paths: vec![skipped.clone()],
+            ..ScannerOptions::default()
+        },
+        &InventoryOptions::default(),
+    )?;
+
+    assert!(
+        !plan
+            .entries
+            .iter()
+            .any(|entry| entry.snapshot.path.starts_with(&skipped))
+    );
+    let docs = entry_for(&plan, temp.path().join("target/doc"))?;
+    assert_eq!(docs.artifact_class, ArtifactClass::Docs);
+    Ok(())
+}
+
+#[test]
+fn whole_target_mode_falls_back_to_content_entries_when_skip_is_inside_target()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_skip_whole_target")?;
+    write_manifest(temp.path())?;
+    let skipped = temp.path().join("target/debug/incremental");
+    fs::create_dir_all(&skipped)?;
+    fs::create_dir_all(temp.path().join("target/doc"))?;
+    fs::write(skipped.join("cache.bin"), b"abc")?;
+    fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Aggressive,
+        &ScannerOptions::default(),
+        &InventoryOptions {
+            skipped_paths: vec![skipped.clone()],
+            ..InventoryOptions::default()
+        },
+        &PlannerOptions {
+            whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    assert!(plan.entries.iter().all(|entry| {
+        entry.artifact_class != ArtifactClass::WholeTarget
+            && !entry.snapshot.path.starts_with(&skipped)
+    }));
+    let docs = entry_for(&plan, temp.path().join("target/doc"))?;
+    assert_eq!(docs.artifact_class, ArtifactClass::Docs);
+    Ok(())
+}
+
+#[test]
 fn configured_custom_target_builds_policy_plan_from_scanned_roots() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_configured_target_plan")?;
     write_manifest(temp.path())?;

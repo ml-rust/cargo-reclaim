@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::ReclaimResult;
-use crate::inventory::snapshot_path;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
+use crate::inventory::{real_inventory_path, snapshot_path};
 use crate::model::{ArtifactClass, Plan, PlanInput};
 use crate::planner::{
     ActiveObservation, PlannerCandidate, PlannerOptions, TargetContext, WholeTargetMode,
@@ -265,6 +265,7 @@ fn build_plan_from_scan_items_with_active_observation_impl(
     } = request;
     let mut seen_target_roots = HashSet::new();
     let mut candidates = Vec::new();
+    let scanner_skipped_paths = scanner_options.skipped_paths.clone();
 
     for item in items {
         let ScanItem::TargetCandidate(target_candidate) = item else {
@@ -289,18 +290,24 @@ fn build_plan_from_scan_items_with_active_observation_impl(
         let target_context = target_candidate
             .target_context
             .unwrap_or_else(|| TargetContext::new(&target_candidate.path));
+        let mut inventory_options = inventory_options.clone();
+        inventory_options
+            .skipped_paths
+            .extend(scanner_skipped_paths.iter().cloned());
 
-        if planner_options.whole_target_mode == WholeTargetMode::Off {
+        if planner_options.whole_target_mode == WholeTargetMode::Off
+            || has_skipped_descendant(&target_candidate.path, &inventory_options)
+        {
             candidates.extend(planner_candidates_from_target_root_with_context(
                 &target_candidate.path,
                 evidence,
                 target_context,
-                inventory_options,
+                &inventory_options,
             )?);
         } else {
             candidates.push(
                 PlannerCandidate::new(
-                    snapshot_path(&target_candidate.path, inventory_options)?,
+                    snapshot_path(&target_candidate.path, &inventory_options)?,
                     ArtifactClass::WholeTarget,
                     evidence,
                 )
@@ -317,4 +324,14 @@ fn build_plan_from_scan_items_with_active_observation_impl(
         active_observation,
         now,
     )
+}
+
+fn has_skipped_descendant(target_root: &Path, inventory_options: &InventoryOptions) -> bool {
+    let Some(target_root) = real_inventory_path(target_root) else {
+        return false;
+    };
+    inventory_options.skipped_paths.iter().any(|skipped| {
+        real_inventory_path(skipped)
+            .is_some_and(|skipped| skipped != target_root && skipped.starts_with(&target_root))
+    })
 }

@@ -38,6 +38,8 @@ pub(super) struct ConfigDocument {
     #[serde(default)]
     pub ignore: Vec<PathBuf>,
     #[serde(default)]
+    pub skip: Vec<PathBuf>,
+    #[serde(default)]
     pub policy: Option<PolicyConfig>,
     #[serde(default)]
     pub scanner: Option<super::model::ScannerConfig>,
@@ -86,6 +88,7 @@ mod tests {
 version = 1
 roots = ["projects"]
 ignore = ["projects/pinned"]
+skip = ["projects/vendor"]
 
 [policy]
 mode = "conservative"
@@ -128,6 +131,7 @@ field = true
         assert_eq!(config.version, 1);
         assert_eq!(config.roots, [PathBuf::from("projects")]);
         assert_eq!(config.ignored_paths, [PathBuf::from("projects/pinned")]);
+        assert_eq!(config.skipped_paths, [PathBuf::from("projects/vendor")]);
         assert_eq!(config.policy.as_deref(), Some("conservative"));
         assert_eq!(
             config.whole_target,
@@ -180,6 +184,7 @@ field = true
 version = 1
 roots = ["workspace", "/absolute"]
 ignore = ["workspace/target"]
+skip = ["workspace/vendor"]
 
 [scheduler]
 state_dir = "state"
@@ -198,6 +203,10 @@ log_dir = "logs"
         assert_eq!(
             config.ignored_paths,
             [PathBuf::from("/tmp/reclaim-configs/workspace/target")]
+        );
+        assert_eq!(
+            config.skipped_paths,
+            [PathBuf::from("/tmp/reclaim-configs/workspace/vendor")]
         );
         assert_eq!(
             config.scheduler.state_dir,

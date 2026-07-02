@@ -82,6 +82,7 @@ fn symlink_snapshot_is_rejected_by_default_and_followed_when_enabled() -> Result
         "linked.d",
         &InventoryOptions {
             follow_symlinks: true,
+            ..InventoryOptions::default()
         },
     )?;
 

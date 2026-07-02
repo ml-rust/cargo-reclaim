@@ -73,7 +73,11 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
-        "  --ignore <path>              Skip a path while scanning"
+        "  --ignore <path>              Report a path as ignored while scanning"
+    )?;
+    writeln!(
+        output,
+        "  --skip <path>                Do not scan a path or its descendants"
     )?;
     writeln!(
         output,

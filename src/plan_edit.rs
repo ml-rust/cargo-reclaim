@@ -811,6 +811,7 @@ mod tests {
                     allow_name_only_targets: false,
                     cross_filesystems: false,
                     ignored_paths: Vec::new(),
+                    skipped_paths: Vec::new(),
                 },
                 inventory_options: PersistedInventoryOptions {
                     follow_symlinks: false,

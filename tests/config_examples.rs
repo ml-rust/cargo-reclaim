@@ -11,6 +11,7 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
     assert_eq!(config.version, 1);
     assert_eq!(config.roots, [PathBuf::from("projects")]);
     assert_eq!(config.ignored_paths, [PathBuf::from("projects/pinned")]);
+    assert_eq!(config.skipped_paths, [PathBuf::from("projects/vendor")]);
     assert_eq!(config.policy.as_deref(), Some("conservative"));
     assert_eq!(config.whole_target, Some(WholeTargetConfig::Off));
     assert_eq!(config.allow_unattended_whole_target_delete, Some(false));

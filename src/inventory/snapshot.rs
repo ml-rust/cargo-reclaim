@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{ReclaimError, ReclaimResult};
 use crate::model::{PathKind, PathSnapshot};
 
-use super::foundation::{InventoryOptions, normalize_target_relative_child};
+use super::foundation::{InventoryOptions, is_configured_skipped, normalize_target_relative_child};
 
 pub fn snapshot_path(
     path: impl AsRef<Path>,
@@ -145,6 +145,9 @@ fn measure_directory(
     let mut size_bytes = 0_u64;
     for entry in fs::read_dir(path).map_err(|error| inventory_read_error(path, error))? {
         let entry = entry.map_err(|error| inventory_read_error(path, error))?;
+        if is_configured_skipped(&entry.path(), options) {
+            continue;
+        }
         let measured = measure_path(&entry.path(), options, visited_dirs)?;
         size_bytes = size_bytes.saturating_add(measured.size_bytes);
     }

@@ -96,6 +96,7 @@ pub struct PersistedScannerOptions {
     pub allow_name_only_targets: bool,
     pub cross_filesystems: bool,
     pub ignored_paths: Vec<String>,
+    pub skipped_paths: Vec<String>,
 }
 
 impl PersistedScannerOptions {
@@ -105,6 +106,7 @@ impl PersistedScannerOptions {
             allow_name_only_targets: options.allow_name_only_targets,
             cross_filesystems: options.cross_filesystems,
             ignored_paths: options.ignored_paths.iter().map(path_string).collect(),
+            skipped_paths: options.skipped_paths.iter().map(path_string).collect(),
         }
     }
 }

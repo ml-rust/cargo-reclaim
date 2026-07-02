@@ -1,6 +1,7 @@
 version = 1
 roots = ["projects"]
 ignore = ["projects/pinned"]
+skip = ["projects/vendor"]
 
 [policy]
 mode = "conservative"

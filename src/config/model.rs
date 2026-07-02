@@ -15,6 +15,7 @@ pub struct ReclaimConfig {
     pub version: u16,
     pub roots: Vec<PathBuf>,
     pub ignored_paths: Vec<PathBuf>,
+    pub skipped_paths: Vec<PathBuf>,
     pub policy: Option<String>,
     pub whole_target: Option<WholeTargetConfig>,
     pub allow_unattended_whole_target_delete: Option<bool>,
@@ -68,6 +69,11 @@ impl ReclaimConfig {
                 .collect(),
             ignored_paths: document
                 .ignore
+                .into_iter()
+                .map(|path| resolve_config_path(path, relative_base))
+                .collect(),
+            skipped_paths: document
+                .skip
                 .into_iter()
                 .map(|path| resolve_config_path(path, relative_base))
                 .collect(),

@@ -246,6 +246,7 @@ fn run_roots(config: &ReclaimConfig) -> Vec<PathBuf> {
 fn scanner_options_from_config(config: &ReclaimConfig) -> ScannerOptions {
     ScannerOptions {
         ignored_paths: config.ignored_paths.clone(),
+        skipped_paths: config.skipped_paths.clone(),
         follow_symlinks: config.scanner.follow_symlinks.unwrap_or(false),
         allow_name_only_targets: config.scanner.allow_name_only_targets.unwrap_or(false),
         cross_filesystems: config.scanner.cross_filesystems.unwrap_or(false),
@@ -255,6 +256,7 @@ fn scanner_options_from_config(config: &ReclaimConfig) -> ScannerOptions {
 fn inventory_options_from_config(config: &ReclaimConfig) -> InventoryOptions {
     InventoryOptions {
         follow_symlinks: config.scanner.follow_symlinks.unwrap_or(false),
+        skipped_paths: config.skipped_paths.clone(),
     }
 }
 

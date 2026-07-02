@@ -8,6 +8,7 @@ pub struct ScannerOptions {
     pub allow_name_only_targets: bool,
     pub cross_filesystems: bool,
     pub ignored_paths: Vec<PathBuf>,
+    pub skipped_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

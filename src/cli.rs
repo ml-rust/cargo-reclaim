@@ -168,6 +168,10 @@ fn parse_plan_command(
             scanner_options.ignored_paths.push(ignore_path);
             continue;
         }
+        if let Some(skip_path) = inline_skip_path(&arg)? {
+            scanner_options.skipped_paths.push(skip_path);
+            continue;
+        }
         if let Some(path) = inline_config_path(&arg)? {
             config_path = Some(path);
             continue;
@@ -208,6 +212,11 @@ fn parse_plan_command(
                 scanner_options
                     .ignored_paths
                     .push(next_path(&mut args, "--ignore")?);
+            }
+            "--skip" => {
+                scanner_options
+                    .skipped_paths
+                    .push(next_path(&mut args, "--skip")?);
             }
             "--allow-name-only-targets" => {
                 scanner_options.allow_name_only_targets = true;
@@ -302,6 +311,9 @@ fn parse_plan_command(
         let mut ignored_paths = config.ignored_paths;
         ignored_paths.extend(scanner_options.ignored_paths);
         scanner_options.ignored_paths = ignored_paths;
+        let mut skipped_paths = config.skipped_paths;
+        skipped_paths.extend(scanner_options.skipped_paths);
+        scanner_options.skipped_paths = skipped_paths;
         if !cli_follow_symlinks && let Some(follow_symlinks) = config.scanner.follow_symlinks {
             scanner_options.follow_symlinks = follow_symlinks;
         }
@@ -330,6 +342,7 @@ fn parse_plan_command(
     }
     let inventory_options = InventoryOptions {
         follow_symlinks: scanner_options.follow_symlinks,
+        skipped_paths: scanner_options.skipped_paths.clone(),
     };
 
     finish_plan_command(FinishPlanCommand {
@@ -434,6 +447,10 @@ fn next_path(
 
 fn inline_ignore_path(arg: &OsString) -> Result<Option<PathBuf>, CliError> {
     inline_path(arg, "--ignore=", "--ignore")
+}
+
+fn inline_skip_path(arg: &OsString) -> Result<Option<PathBuf>, CliError> {
+    inline_path(arg, "--skip=", "--skip")
 }
 
 fn inline_config_path(arg: &OsString) -> Result<Option<PathBuf>, CliError> {
@@ -714,6 +731,8 @@ mod tests {
                 "--policy=observe",
                 "--ignore",
                 "target",
+                "--skip",
+                "vendor",
                 "--json",
                 "--allow-name-only-targets",
                 "--follow-symlinks",
@@ -734,6 +753,10 @@ mod tests {
         assert_eq!(
             command.scanner_options.ignored_paths,
             [PathBuf::from("target")]
+        );
+        assert_eq!(
+            command.scanner_options.skipped_paths,
+            [PathBuf::from("vendor")]
         );
         assert!(command.scanner_options.allow_name_only_targets);
         assert!(command.scanner_options.follow_symlinks);
@@ -756,6 +779,7 @@ mod tests {
 version = 1
 roots = ["configured-root"]
 ignore = ["configured-root/target"]
+skip = ["configured-root/vendor"]
 
 [policy]
 mode = "observe"
@@ -780,6 +804,7 @@ recent_write_keep_window = "2h"
             OsString::from("--whole-target=off"),
             OsString::from("--ignore"),
             OsString::from("cli-ignore"),
+            OsString::from("--skip=cli-skip"),
             OsString::from("--keep-recent-writes=30m"),
             OsString::from("cli-root"),
         ])?
@@ -796,6 +821,13 @@ recent_write_keep_window = "2h"
             [
                 temp.path.join("configured-root/target"),
                 PathBuf::from("cli-ignore")
+            ]
+        );
+        assert_eq!(
+            command.scanner_options.skipped_paths,
+            [
+                temp.path.join("configured-root/vendor"),
+                PathBuf::from("cli-skip")
             ]
         );
         assert!(command.scanner_options.follow_symlinks);
@@ -895,6 +927,31 @@ mode = "conservative"
                 .as_os_str()
                 .as_bytes(),
             b"target-\xFF"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn inline_skip_preserves_non_utf8_path_bytes() -> Result<(), CliError> {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let mut arg = b"--skip=".to_vec();
+        arg.extend_from_slice(b"vendor-\xFF");
+        let Command::Plan(command) = parse_args([
+            OsString::from("plan"),
+            OsString::from_vec(arg),
+            OsString::from("."),
+        ])?
+        else {
+            panic!("expected plan command");
+        };
+
+        assert_eq!(
+            command.scanner_options.skipped_paths[0]
+                .as_os_str()
+                .as_bytes(),
+            b"vendor-\xFF"
         );
         Ok(())
     }

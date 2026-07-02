@@ -29,6 +29,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
                 PolicyKind::Balanced,
                 &ScannerOptions {
                     ignored_paths: vec![PathBuf::from("ignored")],
+                    skipped_paths: vec![PathBuf::from("skipped")],
                     ..ScannerOptions::default()
                 },
                 &InventoryOptions::default(),
@@ -55,6 +56,10 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
     assert_eq!(
         loaded.body.invocation.scanner_options.ignored_paths,
         ["ignored"]
+    );
+    assert_eq!(
+        loaded.body.invocation.scanner_options.skipped_paths,
+        ["skipped"]
     );
     assert_eq!(
         loaded
@@ -140,7 +145,8 @@ fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Er
             "follow_symlinks": false,
             "allow_name_only_targets": false,
             "cross_filesystems": false,
-            "ignored_paths": []
+            "ignored_paths": [],
+            "skipped_paths": []
         },
         "inventory_options": {
             "follow_symlinks": false
@@ -149,6 +155,7 @@ fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Er
 
     assert_eq!(invocation.config_path, None);
     assert_eq!(invocation.config_version, None);
+    assert!(invocation.scanner_options.skipped_paths.is_empty());
     assert_eq!(
         invocation.planner_options.recent_write_keep_window_seconds,
         None

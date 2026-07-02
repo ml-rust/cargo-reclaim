@@ -211,6 +211,61 @@ fn scan_honors_configured_ignored_path() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn scan_honors_configured_skipped_path_without_reporting_descendants() -> Result<(), Box<dyn Error>>
+{
+    let _test_guard = test_lock()?;
+    let temp = TestTemp::new("recursive_configured_skip")?;
+    let skipped = temp.path().join("skipped");
+    fs::create_dir(&skipped)?;
+    write_manifest(&skipped)?;
+    fs::create_dir(skipped.join("target"))?;
+
+    let items = scan_roots(
+        [temp.path()],
+        &ScannerOptions {
+            skipped_paths: vec![skipped.clone()],
+            ..ScannerOptions::default()
+        },
+    )?;
+
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        ScanItem::Skipped(skip) if skip.path == skipped
+    )));
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        ScanItem::CargoProject(project) if project.root_path == skipped
+    )));
+    assert!(!target_candidates(&items).any(|candidate| candidate.path == skipped.join("target")));
+    Ok(())
+}
+
+#[test]
+fn scan_honors_configured_skipped_parent_path() -> Result<(), Box<dyn Error>> {
+    let _test_guard = test_lock()?;
+    let temp = TestTemp::new("recursive_configured_skip_parent")?;
+    let skipped_parent = temp.path().join("vendor");
+    let nested = skipped_parent.join("crate");
+    fs::create_dir(&skipped_parent)?;
+    fs::create_dir(&nested)?;
+    write_manifest(&nested)?;
+
+    let items = scan_roots(
+        [temp.path()],
+        &ScannerOptions {
+            skipped_paths: vec![skipped_parent],
+            ..ScannerOptions::default()
+        },
+    )?;
+
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        ScanItem::CargoProject(project) if project.root_path == nested
+    )));
+    Ok(())
+}
+
+#[test]
 fn scan_nested_project_target_uses_nearest_project_context() -> Result<(), Box<dyn Error>> {
     let _test_guard = test_lock()?;
     let temp = TestTemp::new("recursive_nested_context")?;

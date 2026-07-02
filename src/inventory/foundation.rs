@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::classifier::classify_target_relative_path;
@@ -10,6 +11,7 @@ use super::snapshot::snapshot_target_relative_path_from_normalized_child;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InventoryOptions {
     pub follow_symlinks: bool,
+    pub skipped_paths: Vec<PathBuf>,
 }
 
 pub fn planner_candidate_from_target_relative_path(
@@ -93,4 +95,21 @@ pub(super) fn target_context_from_evidence(
     }
 
     target_context
+}
+
+pub(super) fn is_configured_skipped(path: &Path, options: &InventoryOptions) -> bool {
+    let Some(path) = real_path(path) else {
+        return false;
+    };
+    options.skipped_paths.iter().any(|skipped| {
+        real_path(skipped).is_some_and(|skipped| path == skipped || path.starts_with(skipped))
+    })
+}
+
+pub(crate) fn real_path(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok().or_else(|| {
+        let parent = path.parent()?;
+        let file_name = path.file_name()?;
+        Some(fs::canonicalize(parent).ok()?.join(file_name))
+    })
 }

@@ -96,7 +96,8 @@ cargo-reclaim cargo-config apply --preview path/to/preview.json --yes
 - `examples/reclaim.toml` is a tracked starter config that stays within the currently supported keys.
 - `--policy <kind>` selects `observe`, `conservative`, `balanced`, `aggressive`, or `custom`.
 - `--whole-target <mode>` selects `off`, `confirm`, or `delete`; direct delete requires aggressive policy, and config-driven unattended whole-target deletion also requires `allow_unattended_whole_target_delete = true`.
-- `--ignore <path>` skips paths during scanning.
+- `--ignore <path>` reports a path as ignored during scanning.
+- `--skip <path>` prunes a path and its descendants from scanning without reporting entries below it.
 - `--follow-symlinks`, `--allow-name-only-targets`, and `--cross-filesystems` adjust scan coverage.
 - `--keep-recent-writes <dur>` preserves delete candidates that were modified recently.
 - `--json` emits a structured document instead of terminal text.
