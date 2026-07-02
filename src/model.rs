@@ -220,6 +220,7 @@ pub enum ArtifactClass {
     Package,
     Timings,
     Tmp,
+    FingerprintGroupIntermediate,
     DepInfo,
     ObjectMetadata,
     FinalExecutable,
@@ -227,6 +228,30 @@ pub enum ArtifactClass {
     FinalRlib,
     FinalWasm,
     Unknown,
+}
+
+impl ArtifactClass {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::WholeTarget => "whole_target",
+            Self::Incremental => "incremental",
+            Self::Deps => "deps",
+            Self::BuildScripts => "build_scripts",
+            Self::Fingerprint => "fingerprint",
+            Self::Docs => "docs",
+            Self::Package => "package",
+            Self::Timings => "timings",
+            Self::Tmp => "tmp",
+            Self::FingerprintGroupIntermediate => "fingerprint_group_intermediate",
+            Self::DepInfo => "dep_info",
+            Self::ObjectMetadata => "object_metadata",
+            Self::FinalExecutable => "final_executable",
+            Self::FinalLibrary => "final_library",
+            Self::FinalRlib => "final_rlib",
+            Self::FinalWasm => "final_wasm",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

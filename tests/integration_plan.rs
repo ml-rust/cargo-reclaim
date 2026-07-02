@@ -88,6 +88,212 @@ fn scanned_project_target_descends_into_deps_for_removable_intermediates()
 }
 
 #[test]
+fn scanned_project_target_adds_hash_grouped_intermediates() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_hash_group_plan")?;
+    write_manifest(temp.path())?;
+    let hash = "0123456789abcdef";
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/sample-{hash}")))?;
+    fs::create_dir_all(target.join("debug/deps"))?;
+    fs::write(
+        target.join(format!("debug/.fingerprint/sample-{hash}/fingerprint.json")),
+        br#"{"rustc":1}"#,
+    )?;
+    fs::write(target.join(format!("debug/sample-{hash}.json")), b"profile")?;
+    fs::write(target.join(format!("debug/deps/sample-{hash}.d")), b"dep")?;
+    fs::write(
+        target.join(format!("debug/deps/sample-{hash}.json")),
+        b"tracked",
+    )?;
+    fs::write(
+        target.join(format!("debug/deps/libsample-{hash}.rlib")),
+        b"rlib",
+    )?;
+    fs::write(
+        target.join(format!("debug/deps/sample-{hash}.rmeta")),
+        b"rmeta",
+    )?;
+    fs::write(target.join(format!("debug/sample-{hash}")), b"binary")?;
+    fs::write(target.join("debug/other-1111111111111111.json"), b"other")?;
+
+    let plan = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+
+    let profile = entry_for(&plan, target.join(format!("debug/sample-{hash}.json")))?;
+    assert_eq!(
+        profile.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(profile.action, PlanAction::Delete);
+
+    let deps_tracked = entry_for(&plan, target.join(format!("debug/deps/sample-{hash}.json")))?;
+    assert_eq!(
+        deps_tracked.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(deps_tracked.action, PlanAction::Delete);
+
+    let dep_info = entry_for(&plan, target.join(format!("debug/deps/sample-{hash}.d")))?;
+    assert_eq!(dep_info.artifact_class, ArtifactClass::DepInfo);
+    assert_eq!(dep_info.action, PlanAction::Delete);
+
+    for protected_path in [
+        target.join(format!("debug/deps/libsample-{hash}.rlib")),
+        target.join(format!("debug/deps/sample-{hash}.rmeta")),
+        target.join(format!("debug/sample-{hash}")),
+    ] {
+        let entry = entry_for(&plan, protected_path)?;
+        assert_ne!(
+            entry.artifact_class,
+            ArtifactClass::FingerprintGroupIntermediate
+        );
+        assert_ne!(entry.action, PlanAction::Delete);
+    }
+
+    let other = entry_for(&plan, target.join("debug/other-1111111111111111.json"))?;
+    assert_eq!(other.artifact_class, ArtifactClass::Unknown);
+    assert_eq!(other.action, PlanAction::Unknown);
+    Ok(())
+}
+
+#[test]
+fn hash_grouped_intermediates_respect_policy_and_weak_evidence() -> Result<(), Box<dyn Error>> {
+    let hash = "0123456789abcdef";
+    let strong = TestTemp::new("integration_hash_policy_strong")?;
+    write_manifest(strong.path())?;
+    let strong_target = strong.path().join("target");
+    fs::create_dir_all(strong_target.join(format!("debug/.fingerprint/sample-{hash}")))?;
+    fs::write(
+        strong_target.join(format!("debug/.fingerprint/sample-{hash}/fingerprint.json")),
+        br#"{"rustc":1}"#,
+    )?;
+    fs::write(
+        strong_target.join(format!("debug/sample-{hash}.json")),
+        b"profile",
+    )?;
+
+    let conservative = build_plan_from_roots(
+        [strong.path()],
+        PolicyKind::Conservative,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+    let conservative_entry = entry_for(
+        &conservative,
+        strong_target.join(format!("debug/sample-{hash}.json")),
+    )?;
+    assert_eq!(
+        conservative_entry.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(conservative_entry.action, PlanAction::Preserve);
+
+    let weak = TestTemp::new("integration_hash_policy_weak")?;
+    let weak_target = weak.path().join("target");
+    fs::create_dir_all(weak_target.join(format!("debug/.fingerprint/sample-{hash}")))?;
+    fs::write(
+        weak_target.join(format!("debug/.fingerprint/sample-{hash}/fingerprint.json")),
+        br#"{"rustc":1}"#,
+    )?;
+    fs::write(
+        weak_target.join(format!("debug/sample-{hash}.json")),
+        b"profile",
+    )?;
+
+    let weak_plan = build_plan_from_roots(
+        [weak.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions {
+            allow_name_only_targets: true,
+            ..ScannerOptions::default()
+        },
+        &InventoryOptions::default(),
+    )?;
+    let weak_entry = entry_for(
+        &weak_plan,
+        weak_target.join(format!("debug/sample-{hash}.json")),
+    )?;
+    assert_eq!(
+        weak_entry.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(weak_entry.action, PlanAction::RequiresConfirmation);
+    assert!(weak_entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn hash_grouped_intermediates_require_valid_fingerprint_anchor_and_respect_skips()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_hash_group_skips")?;
+    write_manifest(temp.path())?;
+    let hash = "0123456789abcdef";
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join("debug/.fingerprint/sample-nothex"))?;
+    fs::write(target.join(format!("debug/sample-{hash}.json")), b"profile")?;
+
+    let without_anchor = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+    let ungrouped = entry_for(
+        &without_anchor,
+        target.join(format!("debug/sample-{hash}.json")),
+    )?;
+    assert_eq!(ungrouped.artifact_class, ArtifactClass::Unknown);
+    assert_eq!(ungrouped.action, PlanAction::Unknown);
+
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/sample-{hash}")))?;
+    fs::write(
+        target.join(format!("debug/.fingerprint/sample-{hash}/fingerprint.json")),
+        b"not-json",
+    )?;
+    let invalid_metadata = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+    let invalid_metadata_entry = entry_for(
+        &invalid_metadata,
+        target.join(format!("debug/sample-{hash}.json")),
+    )?;
+    assert_eq!(
+        invalid_metadata_entry.artifact_class,
+        ArtifactClass::Unknown
+    );
+    assert_eq!(invalid_metadata_entry.action, PlanAction::Unknown);
+
+    fs::write(
+        target.join(format!("debug/.fingerprint/sample-{hash}/fingerprint.json")),
+        br#"{"rustc":1}"#,
+    )?;
+    let skipped = target.join(format!("debug/sample-{hash}.json"));
+    let with_skip = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions {
+            skipped_paths: vec![skipped.clone()],
+            ..ScannerOptions::default()
+        },
+        &InventoryOptions::default(),
+    )?;
+    assert!(
+        !with_skip
+            .entries
+            .iter()
+            .any(|entry| entry.snapshot.path == skipped)
+    );
+    Ok(())
+}
+
+#[test]
 fn skipped_path_inside_target_root_is_pruned_from_plan_entries() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_skip_inside_target")?;
     write_manifest(temp.path())?;

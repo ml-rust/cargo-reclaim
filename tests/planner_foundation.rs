@@ -498,6 +498,32 @@ fn conservative_policy_is_narrower_than_balanced_planner_output() -> Result<(), 
 }
 
 #[test]
+fn hash_grouped_intermediate_is_not_conservative_removable() -> Result<(), Box<dyn Error>> {
+    let conservative = plan_candidate(
+        candidate(
+            "target/debug/sample-0123456789abcdef.json",
+            100,
+            ArtifactClass::FingerprintGroupIntermediate,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Conservative,
+    )?;
+    let balanced = plan_candidate(
+        candidate(
+            "target/debug/sample-0123456789abcdef.json",
+            100,
+            ArtifactClass::FingerprintGroupIntermediate,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Balanced,
+    )?;
+
+    assert_eq!(conservative.action, PlanAction::Preserve);
+    assert_eq!(balanced.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
 fn build_plan_preserves_candidate_order_and_derives_totals() -> Result<(), Box<dyn Error>> {
     let input = PlanInput::from_root(".")?;
     let plan = build_plan(

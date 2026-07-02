@@ -38,6 +38,7 @@ impl PolicyKind {
                 | ArtifactClass::BuildScripts
                 | ArtifactClass::Fingerprint
                 | ArtifactClass::Tmp
+                | ArtifactClass::FingerprintGroupIntermediate
                 | ArtifactClass::DepInfo
                 | ArtifactClass::ObjectMetadata
         )

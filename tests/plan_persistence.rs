@@ -223,6 +223,49 @@ fn persists_whole_target_artifact_class_and_planner_mode() -> Result<(), Box<dyn
     Ok(())
 }
 
+#[test]
+fn persists_hash_grouped_intermediate_artifact_class() -> Result<(), Box<dyn Error>> {
+    let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
+    let expires_at = created_at + Duration::from_secs(3_600);
+    let entry = PlanEntry::new(
+        PathSnapshot::with_details(
+            "target/debug/sample-0123456789abcdef.json",
+            3,
+            PathKind::File,
+            Some(created_at),
+        )?,
+        ArtifactClass::FingerprintGroupIntermediate,
+        TargetEvidence::project_context("Cargo.toml")?,
+        PlanAction::Preserve,
+        "artifact class is not removable for the selected policy",
+        false,
+    )?;
+    let plan = Plan::new(PlanInput::from_root(".")?, vec![entry]);
+
+    let document = persist_plan(
+        &plan,
+        SavePlanOptions {
+            created_at,
+            expires_at,
+            interactive_selection_modified: false,
+            invocation: PlanInvocation::new(
+                PlanCommandKind::Plan,
+                PolicyKind::Conservative,
+                &ScannerOptions::default(),
+                &InventoryOptions::default(),
+                &PlannerOptions::default(),
+            ),
+        },
+    )?;
+    let value = serde_json::to_value(&document)?;
+
+    assert_eq!(
+        value["plan"]["entries"][0]["artifact_class"],
+        "fingerprint_group_intermediate"
+    );
+    Ok(())
+}
+
 fn sample_plan(path: PathBuf, modified: SystemTime) -> Result<Plan, Box<dyn Error>> {
     fs::create_dir_all(&path)?;
     fs::write(path.join("cache.bin"), b"abc")?;

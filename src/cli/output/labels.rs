@@ -32,6 +32,7 @@ pub(super) fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
         ArtifactClass::Package => "package",
         ArtifactClass::Timings => "timings",
         ArtifactClass::Tmp => "tmp",
+        ArtifactClass::FingerprintGroupIntermediate => "fingerprint_group_intermediate",
         ArtifactClass::DepInfo => "dep_info",
         ArtifactClass::ObjectMetadata => "object_metadata",
         ArtifactClass::FinalExecutable => "final_executable",
@@ -93,6 +94,10 @@ mod tests {
         assert_eq!(artifact_label(ArtifactClass::Package), "package");
         assert_eq!(artifact_label(ArtifactClass::Timings), "timings");
         assert_eq!(artifact_label(ArtifactClass::Tmp), "tmp");
+        assert_eq!(
+            artifact_label(ArtifactClass::FingerprintGroupIntermediate),
+            "fingerprint_group_intermediate"
+        );
         assert_eq!(artifact_label(ArtifactClass::DepInfo), "dep_info");
         assert_eq!(
             artifact_label(ArtifactClass::ObjectMetadata),

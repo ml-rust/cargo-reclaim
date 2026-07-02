@@ -4,8 +4,8 @@ use std::time::SystemTime;
 
 use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::ReclaimResult;
-use crate::inventory::snapshot_path;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
+use crate::inventory::{append_fingerprint_group_candidates, snapshot_path};
 use crate::model::{ArtifactClass, Plan, PlanInput};
 use crate::planner::{
     ActiveObservation, PlannerCandidate, PlannerOptions, TargetContext, WholeTargetMode,
@@ -298,12 +298,20 @@ fn build_plan_from_scan_items_with_active_observation_impl(
         if planner_options.whole_target_mode == WholeTargetMode::Off
             || has_skipped_descendant(&target_candidate.path, &inventory_options)
         {
-            candidates.extend(planner_candidates_from_target_root_with_context(
+            let mut target_candidates = planner_candidates_from_target_root_with_context(
                 &target_candidate.path,
-                evidence,
-                target_context,
+                evidence.clone(),
+                target_context.clone(),
                 &inventory_options,
-            )?);
+            )?;
+            append_fingerprint_group_candidates(
+                &target_candidate.path,
+                &evidence,
+                &target_context,
+                &inventory_options,
+                &mut target_candidates,
+            )?;
+            candidates.extend(target_candidates);
         } else {
             candidates.push(
                 PlannerCandidate::new(

@@ -409,24 +409,7 @@ fn action_label(action: &PlanAction) -> &'static str {
 }
 
 fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
-    match artifact_class {
-        ArtifactClass::WholeTarget => "whole_target",
-        ArtifactClass::Incremental => "incremental",
-        ArtifactClass::Deps => "deps",
-        ArtifactClass::BuildScripts => "build_scripts",
-        ArtifactClass::Fingerprint => "fingerprint",
-        ArtifactClass::Docs => "docs",
-        ArtifactClass::Package => "package",
-        ArtifactClass::Timings => "timings",
-        ArtifactClass::Tmp => "tmp",
-        ArtifactClass::DepInfo => "dep_info",
-        ArtifactClass::ObjectMetadata => "object_metadata",
-        ArtifactClass::FinalExecutable => "final_executable",
-        ArtifactClass::FinalLibrary => "final_library",
-        ArtifactClass::FinalRlib => "final_rlib",
-        ArtifactClass::FinalWasm => "final_wasm",
-        ArtifactClass::Unknown => "unknown",
-    }
+    artifact_class.label()
 }
 
 fn is_default_whole_target_mode(mode: &PersistedWholeTargetMode) -> bool {
