@@ -21,6 +21,19 @@ fn help_lists_cargo_home_plan_and_apply_commands() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
+fn cargo_home_plan_help_exits_success_and_writes_stdout() -> Result<(), Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["cargo-home", "plan", "--help"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("usage: cargo-reclaim cargo-home plan"));
+    Ok(())
+}
+
+#[test]
 fn cargo_home_report_terminal_output_is_read_only() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_cargo_home_terminal")?;
     fs::create_dir_all(temp.path().join("registry/cache/example"))?;

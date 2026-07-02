@@ -69,7 +69,7 @@ pub(in crate::cli) fn parse_cargo_home_command(
         };
         match arg_text {
             "-h" | "--help" => {
-                return Err(CliError::Usage(usage_for_kind(kind).to_string()));
+                return Err(CliError::Help(usage_for_kind(kind).to_string()));
             }
             "--cargo-home" => {
                 if kind == CargoHomeCommandKind::Apply {

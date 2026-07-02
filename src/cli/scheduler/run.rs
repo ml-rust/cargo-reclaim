@@ -73,7 +73,7 @@ pub(super) fn parse_scheduler_run(
             }
             "--allow-apply" => allow_apply = true,
             "--json" => output_format = OutputFormat::Json,
-            "-h" | "--help" => return Err(CliError::Usage(scheduler_subcommand_usage("run"))),
+            "-h" | "--help" => return Err(CliError::Help(scheduler_subcommand_usage("run"))),
             value if value.starts_with('-') => {
                 return Err(CliError::Usage(format!(
                     "unknown scheduler run option `{value}`"

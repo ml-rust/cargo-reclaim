@@ -56,7 +56,7 @@ pub(in crate::cli) fn parse_cargo_config_command(
         };
         match arg_text {
             "-h" | "--help" => {
-                return Err(CliError::Usage(usage_for_subcommand(subcommand)));
+                return Err(CliError::Help(usage_for_subcommand(subcommand)));
             }
             "--project" => {
                 reject_project_for_apply(subcommand)?;

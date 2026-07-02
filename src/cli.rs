@@ -28,13 +28,20 @@ use plan::run_plan_command;
 use scheduler::{SchedulerPreviewCommand, parse_scheduler_command, run_scheduler_preview};
 
 pub fn run() -> ExitCode {
-    match run_with_args(env::args_os().skip(1), &mut io::stdout()) {
+    let mut stdout = io::stdout();
+    match run_with_args(env::args_os().skip(1), &mut stdout) {
         Ok(code) => code,
-        Err(error) => {
-            let code = error.exit_code();
-            let _ = writeln!(io::stderr(), "cargo-reclaim: {error}");
-            code
-        }
+        Err(error) => match error {
+            CliError::Help(message) => {
+                let _ = writeln!(stdout, "{message}");
+                ExitCode::SUCCESS
+            }
+            error => {
+                let code = error.exit_code();
+                let _ = writeln!(io::stderr(), "cargo-reclaim: {error}");
+                code
+            }
+        },
     }
 }
 
@@ -419,6 +426,7 @@ fn parse_policy(value: &str) -> Result<PolicyKind, CliError> {
 
 #[derive(Debug)]
 enum CliError {
+    Help(String),
     Usage(String),
     Reclaim(ReclaimError),
     Config(cargo_reclaim::ConfigError),
@@ -435,6 +443,7 @@ impl std::fmt::Display for CliError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Usage(message) => formatter.write_str(message),
+            Self::Help(message) => formatter.write_str(message),
             Self::Reclaim(error) => error.fmt(formatter),
             Self::Config(error) => error.fmt(formatter),
             Self::Io(error) => error.fmt(formatter),
@@ -453,6 +462,7 @@ impl std::error::Error for CliError {}
 impl CliError {
     fn exit_code(&self) -> ExitCode {
         match self {
+            Self::Help(_) => ExitCode::SUCCESS,
             Self::Usage(_) => ExitCode::from(2),
             Self::Reclaim(_)
             | Self::Config(_)

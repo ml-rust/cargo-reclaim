@@ -55,7 +55,7 @@ pub(super) fn parse_scheduler_command(
             parse_scheduler_operation("uninstall", args).map(SchedulerCommand::Uninstall)
         }
         "run" => parse_scheduler_run(args).map(SchedulerCommand::Run),
-        "-h" | "--help" | "help" => Err(CliError::Usage(scheduler_help().to_string())),
+        "-h" | "--help" | "help" => Err(CliError::Help(scheduler_help().to_string())),
         value => Err(CliError::Usage(format!(
             "unknown scheduler command `{value}`; expected `preview`, `install`, `uninstall`, or `run`"
         ))),
@@ -124,7 +124,7 @@ fn parse_scheduler_request(
             "--json" => output_format = OutputFormat::Json,
             "--dry-run" => request_dry_run = true,
             "-h" | "--help" => {
-                return Err(CliError::Usage(scheduler_subcommand_usage(subcommand)));
+                return Err(CliError::Help(scheduler_subcommand_usage(subcommand)));
             }
             value if value.starts_with('-') => {
                 return Err(CliError::Usage(format!(

@@ -333,6 +333,19 @@ fn help_lists_scheduler_dry_run_operation_commands() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+#[test]
+fn scheduler_preview_help_exits_success_and_writes_stdout() -> Result<(), Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "preview", "--help"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("usage: cargo-reclaim scheduler preview"));
+    Ok(())
+}
+
 fn write_config(path: &Path, body: &str) -> Result<PathBuf, Box<dyn Error>> {
     let config_path = path.join("reclaim.toml");
     fs::write(&config_path, format!("version = 1\n{body}"))?;

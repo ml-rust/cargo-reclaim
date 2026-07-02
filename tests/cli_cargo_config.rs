@@ -110,6 +110,20 @@ fn cargo_config_recommend_rejects_apply_flags() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn cargo_config_recommend_help_exits_success_and_writes_stdout() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_config_recommend_help")?;
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "recommend", "--help"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("usage: cargo-reclaim cargo-config recommend"));
+    Ok(())
+}
+
+#[test]
 fn cargo_config_preview_json_creates_no_config_file_when_absent() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_cargo_config_preview_absent")?;
     let project = temp.path().join("project");
