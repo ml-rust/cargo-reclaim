@@ -193,6 +193,111 @@ fn json_reports_weak_name_only_confirmation_shape() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn plan_save_plan_writes_persisted_document() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_save_plan")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .arg("--expires-in")
+        .arg("30m")
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(
+        temp.path()
+            .join("target/debug/incremental/cache.bin")
+            .is_file()
+    );
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(persisted["schema_version"], 1);
+    assert!(persisted["id"].as_str().unwrap().starts_with("sha256:"));
+    assert_eq!(persisted["invocation"]["command"], "plan");
+    assert_eq!(persisted["invocation"]["policy"], "balanced");
+    assert_eq!(persisted["interactive_selection_modified"], false);
+    assert_eq!(
+        persisted["expires_at"]["unix_seconds"].as_u64().unwrap()
+            - persisted["created_at"]["unix_seconds"].as_u64().unwrap(),
+        30 * 60
+    );
+    assert_eq!(
+        persisted["plan"]["entries"][0]["artifact_class"],
+        "incremental"
+    );
+    Ok(())
+}
+
+#[test]
+fn json_output_can_be_combined_with_save_plan() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_json_save_plan")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--json", "--save-plan"])
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout: Value = serde_json::from_slice(&output.stdout)?;
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(stdout["command"], "plan");
+    assert_eq!(persisted["invocation"]["command"], "plan");
+    assert_eq!(stdout["entries"][0]["artifact_class"], "incremental");
+    assert_eq!(
+        persisted["plan"]["entries"][0]["artifact_class"],
+        "incremental"
+    );
+    Ok(())
+}
+
+#[test]
+fn save_plan_flags_are_restricted_to_explicit_plan_saves() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_save_plan_reject")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    for args in [
+        vec!["scan", "--save-plan"],
+        vec!["plan", "--expires-in", "30m"],
+        vec![
+            "plan",
+            "--save-plan",
+            plan_path.to_str().unwrap(),
+            "--expires-in",
+            "0s",
+        ],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+            .args(args)
+            .arg(temp.path())
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+    }
+
+    let missing_path = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--save-plan"])
+        .output()?;
+    assert_eq!(missing_path.status.code(), Some(2));
+
+    Ok(())
+}
+
+#[test]
 fn ignore_option_suppresses_target_entries_end_to_end() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_ignore")?;
     write_manifest(temp.path())?;

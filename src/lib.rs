@@ -3,6 +3,7 @@ pub mod error;
 pub mod integration;
 pub mod inventory;
 pub mod model;
+pub mod persistence;
 pub mod planner;
 pub mod policy;
 pub mod scanner;
@@ -17,6 +18,14 @@ pub use inventory::{
 pub use model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,
     PlanInput, PlanTotals, TargetEvidence,
+};
+pub use persistence::{
+    PERSISTED_PLAN_SCHEMA_VERSION, PersistedEvidence, PersistedInventoryOptions,
+    PersistedPathSnapshot, PersistedPlan, PersistedPlanBody, PersistedPlanEntry,
+    PersistedPlanInput, PersistedPlanSnapshot, PersistedPlanTotals, PersistedScannerOptions,
+    PersistedTimestamp, PlanCommandKind, PlanId, PlanInvocation, PlanPersistenceError,
+    PlanPersistenceResult, SavePlanOptions, ensure_plan_usable, load_plan_from_path, persist_plan,
+    save_plan_to_path,
 };
 pub use planner::{PlannerCandidate, build_plan, plan_candidate};
 pub use policy::PolicyKind;

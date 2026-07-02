@@ -9,8 +9,10 @@ use cargo_reclaim::{
 };
 
 mod output;
+mod persistence;
 
 use output::{write_help, write_plan};
+use persistence::{SavePlanRequest, parse_duration, save_plan};
 
 pub fn run() -> ExitCode {
     match run_with_args(env::args_os().skip(1), &mut io::stdout(), &mut io::stderr()) {
@@ -40,6 +42,16 @@ fn run_with_args(
                 &command.scanner_options,
                 &command.inventory_options,
             )?;
+            if let Some(request) = command.save_plan.as_ref() {
+                save_plan(
+                    &plan,
+                    command.mode,
+                    command.policy,
+                    &command.scanner_options,
+                    &command.inventory_options,
+                    request,
+                )?;
+            }
             write_plan(
                 stdout,
                 &plan,
@@ -72,11 +84,12 @@ struct PlanCommand {
     roots: Vec<PathBuf>,
     policy: PolicyKind,
     output_format: OutputFormat,
+    save_plan: Option<SavePlanRequest>,
     scanner_options: ScannerOptions,
     inventory_options: InventoryOptions,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlanMode {
     Scan,
     Plan,
@@ -112,6 +125,8 @@ fn parse_plan_command(
     let mut roots = Vec::new();
     let mut policy = PolicyKind::Balanced;
     let mut output_format = OutputFormat::Terminal;
+    let mut save_plan = None;
+    let mut expires_in = None;
     let mut scanner_options = ScannerOptions::default();
     let mut inventory_options = InventoryOptions::default();
     let mut args = args.into_iter();
@@ -152,6 +167,30 @@ fn parse_plan_command(
             }
             "--cross-filesystems" => scanner_options.cross_filesystems = true,
             "--json" => output_format = OutputFormat::Json,
+            "--save-plan" => {
+                if mode != PlanMode::Plan {
+                    return Err(CliError::Usage(
+                        "`--save-plan` is only supported by `plan`".to_string(),
+                    ));
+                }
+                save_plan = Some(SavePlanRequest::new(next_path(&mut args, "--save-plan")?));
+            }
+            value if value.starts_with("--save-plan=") => {
+                if mode != PlanMode::Plan {
+                    return Err(CliError::Usage(
+                        "`--save-plan` is only supported by `plan`".to_string(),
+                    ));
+                }
+                save_plan = Some(SavePlanRequest::new(PathBuf::from(
+                    &value["--save-plan=".len()..],
+                )));
+            }
+            "--expires-in" => {
+                expires_in = Some(parse_duration(&next_value(&mut args, "--expires-in")?)?);
+            }
+            value if value.starts_with("--expires-in=") => {
+                expires_in = Some(parse_duration(&value["--expires-in=".len()..])?);
+            }
             "--apply" | "--yes" => {
                 return Err(CliError::Usage(
                     "apply is not available yet; this command only builds a dry-run plan"
@@ -168,12 +207,21 @@ fn parse_plan_command(
     if roots.is_empty() {
         roots.push(PathBuf::from("."));
     }
+    if let Some(expires_in) = expires_in {
+        let Some(save_plan) = save_plan.as_mut() else {
+            return Err(CliError::Usage(
+                "`--expires-in` requires `--save-plan`".to_string(),
+            ));
+        };
+        save_plan.set_expires_in(expires_in);
+    }
 
     Ok(Command::Plan(PlanCommand {
         mode,
         roots,
         policy,
         output_format,
+        save_plan,
         scanner_options,
         inventory_options,
     }))
@@ -253,6 +301,7 @@ enum CliError {
     Reclaim(ReclaimError),
     Io(io::Error),
     Json(serde_json::Error),
+    Persistence(cargo_reclaim::PlanPersistenceError),
 }
 
 impl std::fmt::Display for CliError {
@@ -262,6 +311,7 @@ impl std::fmt::Display for CliError {
             Self::Reclaim(error) => error.fmt(formatter),
             Self::Io(error) => error.fmt(formatter),
             Self::Json(error) => error.fmt(formatter),
+            Self::Persistence(error) => error.fmt(formatter),
         }
     }
 }
@@ -272,7 +322,9 @@ impl CliError {
     fn exit_code(&self) -> ExitCode {
         match self {
             Self::Usage(_) => ExitCode::from(2),
-            Self::Reclaim(_) | Self::Io(_) | Self::Json(_) => ExitCode::FAILURE,
+            Self::Reclaim(_) | Self::Io(_) | Self::Json(_) | Self::Persistence(_) => {
+                ExitCode::FAILURE
+            }
         }
     }
 }
@@ -295,6 +347,12 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
+impl From<cargo_reclaim::PlanPersistenceError> for CliError {
+    fn from(error: cargo_reclaim::PlanPersistenceError) -> Self {
+        Self::Persistence(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +366,7 @@ mod tests {
         assert_eq!(command.roots, [PathBuf::from(".")]);
         assert_eq!(command.policy, PolicyKind::Balanced);
         assert_eq!(command.output_format, OutputFormat::Terminal);
+        assert!(command.save_plan.is_none());
         assert!(!command.scanner_options.allow_name_only_targets);
         Ok(())
     }
