@@ -475,6 +475,39 @@ fn save_plan_records_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn save_plan_records_keep_days_and_keep_size() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_save_keep_plan")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("plan")
+        .arg("--save-plan")
+        .arg(&plan_path)
+        .args(["--keep-days", "2", "--keep-size", "3B"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let persisted: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert_eq!(
+        persisted["invocation"]["planner_options"]["recent_write_keep_window_seconds"],
+        2 * 24 * 60 * 60
+    );
+    assert_eq!(
+        persisted["invocation"]["planner_options"]["keep_size_bytes"],
+        3
+    );
+    assert_eq!(persisted["plan"]["entries"][0]["action"], "skip_active");
+    Ok(())
+}
+
+#[test]
 fn save_plan_records_config_provenance() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_save_config_plan")?;
     write_manifest(temp.path())?;

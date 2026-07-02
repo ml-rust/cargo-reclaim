@@ -35,6 +35,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
                 &InventoryOptions::default(),
                 &PlannerOptions {
                     recent_write_keep_window: Some(Duration::from_secs(900)),
+                    keep_size_bytes: Some(4096),
                     ..PlannerOptions::default()
                 },
             ),
@@ -68,6 +69,10 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
             .planner_options
             .recent_write_keep_window_seconds,
         Some(900)
+    );
+    assert_eq!(
+        loaded.body.invocation.planner_options.keep_size_bytes,
+        Some(4096)
     );
     assert_eq!(
         loaded.body.plan.entries[0]
@@ -160,6 +165,7 @@ fn plan_invocation_defaults_missing_config_provenance() -> Result<(), Box<dyn Er
         invocation.planner_options.recent_write_keep_window_seconds,
         None
     );
+    assert_eq!(invocation.planner_options.keep_size_bytes, None);
     assert_eq!(
         invocation.planner_options.whole_target_mode,
         cargo_reclaim::PersistedWholeTargetMode::Off

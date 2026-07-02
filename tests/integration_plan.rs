@@ -240,6 +240,35 @@ fn recent_write_keep_window_skips_scanned_delete_candidates() -> Result<(), Box<
 }
 
 #[test]
+fn keep_size_preserves_small_scanned_delete_candidates() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_keep_size")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            keep_size_bytes: Some(3),
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    let incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
+    assert_eq!(incremental.action, PlanAction::Preserve);
+    assert_eq!(plan.totals.delete_candidate_count, 0);
+    assert_eq!(plan.totals.preserved_count, 1);
+    Ok(())
+}
+
+#[test]
 fn whole_target_mode_emits_target_root_candidate_and_skips_children() -> Result<(), Box<dyn Error>>
 {
     let temp = TestTemp::new("integration_whole_target_confirm")?;

@@ -24,6 +24,7 @@ pub struct ReclaimConfig {
     pub scanner: ScannerConfig,
     pub scheduler: SchedulerConfig,
     pub recent_write_keep_window: Option<Duration>,
+    pub keep_size_bytes: Option<u64>,
 }
 
 impl ReclaimConfig {
@@ -46,6 +47,23 @@ impl ReclaimConfig {
             .as_ref()
             .and_then(|planner| planner.recent_write_keep_window.as_deref())
             .map(parse_config_duration)
+            .transpose()?;
+        let planner_keep_days_window = document
+            .planner
+            .as_ref()
+            .and_then(|planner| planner.keep_days)
+            .map(|days| {
+                if days == 0 {
+                    return Err(ConfigError::InvalidDuration(days.to_string()));
+                }
+                Ok(Duration::from_secs(days.saturating_mul(24 * 60 * 60)))
+            })
+            .transpose()?;
+        let planner_keep_size_bytes = document
+            .planner
+            .as_ref()
+            .and_then(|planner| planner.keep_size.as_deref())
+            .map(parse_config_size)
             .transpose()?;
         let policy = document.policy.as_ref();
         let policy_thresholds = document
@@ -92,7 +110,9 @@ impl ReclaimConfig {
                 .unwrap_or_default()
                 .resolve_paths(relative_base),
             recent_write_keep_window: planner_recent_write_keep_window
+                .or(planner_keep_days_window)
                 .or(policy_keep_recent_projects),
+            keep_size_bytes: planner_keep_size_bytes,
         })
     }
 }

@@ -25,7 +25,7 @@ use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_comm
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
 use error_output::write_error_json;
 use output::write_help;
-use persistence::{SavePlanRequest, parse_duration};
+use persistence::{SavePlanRequest, parse_days, parse_duration, parse_size};
 use plan::run_plan_command;
 use scheduler::{SchedulerPreviewCommand, parse_scheduler_command, run_scheduler_preview};
 
@@ -160,6 +160,7 @@ fn parse_plan_command(
     let mut cli_allow_name_only_targets = false;
     let mut cli_cross_filesystems = false;
     let mut cli_recent_write_keep_window = false;
+    let mut cli_keep_size = false;
     let mut whole_target_source = None;
     let mut args = args.into_iter();
 
@@ -241,6 +242,25 @@ fn parse_plan_command(
                 planner_options.recent_write_keep_window =
                     Some(parse_duration(&value["--keep-recent-writes=".len()..])?);
                 cli_recent_write_keep_window = true;
+            }
+            "--keep-days" => {
+                planner_options.recent_write_keep_window =
+                    Some(parse_days(&next_value(&mut args, "--keep-days")?)?);
+                cli_recent_write_keep_window = true;
+            }
+            value if value.starts_with("--keep-days=") => {
+                planner_options.recent_write_keep_window =
+                    Some(parse_days(&value["--keep-days=".len()..])?);
+                cli_recent_write_keep_window = true;
+            }
+            "--keep-size" => {
+                planner_options.keep_size_bytes =
+                    Some(parse_size(&next_value(&mut args, "--keep-size")?)?);
+                cli_keep_size = true;
+            }
+            value if value.starts_with("--keep-size=") => {
+                planner_options.keep_size_bytes = Some(parse_size(&value["--keep-size=".len()..])?);
+                cli_keep_size = true;
             }
             "--json" => output_format = OutputFormat::Json,
             "--save-plan" => {
@@ -328,6 +348,9 @@ fn parse_plan_command(
         }
         if !cli_recent_write_keep_window {
             planner_options.recent_write_keep_window = config.recent_write_keep_window;
+        }
+        if !cli_keep_size {
+            planner_options.keep_size_bytes = config.keep_size_bytes;
         }
         if whole_target_source.is_none()
             && let Some(whole_target) = config.whole_target
@@ -737,6 +760,9 @@ mod tests {
                 "--allow-name-only-targets",
                 "--follow-symlinks",
                 "--cross-filesystems",
+                "--keep-days",
+                "3",
+                "--keep-size=64MiB",
                 "--whole-target",
                 "confirm",
                 "workspace",
@@ -762,6 +788,18 @@ mod tests {
         assert!(command.scanner_options.follow_symlinks);
         assert!(command.inventory_options.follow_symlinks);
         assert!(command.scanner_options.cross_filesystems);
+        assert_eq!(
+            command
+                .planner_options
+                .recent_write_keep_window
+                .expect("keep days")
+                .as_secs(),
+            3 * 24 * 60 * 60
+        );
+        assert_eq!(
+            command.planner_options.keep_size_bytes,
+            Some(64 * 1024 * 1024)
+        );
         assert_eq!(
             command.planner_options.whole_target_mode,
             WholeTargetMode::Confirm
@@ -793,6 +831,7 @@ cross_filesystems = true
 
 [planner]
 recent_write_keep_window = "2h"
+keep_size = "32 MiB"
 "#,
         )?;
 
@@ -806,6 +845,7 @@ recent_write_keep_window = "2h"
             OsString::from("cli-ignore"),
             OsString::from("--skip=cli-skip"),
             OsString::from("--keep-recent-writes=30m"),
+            OsString::from("--keep-size=8MiB"),
             OsString::from("cli-root"),
         ])?
         else {
@@ -841,6 +881,10 @@ recent_write_keep_window = "2h"
                 .expect("cli keep window")
                 .as_secs(),
             30 * 60
+        );
+        assert_eq!(
+            command.planner_options.keep_size_bytes,
+            Some(8 * 1024 * 1024)
         );
         assert_eq!(
             command.planner_options.whole_target_mode,

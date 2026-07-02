@@ -27,6 +27,7 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
         config.recent_write_keep_window,
         Some(Duration::from_secs(4 * 60 * 60))
     );
+    assert_eq!(config.keep_size_bytes, Some(64 * 1024 * 1024));
     assert_eq!(config.scheduler.at.as_deref(), Some("04:15"));
     assert_eq!(config.scheduler.mode.as_deref(), Some("observe"));
     assert_eq!(config.scheduler.policy.as_deref(), Some("conservative"));

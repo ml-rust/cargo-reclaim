@@ -95,6 +95,15 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
+    if is_under_keep_size(&snapshot, options) {
+        return PlanEntry::preserved(
+            snapshot,
+            artifact_class,
+            evidence,
+            "artifact size is inside the configured keep-size threshold",
+        );
+    }
+
     if let Some(reason) = active_skip_reason(target_context.as_ref(), active_observation) {
         return PlanEntry::new(
             snapshot,
@@ -168,6 +177,15 @@ fn plan_whole_target_candidate(
                     PlanAction::SkipActive,
                     "recent target writes are inside the active-project keep window",
                     false,
+                );
+            }
+
+            if is_under_keep_size(&snapshot, options) {
+                return PlanEntry::preserved(
+                    snapshot,
+                    ArtifactClass::WholeTarget,
+                    evidence,
+                    "artifact size is inside the configured keep-size threshold",
                 );
             }
 
@@ -265,6 +283,12 @@ fn is_recently_modified(
     now.duration_since(modified)
         .map(|age| age <= keep_window)
         .unwrap_or(true)
+}
+
+fn is_under_keep_size(snapshot: &PathSnapshot, options: &PlannerOptions) -> bool {
+    options
+        .keep_size_bytes
+        .is_some_and(|keep_size_bytes| snapshot.size_bytes <= keep_size_bytes)
 }
 
 fn is_removable_for_policy(policy: PolicyKind, artifact_class: ArtifactClass) -> bool {

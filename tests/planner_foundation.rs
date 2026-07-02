@@ -103,6 +103,73 @@ fn recent_write_keep_window_does_not_change_missing_mtime_candidate() -> Result<
 }
 
 #[test]
+fn keep_size_preserves_small_delete_candidate() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            keep_size_bytes: Some(100),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    assert!(entry.policy_reason.contains("keep-size"));
+    Ok(())
+}
+
+#[test]
+fn recent_write_keep_window_takes_precedence_over_keep_size() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            90,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+            keep_size_bytes: Some(100),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(entry.policy_reason.contains("keep window"));
+    Ok(())
+}
+
+#[test]
+fn keep_size_does_not_mask_weak_evidence_confirmation() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate(
+            "target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::weak_name_only("target")?,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            keep_size_bytes: Some(100),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    Ok(())
+}
+
+#[test]
 fn recent_write_keep_window_does_not_mask_non_removable_class() -> Result<(), Box<dyn Error>> {
     let entry = plan_candidate_with_options(
         candidate_with_modified(
@@ -261,6 +328,7 @@ fn whole_target_delete_confirmed_respects_recent_keep_window() -> Result<(), Box
         &PlannerOptions {
             recent_write_keep_window: Some(Duration::from_secs(20)),
             whole_target_mode: WholeTargetMode::DeleteConfirmed,
+            ..PlannerOptions::default()
         },
         UNIX_EPOCH + Duration::from_secs(100),
     )?;

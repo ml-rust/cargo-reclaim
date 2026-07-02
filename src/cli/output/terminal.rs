@@ -89,6 +89,14 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  --keep-days <days>           Preserve recently modified delete candidates for N days"
+    )?;
+    writeln!(
+        output,
+        "  --keep-size <size>           Preserve delete candidates at or below size"
+    )?;
+    writeln!(
+        output,
         "  --cross-filesystems          Allow recursive scan across filesystem boundaries"
     )?;
     writeln!(

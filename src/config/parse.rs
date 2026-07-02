@@ -64,6 +64,8 @@ pub(super) struct PolicyConfig {
 #[derive(Debug, Deserialize)]
 pub(super) struct PlannerConfig {
     pub recent_write_keep_window: Option<String>,
+    pub keep_days: Option<u64>,
+    pub keep_size: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +109,7 @@ cross_filesystems = true
 
 [planner]
 recent_write_keep_window = "4h"
+keep_size = "64 MiB"
 
 [scheduler]
 at = "04:15"
@@ -145,6 +148,7 @@ field = true
                 .as_secs(),
             4 * 60 * 60
         );
+        assert_eq!(config.keep_size_bytes, Some(64 * 1024 * 1024));
         assert_eq!(config.scanner.follow_symlinks, Some(true));
         assert_eq!(config.scanner.allow_name_only_targets, Some(true));
         assert_eq!(config.scanner.cross_filesystems, Some(true));
@@ -215,6 +219,28 @@ log_dir = "logs"
         assert_eq!(
             config.scheduler.log_dir,
             Some(PathBuf::from("/tmp/reclaim-configs/logs"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_planner_keep_days_without_recent_write_window()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = parse_config(
+            r#"
+version = 1
+
+[planner]
+keep_days = 3
+"#,
+        )?;
+
+        assert_eq!(
+            config
+                .recent_write_keep_window
+                .expect("keep days window")
+                .as_secs(),
+            3 * 24 * 60 * 60
         );
         Ok(())
     }

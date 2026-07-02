@@ -100,4 +100,6 @@ cargo-reclaim cargo-config apply --preview path/to/preview.json --yes
 - `--skip <path>` prunes a path and its descendants from scanning without reporting entries below it.
 - `--follow-symlinks`, `--allow-name-only-targets`, and `--cross-filesystems` adjust scan coverage.
 - `--keep-recent-writes <dur>` preserves delete candidates that were modified recently.
+- `--keep-days <days>` is a day-count alias for recent-write preservation.
+- `--keep-size <size>` preserves delete candidates at or below the given size.
 - `--json` emits a structured document instead of terminal text.
