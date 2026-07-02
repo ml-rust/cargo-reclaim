@@ -55,7 +55,10 @@ fn classify_named_directory(components: &[&OsStr]) -> Option<ArtifactClass> {
         Some(ArtifactClass::Incremental)
     } else if *component == "deps" {
         Some(ArtifactClass::Deps)
-    } else if *component == ".fingerprint" || *component == "fingerprint" {
+    } else if *component == ".fingerprint"
+        || *component == "fingerprint"
+        || *component == ".rustdoc_fingerprint"
+    {
         Some(ArtifactClass::Fingerprint)
     } else if *component == "doc" || *component == "docs" {
         Some(ArtifactClass::Docs)
@@ -63,7 +66,7 @@ fn classify_named_directory(components: &[&OsStr]) -> Option<ArtifactClass> {
         Some(ArtifactClass::Package)
     } else if *component == "timings" || *component == "cargo-timings" {
         Some(ArtifactClass::Timings)
-    } else if *component == "tmp" {
+    } else if *component == "tmp" || *component == "sqlx-tmp" {
         Some(ArtifactClass::Tmp)
     } else {
         None
@@ -203,12 +206,14 @@ fn is_known_artifact_dir(component: &OsStr) -> bool {
         || component == "build"
         || component == ".fingerprint"
         || component == "fingerprint"
+        || component == ".rustdoc_fingerprint"
         || component == "doc"
         || component == "docs"
         || component == "package"
         || component == "timings"
         || component == "cargo-timings"
         || component == "tmp"
+        || component == "sqlx-tmp"
 }
 
 fn is_profile_root(component: &OsStr) -> bool {

@@ -7,10 +7,15 @@ fn stable_directories_classify_from_target_relative_paths() {
         ("debug/deps", ArtifactClass::Deps),
         ("debug/build/example-123", ArtifactClass::BuildScripts),
         ("debug/.fingerprint/example-123", ArtifactClass::Fingerprint),
+        (
+            "debug/.rustdoc_fingerprint/example-123",
+            ArtifactClass::Fingerprint,
+        ),
         ("doc/example/index.html", ArtifactClass::Docs),
         ("package/example.crate", ArtifactClass::Package),
         ("timings/cargo-timing.html", ArtifactClass::Timings),
         ("tmp/work", ArtifactClass::Tmp),
+        ("sqlx-tmp/work", ArtifactClass::Tmp),
     ] {
         assert_eq!(classify_target_relative_path(path), artifact_class);
     }

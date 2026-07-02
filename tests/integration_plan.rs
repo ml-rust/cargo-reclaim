@@ -20,12 +20,20 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
     let temp = TestTemp::new("integration_project_plan")?;
     write_manifest(temp.path())?;
     fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("target/debug/.rustdoc_fingerprint"))?;
+    fs::create_dir_all(temp.path().join("target/sqlx-tmp"))?;
     fs::create_dir_all(temp.path().join("target/doc"))?;
     fs::create_dir_all(temp.path().join("target/mystery"))?;
     fs::write(
         temp.path().join("target/debug/incremental/cache.bin"),
         b"abc",
     )?;
+    fs::write(
+        temp.path()
+            .join("target/debug/.rustdoc_fingerprint/cache.bin"),
+        b"rustdoc",
+    )?;
+    fs::write(temp.path().join("target/sqlx-tmp/query.json"), b"sqlx")?;
     fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
     fs::write(temp.path().join("target/mystery/blob"), b"unknown")?;
 
@@ -40,6 +48,16 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
     assert_eq!(incremental.artifact_class, ArtifactClass::Incremental);
     assert_eq!(incremental.action, PlanAction::Delete);
     assert_eq!(incremental.snapshot.size_bytes, 3);
+
+    let rustdoc = entry_for(&plan, temp.path().join("target/debug/.rustdoc_fingerprint"))?;
+    assert_eq!(rustdoc.artifact_class, ArtifactClass::Fingerprint);
+    assert_eq!(rustdoc.action, PlanAction::Delete);
+    assert_eq!(rustdoc.snapshot.size_bytes, 7);
+
+    let sqlx = entry_for(&plan, temp.path().join("target/sqlx-tmp"))?;
+    assert_eq!(sqlx.artifact_class, ArtifactClass::Tmp);
+    assert_eq!(sqlx.action, PlanAction::Delete);
+    assert_eq!(sqlx.snapshot.size_bytes, 4);
 
     let docs = entry_for(&plan, temp.path().join("target/doc"))?;
     assert_eq!(docs.artifact_class, ArtifactClass::Docs);
