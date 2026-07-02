@@ -1,3 +1,4 @@
+pub mod cargo_home;
 pub mod classifier;
 pub mod config;
 pub mod error;
@@ -13,6 +14,13 @@ pub mod scanner;
 mod scheduler;
 pub mod watcher;
 
+pub use cargo_home::{
+    CARGO_HOME_REPORT_SCHEMA_VERSION, CargoHomeClass, CargoHomeEntry, CargoHomeError,
+    CargoHomeInput, CargoHomePathKind, CargoHomeProblem, CargoHomeRecommendation, CargoHomeReport,
+    CargoHomeReportRequest, CargoHomeResolveRequest, CargoHomeSource, CargoHomeTotals,
+    build_cargo_home_report, classify_cargo_home_relative_path, inventory_cargo_home,
+    resolve_cargo_home,
+};
 pub use classifier::{Classifier, classify_target_relative_path};
 pub use config::{
     BackgroundConfig, BackgroundMode, ConfigError, PolicyThresholdConfig, ReclaimConfig,

@@ -11,12 +11,14 @@ use cargo_reclaim::{
 };
 
 mod apply;
+mod cargo_home;
 mod edit_plan;
 mod output;
 mod persistence;
 mod scheduler;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
+use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_report};
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
 use output::{write_help, write_plan};
 use persistence::{SavePlanContext, SavePlanRequest, parse_duration, save_plan};
@@ -78,6 +80,7 @@ fn run_with_args(
         Command::Apply(command) => run_apply(&command, stdout),
         Command::EditPlan(command) => run_edit_plan(&command, stdout),
         Command::SchedulerPreview(command) => run_scheduler_preview(&command, stdout),
+        Command::CargoHomeReport(command) => run_cargo_home_report(&command, stdout),
     }
 }
 
@@ -88,6 +91,7 @@ enum Command {
     Apply(ApplyCommand),
     EditPlan(EditPlanCommand),
     SchedulerPreview(SchedulerPreviewCommand),
+    CargoHomeReport(CargoHomeCommand),
 }
 
 #[derive(Debug)]
@@ -129,8 +133,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "apply" => parse_apply_command(args).map(Command::Apply),
         "edit-plan" => parse_edit_plan_command(args).map(Command::EditPlan),
         "scheduler" => parse_scheduler_command(args).map(Command::SchedulerPreview),
+        "cargo-home" => parse_cargo_home_command(args).map(Command::CargoHomeReport),
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, or `help`"
+            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-home`, or `help`"
         ))),
     }
 }
@@ -444,6 +449,7 @@ enum CliError {
     Persistence(cargo_reclaim::PlanPersistenceError),
     PlanEdit(cargo_reclaim::PlanEditError),
     Scheduler(cargo_reclaim::SchedulerError),
+    CargoHome(cargo_reclaim::CargoHomeError),
 }
 
 impl std::fmt::Display for CliError {
@@ -457,6 +463,7 @@ impl std::fmt::Display for CliError {
             Self::Persistence(error) => error.fmt(formatter),
             Self::PlanEdit(error) => error.fmt(formatter),
             Self::Scheduler(error) => error.fmt(formatter),
+            Self::CargoHome(error) => error.fmt(formatter),
         }
     }
 }
@@ -473,6 +480,7 @@ impl CliError {
             | Self::Json(_)
             | Self::Persistence(_) => ExitCode::FAILURE,
             Self::Scheduler(_) => ExitCode::from(2),
+            Self::CargoHome(_) => ExitCode::FAILURE,
             Self::PlanEdit(error) => match error {
                 cargo_reclaim::PlanEditError::NoEdits
                 | cargo_reclaim::PlanEditError::ConflictingEdit { .. }
@@ -517,6 +525,12 @@ impl From<cargo_reclaim::PlanPersistenceError> for CliError {
 impl From<cargo_reclaim::PlanEditError> for CliError {
     fn from(error: cargo_reclaim::PlanEditError) -> Self {
         Self::PlanEdit(error)
+    }
+}
+
+impl From<cargo_reclaim::CargoHomeError> for CliError {
+    fn from(error: cargo_reclaim::CargoHomeError) -> Self {
+        Self::CargoHome(error)
     }
 }
 
