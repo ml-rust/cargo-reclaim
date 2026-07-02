@@ -9,4 +9,4 @@ pub use foundation::{
     InventoryOptions, planner_candidate_from_target_relative_path,
     planner_candidate_from_target_relative_path_with_context,
 };
-pub use snapshot::snapshot_target_relative_path;
+pub use snapshot::{snapshot_path, snapshot_target_relative_path};

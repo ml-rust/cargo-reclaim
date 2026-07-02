@@ -8,6 +8,26 @@ use crate::model::{PathKind, PathSnapshot};
 
 use super::foundation::{InventoryOptions, normalize_target_relative_child};
 
+pub fn snapshot_path(
+    path: impl AsRef<Path>,
+    options: &InventoryOptions,
+) -> ReclaimResult<PathSnapshot> {
+    let path = path.as_ref();
+    if path.as_os_str().is_empty() {
+        return Err(ReclaimError::EmptyPath);
+    }
+
+    let mut visited_dirs = HashSet::new();
+    let measured = measure_path(path, options, &mut visited_dirs)?;
+
+    PathSnapshot::with_details(
+        path.to_path_buf(),
+        measured.size_bytes,
+        measured.path_kind,
+        measured.modified,
+    )
+}
+
 pub fn snapshot_target_relative_path(
     target_root: impl AsRef<Path>,
     child_path: impl AsRef<Path>,

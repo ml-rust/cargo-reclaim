@@ -7,9 +7,11 @@ use std::time::{Duration, SystemTime};
 use cargo_reclaim::{
     BackgroundMode, BackgroundRunReport, BackgroundRunRequest, BackgroundRunTrigger,
     InventoryOptions, PlannerOptions, PolicyKind, ScannerOptions, SchedulerMode, WatcherDecision,
-    WatcherDecisionInput, WatcherDecisionState, WatcherMode, WatcherThresholds,
-    load_config_from_path, platform_active_observation_provider, run_background_cleanup_cycle,
+    WatcherDecisionInput, WatcherDecisionState, WatcherMode, WatcherObservedTarget,
+    WatcherThresholds, load_config_from_path, platform_active_observation_provider,
+    run_background_cleanup_cycle, scan_roots, snapshot_path,
 };
+use cargo_reclaim::{ScanItem, TargetCandidateKind};
 
 use super::super::{
     CliError, OutputFormat, inline_config_path, next_path, next_value, parse_policy,
@@ -119,18 +121,30 @@ pub(super) fn run_scheduler_cycle(
     let allow_apply =
         command.allow_apply || config.scheduler.allow_unattended_cleanup.unwrap_or(false);
     validate_run_apply_policy(mode, allow_apply, policy, &config)?;
+    let roots = run_roots(&config);
+    let scanner_options = scanner_options_from_config(&config);
+    let inventory_options = inventory_options_from_config(&config);
+    let planner_options = planner_options_from_config(&config);
+    let observed_targets =
+        observed_targets_from_roots(&roots, &scanner_options, &inventory_options)?;
 
     let now = SystemTime::now();
     let request = BackgroundRunRequest {
         run_id: command.run_id.clone(),
         log_path: command.log_path.clone(),
         plan_path: command.plan_path.clone(),
-        roots: run_roots(&config),
+        roots,
         policy,
-        scanner_options: scanner_options_from_config(&config),
-        inventory_options: inventory_options_from_config(&config),
-        planner_options: planner_options_from_config(&config),
-        trigger: BackgroundRunTrigger::Decision(run_decision(mode, allow_apply, &config, policy)),
+        scanner_options,
+        inventory_options,
+        planner_options,
+        trigger: BackgroundRunTrigger::Decision(run_decision(
+            mode,
+            allow_apply,
+            &config,
+            policy,
+            observed_targets,
+        )),
         config_path: Some(command.config_path.clone()),
         config_version: Some(config.version),
         created_at: now,
@@ -227,6 +241,7 @@ fn run_decision(
     allow_apply: bool,
     config: &cargo_reclaim::ReclaimConfig,
     policy: PolicyKind,
+    observed_targets: Vec<WatcherObservedTarget>,
 ) -> WatcherDecision {
     let enabled = config.background.enabled.unwrap_or(true);
     if !enabled {
@@ -246,7 +261,7 @@ fn run_decision(
                     .background
                     .only_when_disk_free_below_basis_points,
             },
-            observed_targets: Vec::new(),
+            observed_targets,
             disk_free_basis_points: None,
             selected_policy: policy,
             unattended_allowed: mode == SchedulerMode::Cleanup && allow_apply,
@@ -261,6 +276,32 @@ fn run_decision(
         },
         reasons: Vec::new(),
     }
+}
+
+fn observed_targets_from_roots(
+    roots: &[PathBuf],
+    scanner_options: &ScannerOptions,
+    inventory_options: &InventoryOptions,
+) -> Result<Vec<WatcherObservedTarget>, CliError> {
+    let items = scan_roots(roots.iter().cloned(), scanner_options)?;
+    let mut observed_targets = Vec::new();
+
+    for item in items {
+        let ScanItem::TargetCandidate(candidate) = item else {
+            continue;
+        };
+        if candidate.kind != TargetCandidateKind::CargoTargetDir {
+            continue;
+        }
+
+        let snapshot = snapshot_path(&candidate.path, inventory_options)?;
+        observed_targets.push(WatcherObservedTarget {
+            path: candidate.path,
+            size_bytes: snapshot.size_bytes,
+        });
+    }
+
+    Ok(observed_targets)
 }
 
 fn scheduler_run_exit_code(report: &BackgroundRunReport) -> ExitCode {

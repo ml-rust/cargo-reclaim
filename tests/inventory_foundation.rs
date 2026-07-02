@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ArtifactClass, InventoryOptions, PathKind, ReclaimError, TargetEvidence,
-    planner_candidate_from_target_relative_path, snapshot_target_relative_path,
+    planner_candidate_from_target_relative_path, snapshot_path, snapshot_target_relative_path,
 };
 
 #[test]
@@ -38,6 +38,22 @@ fn directory_snapshot_aggregates_child_file_sizes_only() -> Result<(), Box<dyn E
         snapshot_target_relative_path(&target, "debug/deps", &InventoryOptions::default())?;
 
     assert_eq!(snapshot.path, target.join("debug/deps"));
+    assert_eq!(snapshot.size_bytes, 10);
+    assert_eq!(snapshot.path_kind, PathKind::Directory);
+    Ok(())
+}
+
+#[test]
+fn root_snapshot_measures_target_directory_without_relative_child() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("inventory_root_snapshot")?;
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join("debug/deps"))?;
+    fs::write(target.join("debug/deps/lib.rlib"), b"abcd")?;
+    fs::write(target.join("debug/app"), b"abcdef")?;
+
+    let snapshot = snapshot_path(&target, &InventoryOptions::default())?;
+
+    assert_eq!(snapshot.path, target);
     assert_eq!(snapshot.size_bytes, 10);
     assert_eq!(snapshot.path_kind, PathKind::Directory);
     Ok(())

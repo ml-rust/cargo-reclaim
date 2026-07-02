@@ -59,7 +59,7 @@ pub use integration::{
 pub use inventory::{
     InventoryOptions, planner_candidate_from_target_relative_path,
     planner_candidate_from_target_relative_path_with_context, planner_candidates_from_target_root,
-    planner_candidates_from_target_root_with_context, snapshot_target_relative_path,
+    planner_candidates_from_target_root_with_context, snapshot_path, snapshot_target_relative_path,
 };
 pub use model::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathKind, PathSnapshot, Plan, PlanAction, PlanEntry,

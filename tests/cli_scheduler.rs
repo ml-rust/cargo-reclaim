@@ -266,6 +266,44 @@ fn run_json_builds_plan_and_appends_run_log() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn run_threshold_mode_uses_measured_target_size() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_run_threshold")?;
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join("target/debug/incremental"))?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    fs::write(project.join("target/debug/incremental/cache.bin"), b"cache")?;
+    let config_path = write_config(
+        temp.path(),
+        &format!(
+            "roots = [{}]\n[policy]\nmax_target_size = \"3 B\"\n[background]\nmode = \"threshold\"\n",
+            toml_string(&project)
+        ),
+    )?;
+    let log_path = temp.path().join("scheduler.jsonl");
+    let plan_path = temp.path().join("plans/run.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "run", "--config"])
+        .arg(&config_path)
+        .args(["--run-id", "run-threshold", "--log-path"])
+        .arg(&log_path)
+        .arg("--plan-path")
+        .arg(&plan_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["trigger"]["state"], "triggered_plan_only");
+    assert_eq!(document["trigger"]["reason_count"], 1);
+    assert!(document["plan_id"].as_str().is_some());
+    let log = fs::read_to_string(log_path)?;
+    assert!(log.contains("\"state\":\"triggered_plan_only\""));
+    assert!(log.contains("\"kind\":\"target_size_exceeded\""));
+    Ok(())
+}
+
+#[test]
 fn run_missing_required_flags_exit_usage_code() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_scheduler_run_usage")?;
     let config_path = write_config(temp.path(), "")?;
