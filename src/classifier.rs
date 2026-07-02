@@ -139,15 +139,40 @@ fn is_known_intermediate_file_location(components: &[&OsStr]) -> bool {
 fn is_final_output_location(components: &[&OsStr]) -> bool {
     match components {
         [profile, file_name] => {
-            is_default_profile_root(profile) && !is_known_artifact_dir(file_name)
+            is_default_profile_root(profile) && is_plausible_profile_root_final_output(file_name)
         }
-        [triple, profile, file_name] => {
+        [first, second, third] => {
+            (is_target_triple(first)
+                && is_default_profile_root(second)
+                && is_plausible_profile_root_final_output(third))
+                || (is_default_profile_root(first)
+                    && *second == "examples"
+                    && is_plausible_nested_final_output(third))
+        }
+        [triple, profile, dir, file_name] => {
             is_target_triple(triple)
                 && is_default_profile_root(profile)
-                && !is_known_artifact_dir(file_name)
+                && *dir == "examples"
+                && is_plausible_nested_final_output(file_name)
         }
         _ => false,
     }
+}
+
+fn is_plausible_profile_root_final_output(file_name: &OsStr) -> bool {
+    is_plausible_nested_final_output(file_name) && !is_known_profile_support_entry(file_name)
+}
+
+fn is_plausible_nested_final_output(file_name: &OsStr) -> bool {
+    !is_known_final_output_support_entry(file_name)
+}
+
+fn is_known_profile_support_entry(component: &OsStr) -> bool {
+    is_known_final_output_support_entry(component) || component == "examples"
+}
+
+fn is_known_final_output_support_entry(component: &OsStr) -> bool {
+    is_known_artifact_dir(component) || component == ".cargo-lock"
 }
 
 fn is_known_artifact_dir(component: &OsStr) -> bool {

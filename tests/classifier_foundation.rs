@@ -64,8 +64,30 @@ fn final_outputs_classify_from_profile_roots() {
             "x86_64-unknown-linux-gnu/debug/example",
             ArtifactClass::FinalExecutable,
         ),
+        ("debug/examples/example", ArtifactClass::FinalExecutable),
+        (
+            "release/examples/example.exe",
+            ArtifactClass::FinalExecutable,
+        ),
+        (
+            "x86_64-unknown-linux-gnu/debug/examples/example",
+            ArtifactClass::FinalExecutable,
+        ),
     ] {
         assert_eq!(classify_target_relative_path(path), artifact_class);
+    }
+}
+
+#[test]
+fn profile_support_entries_are_not_final_outputs() {
+    for path in [
+        "debug/.cargo-lock",
+        "release/.cargo-lock",
+        "debug/examples",
+        "release/examples",
+        "release/build",
+    ] {
+        assert_eq!(classify_target_relative_path(path), ArtifactClass::Unknown);
     }
 }
 
