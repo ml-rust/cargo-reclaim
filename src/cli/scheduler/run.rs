@@ -11,7 +11,9 @@ use cargo_reclaim::{
     WatcherThresholds, load_config_from_path, platform_active_observation_provider,
     run_background_cleanup_cycle, scan_roots, snapshot_path,
 };
-use cargo_reclaim::{ScanItem, TargetCandidateKind, WholeTargetConfig, WholeTargetMode};
+use cargo_reclaim::{
+    ScanItem, TargetCandidateKind, WholeTargetConfig, WholeTargetMode, disk_free_basis_points,
+};
 
 use super::super::{
     CliError, OutputFormat, inline_config_path, next_path, next_value, parse_policy,
@@ -128,6 +130,7 @@ pub(super) fn run_scheduler_cycle(
     let planner_options = planner_options_from_config(&config);
     let observed_targets =
         observed_targets_from_roots(&roots, &scanner_options, &inventory_options)?;
+    let disk_free_basis_points = observed_disk_free_basis_points(&config, &roots)?;
 
     let now = SystemTime::now();
     let request = BackgroundRunRequest {
@@ -145,6 +148,7 @@ pub(super) fn run_scheduler_cycle(
             &config,
             policy,
             observed_targets,
+            disk_free_basis_points,
         )),
         config_path: Some(command.config_path.clone()),
         config_version: Some(config.version),
@@ -278,6 +282,7 @@ fn run_decision(
     config: &cargo_reclaim::ReclaimConfig,
     policy: PolicyKind,
     observed_targets: Vec<WatcherObservedTarget>,
+    disk_free_basis_points: Option<u16>,
 ) -> WatcherDecision {
     let enabled = config.background.enabled.unwrap_or(true);
     if !enabled {
@@ -298,7 +303,7 @@ fn run_decision(
                     .only_when_disk_free_below_basis_points,
             },
             observed_targets,
-            disk_free_basis_points: None,
+            disk_free_basis_points,
             selected_policy: policy,
             unattended_allowed: mode == SchedulerMode::Cleanup && allow_apply,
         });
@@ -338,6 +343,24 @@ fn observed_targets_from_roots(
     }
 
     Ok(observed_targets)
+}
+
+fn observed_disk_free_basis_points(
+    config: &cargo_reclaim::ReclaimConfig,
+    roots: &[PathBuf],
+) -> Result<Option<u16>, CliError> {
+    if config
+        .background
+        .only_when_disk_free_below_basis_points
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let root = roots
+        .first()
+        .map(PathBuf::as_path)
+        .unwrap_or_else(|| std::path::Path::new("."));
+    disk_free_basis_points(root).map_err(CliError::from)
 }
 
 fn scheduler_run_exit_code(report: &BackgroundRunReport) -> ExitCode {

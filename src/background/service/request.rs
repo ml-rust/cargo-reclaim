@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::config::{BackgroundMode, ReclaimConfig, WholeTargetConfig};
+use crate::disk::disk_free_basis_points;
 use crate::inventory::InventoryOptions;
 use crate::planner::{PlannerOptions, WholeTargetMode};
 use crate::policy::PolicyKind;
@@ -99,6 +100,7 @@ impl BackgroundCycleRequestContext {
                 &self.scanner_options,
                 &self.inventory_options,
             )?;
+            let disk_free_basis_points = self.observed_disk_free_basis_points()?;
             return Ok(decide_watcher_thresholds(WatcherDecisionInput {
                 enabled: self.background_enabled,
                 mode: WatcherMode::Threshold,
@@ -107,7 +109,7 @@ impl BackgroundCycleRequestContext {
                     disk_free_below_basis_points: self.disk_free_below_basis_points,
                 },
                 observed_targets,
-                disk_free_basis_points: None,
+                disk_free_basis_points,
                 selected_policy: self.policy,
                 unattended_allowed: self.mode == SchedulerMode::Cleanup && self.allow_apply,
             }));
@@ -124,6 +126,18 @@ impl BackgroundCycleRequestContext {
             },
             reasons: Vec::new(),
         })
+    }
+
+    fn observed_disk_free_basis_points(&self) -> BackgroundServiceResult<Option<u16>> {
+        if self.disk_free_below_basis_points.is_none() {
+            return Ok(None);
+        }
+        let root = self
+            .roots
+            .first()
+            .map(PathBuf::as_path)
+            .unwrap_or_else(|| Path::new("."));
+        disk_free_basis_points(root).map_err(BackgroundServiceError::from)
     }
 }
 

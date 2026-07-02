@@ -110,6 +110,49 @@ fn bounded_service_run_writes_state_and_two_started_records() -> Result<(), Box<
 }
 
 #[test]
+fn service_threshold_cycle_uses_measured_disk_free_space() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("background_service_disk_threshold")?;
+    let project = write_project(temp.path())?;
+    let config_path = write_config(
+        temp.path(),
+        &format!(
+            "roots = [{}]\n[background]\nmode = \"threshold\"\ncheck_every = \"1s\"\nonly_when_disk_free_below = \"100%\"\n",
+            toml_string(&project)
+        ),
+    )?;
+    let config = load_config_from_path(&config_path)?;
+    let state_dir = temp.path().join("state");
+    let log_dir = temp.path().join("logs");
+    let mut clock = FakeClock::new([1_000, 1_100]);
+    let mut sleeper = FakeSleeper::default();
+    let mut runner = PlatformBackgroundServiceCycleRunner;
+
+    let summary = run_background_service_with_runtime(
+        BackgroundServiceOptions {
+            config_path,
+            state_dir: state_dir.clone(),
+            log_dir: log_dir.clone(),
+            mode: None,
+            max_cycles: Some(1),
+        },
+        &config,
+        &mut clock,
+        &mut sleeper,
+        &mut runner,
+    )?;
+
+    assert_eq!(summary.cycles_completed, 1);
+    let log = fs::read_to_string(log_dir.join("runs.jsonl"))?;
+    assert!(log.contains("\"kind\":\"disk_free_below\""));
+    assert!(
+        state_dir
+            .join("plans/cargo-reclaim-19700101T001820Z.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+#[test]
 fn state_read_reports_missing_and_existing_state() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("background_service_state")?;
     let state_path = temp.path().join("state/service-state.json");

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::ReclaimError;
 use crate::persistence::{PersistedTimestamp, PlanPersistenceError};
 use crate::scheduler::{SchedulerError, SchedulerMode};
 
@@ -95,6 +96,12 @@ impl From<SchedulerError> for BackgroundServiceError {
 impl From<BackgroundRunnerError> for BackgroundServiceError {
     fn from(error: BackgroundRunnerError) -> Self {
         Self::Runner(error)
+    }
+}
+
+impl From<ReclaimError> for BackgroundServiceError {
+    fn from(error: ReclaimError) -> Self {
+        Self::Config(error.to_string())
     }
 }
 

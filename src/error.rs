@@ -14,6 +14,7 @@ pub enum ReclaimError {
     InventorySymlinkNotFollowed { path: PathBuf },
     MissingInventoryPath { path: PathBuf },
     InventoryRead { path: PathBuf, message: String },
+    DiskRead { path: PathBuf, message: String },
 }
 
 impl fmt::Display for ReclaimError {
@@ -54,6 +55,13 @@ impl fmt::Display for ReclaimError {
                 write!(
                     formatter,
                     "failed to read inventory path {}: {message}",
+                    path.display()
+                )
+            }
+            Self::DiskRead { path, message } => {
+                write!(
+                    formatter,
+                    "failed to read disk metrics for {}: {message}",
                     path.display()
                 )
             }

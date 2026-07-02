@@ -304,6 +304,43 @@ fn run_threshold_mode_uses_measured_target_size() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn run_threshold_mode_uses_measured_disk_free_space() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_scheduler_run_disk_threshold")?;
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join("target/debug/incremental"))?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
+    fs::write(project.join("target/debug/incremental/cache.bin"), b"cache")?;
+    let config_path = write_config(
+        temp.path(),
+        &format!(
+            "roots = [{}]\n[background]\nmode = \"threshold\"\nonly_when_disk_free_below = \"100%\"\n",
+            toml_string(&project)
+        ),
+    )?;
+    let log_path = temp.path().join("scheduler.jsonl");
+    let plan_path = temp.path().join("plans/run.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["scheduler", "run", "--config"])
+        .arg(&config_path)
+        .args(["--run-id", "run-disk-threshold", "--log-path"])
+        .arg(&log_path)
+        .arg("--plan-path")
+        .arg(&plan_path)
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["trigger"]["state"], "triggered_plan_only");
+    assert_eq!(document["trigger"]["reason_count"], 1);
+    let log = fs::read_to_string(log_path)?;
+    assert!(log.contains("\"kind\":\"disk_free_below\""));
+    assert!(plan_path.is_file());
+    Ok(())
+}
+
+#[test]
 fn run_config_whole_target_confirm_persists_root_entry() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_scheduler_run_whole_target")?;
     let project = temp.path().join("project");
