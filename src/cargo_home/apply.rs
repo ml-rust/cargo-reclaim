@@ -2,13 +2,13 @@ use std::fs::{self, Metadata};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::persistence::{PersistedTimestamp, PlanId, PlanPersistenceResult};
+use crate::persistence::{PersistedTimestamp, PlanId, PlanPersistenceResult, fingerprint_path};
 
 use super::classify::classify_cargo_home_relative_path;
 use super::model::{CargoHomeClass, CargoHomePathKind};
 use super::persistence::{
     PersistedCargoHomePlan, PersistedCargoHomePlanEntry, class_label,
-    ensure_cargo_home_plan_usable, fingerprint_path, path_kind_label,
+    ensure_cargo_home_plan_usable, path_kind_label,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

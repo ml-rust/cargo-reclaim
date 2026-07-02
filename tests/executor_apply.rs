@@ -5,9 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ApplyEntryStatus, ArtifactClass, InventoryOptions, PathKind, PathSnapshot, Plan, PlanAction,
-    PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlanPersistenceError, PlannerOptions,
-    PolicyKind, SavePlanOptions, ScannerOptions, TargetEvidence, execute_persisted_plan_apply,
-    persist_plan, snapshot_path, validate_persisted_plan_for_apply,
+    PlanCommandKind, PlanEditRequest, PlanEntry, PlanId, PlanInput, PlanInvocation,
+    PlanPersistenceError, PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions,
+    TargetEvidence, edit_persisted_plan, execute_persisted_plan_apply, persist_plan, snapshot_path,
+    validate_persisted_plan_for_apply,
 };
 
 #[test]
@@ -43,6 +44,31 @@ fn apply_validation_reports_stale_plan_when_path_changes() -> Result<(), Box<dyn
     assert_eq!(report.totals.would_delete_count, 0);
     assert_eq!(report.totals.stale_skip_count, 1);
     assert!(report.entries[0].reason.contains("skip_stale_plan"));
+    Ok(())
+}
+
+#[test]
+fn apply_validation_reports_stale_plan_when_same_size_content_changes() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("apply_same_size_stale")?;
+    let file = temp.path.join("target/debug/incremental/cache.bin");
+    fs::create_dir_all(file.parent().expect("file parent"))?;
+    fs::write(&file, b"abc")?;
+    let mut document = persisted_plan_for_path(&file, 3)?;
+    document.body.plan.entries[0].snapshot.modified = None;
+    document.id = PlanId::from_body(&document.body)?;
+    fs::write(&file, b"xyz")?;
+
+    let report =
+        validate_persisted_plan_for_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.totals.would_delete_count, 0);
+    assert_eq!(report.totals.stale_skip_count, 1);
+    assert!(
+        report.entries[0]
+            .reason
+            .contains("content fingerprint changed")
+    );
     Ok(())
 }
 
@@ -217,6 +243,27 @@ fn apply_execution_skips_entries_requiring_confirmation() -> Result<(), Box<dyn 
     );
     assert_eq!(report.totals.applied_count, 0);
     assert!(directory.is_dir());
+    Ok(())
+}
+
+#[test]
+fn apply_execution_deletes_confirmation_entry_after_selection() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("apply_execute_selected_confirmation")?;
+    let directory = temp.path.join("target/debug/incremental");
+    fs::create_dir_all(directory.join("session"))?;
+    fs::write(directory.join("session/cache.bin"), b"abc")?;
+    let mut document = persisted_plan_for_directory(&directory, 3, true)?;
+
+    edit_persisted_plan(
+        &mut document,
+        &PlanEditRequest::new_with_indices(Vec::new(), Vec::new(), vec![1], Vec::new())?,
+        UNIX_EPOCH + Duration::from_secs(1_100),
+    )?;
+    let report = execute_persisted_plan_apply(&document, UNIX_EPOCH + Duration::from_secs(1_100))?;
+
+    assert_eq!(report.entries[0].status, ApplyEntryStatus::Deleted);
+    assert_eq!(report.totals.applied_count, 1);
+    assert!(!directory.exists());
     Ok(())
 }
 

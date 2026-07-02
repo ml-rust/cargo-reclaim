@@ -17,7 +17,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
     let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
     let expires_at = created_at + Duration::from_secs(3_600);
     let modified = UNIX_EPOCH + Duration::new(900, 123);
-    let plan = sample_plan(modified)?;
+    let plan = sample_plan(temp.path.join("target/debug/incremental"), modified)?;
     let document = persist_plan(
         &plan,
         SavePlanOptions {
@@ -72,16 +72,24 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
             .nanoseconds,
         123
     );
+    assert!(
+        loaded.body.plan.entries[0]
+            .snapshot
+            .content_fingerprint
+            .as_deref()
+            .is_some_and(|fingerprint| fingerprint.starts_with("sha256:"))
+    );
     ensure_plan_usable(&loaded, created_at + Duration::from_secs(60))?;
     Ok(())
 }
 
 #[test]
 fn rejects_expired_incompatible_and_mutated_documents() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("persistence_rejects")?;
     let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
     let expires_at = created_at + Duration::from_secs(60);
     let mut document = persist_plan(
-        &sample_plan(created_at)?,
+        &sample_plan(temp.path.join("target/debug/incremental"), created_at)?,
         SavePlanOptions {
             created_at,
             expires_at,
@@ -194,16 +202,18 @@ fn persists_whole_target_artifact_class_and_planner_mode() -> Result<(), Box<dyn
         value["invocation"]["planner_options"]["whole_target_mode"],
         "confirm"
     );
+    assert!(
+        value["plan"]["entries"][0]["snapshot"]
+            .get("content_fingerprint")
+            .is_none()
+    );
     Ok(())
 }
 
-fn sample_plan(modified: SystemTime) -> Result<Plan, Box<dyn Error>> {
-    let snapshot = PathSnapshot::with_details(
-        "target/debug/incremental",
-        3,
-        PathKind::Directory,
-        Some(modified),
-    )?;
+fn sample_plan(path: PathBuf, modified: SystemTime) -> Result<Plan, Box<dyn Error>> {
+    fs::create_dir_all(&path)?;
+    fs::write(path.join("cache.bin"), b"abc")?;
+    let snapshot = PathSnapshot::with_details(path, 3, PathKind::Directory, Some(modified))?;
     let entry = PlanEntry::new(
         snapshot,
         ArtifactClass::Incremental,

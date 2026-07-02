@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -14,6 +15,7 @@ use crate::scanner::ScannerOptions;
 
 use super::PERSISTED_PLAN_SCHEMA_VERSION;
 use super::error::{PlanPersistenceError, PlanPersistenceResult};
+use super::fingerprint_path;
 use super::id::PlanId;
 use super::time::PersistedTimestamp;
 
@@ -166,17 +168,17 @@ pub struct PersistedPlanSnapshot {
 }
 
 impl PersistedPlanSnapshot {
-    fn from_plan(plan: &Plan) -> Self {
-        Self {
+    fn from_plan(plan: &Plan) -> PlanPersistenceResult<Self> {
+        Ok(Self {
             schema_version: plan.schema_version,
             input: PersistedPlanInput::from_input(&plan.input),
             entries: plan
                 .entries
                 .iter()
                 .map(PersistedPlanEntry::from_entry)
-                .collect(),
+                .collect::<PlanPersistenceResult<Vec<_>>>()?,
             totals: PersistedPlanTotals::from_totals(plan.totals),
-        }
+        })
     }
 }
 
@@ -204,15 +206,18 @@ pub struct PersistedPlanEntry {
 }
 
 impl PersistedPlanEntry {
-    fn from_entry(entry: &PlanEntry) -> Self {
-        Self {
-            snapshot: PersistedPathSnapshot::from_snapshot(&entry.snapshot),
+    fn from_entry(entry: &PlanEntry) -> PlanPersistenceResult<Self> {
+        Ok(Self {
+            snapshot: PersistedPathSnapshot::from_snapshot(
+                &entry.snapshot,
+                content_fingerprint_for_entry(entry)?,
+            ),
             artifact_class: artifact_label(entry.artifact_class).to_string(),
             evidence: PersistedEvidence::from_evidence(&entry.evidence),
             action: action_label(&entry.action).to_string(),
             policy_reason: entry.policy_reason.clone(),
             requires_confirmation: entry.requires_confirmation,
-        }
+        })
     }
 }
 
@@ -222,10 +227,12 @@ pub struct PersistedPathSnapshot {
     pub size_bytes: u64,
     pub path_kind: String,
     pub modified: Option<PersistedTimestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_fingerprint: Option<String>,
 }
 
 impl PersistedPathSnapshot {
-    fn from_snapshot(snapshot: &PathSnapshot) -> Self {
+    fn from_snapshot(snapshot: &PathSnapshot, content_fingerprint: Option<String>) -> Self {
         Self {
             path: path_string(&snapshot.path),
             size_bytes: snapshot.size_bytes,
@@ -233,6 +240,7 @@ impl PersistedPathSnapshot {
             modified: snapshot
                 .modified
                 .and_then(|modified| PersistedTimestamp::from_system_time(modified).ok()),
+            content_fingerprint,
         }
     }
 }
@@ -314,7 +322,7 @@ pub fn persist_plan(plan: &Plan, options: SavePlanOptions) -> PlanPersistenceRes
         expires_at: PersistedTimestamp::from_system_time(options.expires_at)?,
         interactive_selection_modified: options.interactive_selection_modified,
         invocation: options.invocation,
-        plan: PersistedPlanSnapshot::from_plan(plan),
+        plan: PersistedPlanSnapshot::from_plan(plan)?,
     };
     let id = PlanId::from_body(&body)?;
 
@@ -323,6 +331,26 @@ pub fn persist_plan(plan: &Plan, options: SavePlanOptions) -> PlanPersistenceRes
         id,
         body,
     })
+}
+
+fn content_fingerprint_for_entry(entry: &PlanEntry) -> PlanPersistenceResult<Option<String>> {
+    if !requires_content_fingerprint(entry) {
+        return Ok(None);
+    }
+
+    let path = &entry.snapshot.path;
+    let metadata = fs::symlink_metadata(path).map_err(|error| PlanPersistenceError::Io {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    Ok(Some(fingerprint_path(path, &metadata)?))
+}
+
+fn requires_content_fingerprint(entry: &PlanEntry) -> bool {
+    matches!(
+        entry.action,
+        PlanAction::Delete | PlanAction::RequiresConfirmation
+    ) && entry.artifact_class != ArtifactClass::WholeTarget
 }
 
 pub fn ensure_plan_usable(document: &PersistedPlan, now: SystemTime) -> PlanPersistenceResult<()> {

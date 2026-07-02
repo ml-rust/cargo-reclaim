@@ -849,6 +849,7 @@ mod tests {
                 size_bytes,
                 path_kind: "directory".to_string(),
                 modified: None,
+                content_fingerprint: None,
             },
             artifact_class: "incremental".to_string(),
             evidence: PersistedEvidence {

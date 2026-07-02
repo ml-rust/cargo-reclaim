@@ -1,7 +1,9 @@
 use std::fs::{self, Metadata};
 use std::path::{Component, Path, PathBuf};
 
-use crate::persistence::{PersistedPathSnapshot, PersistedPlanEntry, PersistedTimestamp};
+use crate::persistence::{
+    PersistedPathSnapshot, PersistedPlanEntry, PersistedTimestamp, fingerprint_path,
+};
 
 use super::report::{ApplyEntryResult, ApplyEntryStatus};
 
@@ -72,6 +74,8 @@ fn revalidate_entry_snapshot(entry: &PersistedPlanEntry) -> Result<(), String> {
 
     if entry.artifact_class == "whole_target" {
         revalidate_whole_target(entry)?;
+    } else {
+        revalidate_content_fingerprint(&entry.snapshot)?;
     }
 
     Ok(())
@@ -111,6 +115,27 @@ fn revalidate_snapshot(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
         if current_modified != Some(expected_modified) {
             return Err("skip_stale_plan: modification time changed".to_string());
         }
+    }
+
+    Ok(())
+}
+
+fn revalidate_content_fingerprint(snapshot: &PersistedPathSnapshot) -> Result<(), String> {
+    let Some(expected_fingerprint) = snapshot.content_fingerprint.as_ref() else {
+        return Err("skip_stale_plan: persisted content fingerprint is missing".to_string());
+    };
+
+    let path = Path::new(&snapshot.path);
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "skip_stale_plan: failed to read path metadata for {}: {error}",
+            snapshot.path
+        )
+    })?;
+    let current_fingerprint = fingerprint_path(path, &metadata)
+        .map_err(|error| format!("skip_stale_plan: failed to fingerprint path: {error}"))?;
+    if current_fingerprint != *expected_fingerprint {
+        return Err("skip_stale_plan: content fingerprint changed".to_string());
     }
 
     Ok(())
