@@ -176,6 +176,129 @@ fn edit_plan_rejects_unmatched_entry_path_without_rewriting_plan() -> Result<(),
     Ok(())
 }
 
+#[test]
+fn edit_plan_list_terminal_numbers_entries_without_rewriting_plan() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_list_terminal")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before_bytes = fs::read(&plan_path)?;
+    let before_json: Value = serde_json::from_slice(&before_bytes)?;
+    let first = &before_json["plan"]["entries"][0];
+    let first_row = format!(
+        "1\t{}\t{}\t{}\t",
+        first["action"].as_str().expect("action"),
+        first["artifact_class"].as_str().expect("artifact class"),
+        first["snapshot"]["size_bytes"]
+            .as_u64()
+            .expect("size bytes")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .arg("--list")
+        .output()?;
+
+    assert!(output.status.success());
+    assert_eq!(fs::read(&plan_path)?, before_bytes);
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("cargo-reclaim edit-plan list"));
+    assert!(stdout.contains("read-only; no plan file was modified"));
+    assert!(stdout.contains(&format!(
+        "plan id: {}",
+        before_json["id"].as_str().expect("plan id")
+    )));
+    assert!(stdout.contains("entries: 2"));
+    assert!(stdout.contains(&first_row));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_list_json_preserves_order_and_fields() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_list_json")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before_bytes = fs::read(&plan_path)?;
+    let before_json: Value = serde_json::from_slice(&before_bytes)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--list", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert_eq!(fs::read(&plan_path)?, before_bytes);
+    let stdout: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(stdout["command"], "edit-plan list");
+    assert_eq!(stdout["plan_path"], plan_path.display().to_string());
+    assert_eq!(stdout["plan_id"], before_json["id"]);
+    assert_eq!(stdout["totals"], before_json["plan"]["totals"]);
+
+    let listed_entries = stdout["entries"].as_array().expect("listed entries");
+    let persisted_entries = before_json["plan"]["entries"]
+        .as_array()
+        .expect("persisted entries");
+    assert_eq!(listed_entries.len(), persisted_entries.len());
+    for (index, (listed, persisted)) in listed_entries.iter().zip(persisted_entries).enumerate() {
+        assert_eq!(listed["index"], index + 1);
+        assert_eq!(listed["path"], persisted["snapshot"]["path"]);
+        assert_eq!(listed["action"], persisted["action"]);
+        assert_eq!(listed["artifact_class"], persisted["artifact_class"]);
+        assert_eq!(listed["size_bytes"], persisted["snapshot"]["size_bytes"]);
+        assert_eq!(listed["path_kind"], persisted["snapshot"]["path_kind"]);
+        assert_eq!(
+            listed["requires_confirmation"],
+            persisted["requires_confirmation"]
+        );
+        assert_eq!(listed["policy_reason"], persisted["policy_reason"]);
+    }
+    Ok(())
+}
+
+#[test]
+fn edit_plan_list_rejects_edit_flags_without_rewriting_plan() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_list_conflict")?;
+    let plan_path = write_two_entry_plan(&temp)?;
+    let before = fs::read(&plan_path)?;
+    let before_json: Value = serde_json::from_slice(&before)?;
+    let entry_path = before_json["plan"]["entries"][0]["snapshot"]["path"]
+        .as_str()
+        .expect("persisted path")
+        .to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&plan_path)
+        .args(["--list", "--select"])
+        .arg(entry_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&plan_path)?, before);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("`--list` cannot be combined with `--select` or `--deselect`"));
+    Ok(())
+}
+
+fn write_two_entry_plan(temp: &TestTemp) -> Result<PathBuf, Box<dyn Error>> {
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("target/doc"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
+    let plan_path = temp.path().join("saved-plan.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--save-plan"])
+        .arg(&plan_path)
+        .arg(temp.path())
+        .output()?;
+    assert!(output.status.success());
+    Ok(plan_path)
+}
+
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
     Ok(())
