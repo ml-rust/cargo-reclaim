@@ -67,7 +67,7 @@ impl InteractiveMenu {
         let mut projects: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut classes = BTreeSet::new();
         for (index, entry) in document.body.plan.entries.iter().enumerate() {
-            if entry.artifact_class != "whole_target"
+            if entry.action == "delete"
                 && let Some(manifest) = &entry.evidence.project_manifest
             {
                 projects

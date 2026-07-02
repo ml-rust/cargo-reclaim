@@ -234,12 +234,21 @@ fn edit_plan_interactive_selects_project_group() -> Result<(), Box<dyn Error>> {
     assert!(stderr.contains("Project groups:"));
     assert!(stderr.contains("p1"));
     let stdout = String::from_utf8(output.stdout)?;
-    assert!(stdout.contains("selected: 2"));
+    assert!(stdout.contains("selected: 1"));
 
     let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
     let entries = after["plan"]["entries"].as_array().expect("entries");
     assert_eq!(entries.len(), 2);
-    assert!(entries.iter().all(|entry| entry["action"] == "delete"));
+    let incremental = entries
+        .iter()
+        .find(|entry| entry["artifact_class"] == "incremental")
+        .expect("incremental entry");
+    assert_eq!(incremental["action"], "delete");
+    let docs = entries
+        .iter()
+        .find(|entry| entry["artifact_class"] == "docs")
+        .expect("docs entry");
+    assert_eq!(docs["action"], "preserve");
     assert_eq!(after["interactive_selection_modified"], true);
     Ok(())
 }
@@ -306,6 +315,32 @@ fn edit_plan_interactive_does_not_advertise_unknown_class_group() -> Result<(), 
     let stderr = String::from_utf8(output.stderr)?;
     assert!(!stderr.contains("c:unknown"));
     assert!(stderr.contains("c:incremental"));
+    Ok(())
+}
+
+#[test]
+fn edit_plan_interactive_project_group_does_not_select_unknown_entries()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_interactive_project_unknown")?;
+    let plan_path = write_plan_with_unknown_entry(&temp)?;
+
+    let output = edit_plan_interactive_output(&plan_path, "p1\ny\n", &[])?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("selected: 1"));
+    let after: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let entries = after["plan"]["entries"].as_array().expect("entries");
+    let unknown = entries
+        .iter()
+        .find(|entry| entry["artifact_class"] == "unknown")
+        .expect("unknown entry");
+    assert_eq!(unknown["action"], "unknown");
+    let incremental = entries
+        .iter()
+        .find(|entry| entry["artifact_class"] == "incremental")
+        .expect("incremental entry");
+    assert_eq!(incremental["action"], "delete");
     Ok(())
 }
 
