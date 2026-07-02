@@ -23,9 +23,10 @@ pub use active_process::{
 pub use background::{
     BACKGROUND_RUN_LOG_SCHEMA_VERSION, BackgroundApplyEntrySummary, BackgroundApplySummary,
     BackgroundApplyTotals, BackgroundPlanSummary, BackgroundPlanTotals, BackgroundRunEventKind,
-    BackgroundRunLogError, BackgroundRunLogRecord, BackgroundRunLogResult,
+    BackgroundRunLogError, BackgroundRunLogRecord, BackgroundRunLogResult, BackgroundRunReport,
+    BackgroundRunRequest, BackgroundRunTrigger, BackgroundRunnerError, BackgroundRunnerResult,
     BackgroundSkippedProject, BackgroundTriggerReasonSummary, BackgroundTriggerSummary,
-    append_background_run_log_record, read_background_run_log,
+    append_background_run_log_record, read_background_run_log, run_background_cleanup_cycle,
 };
 pub use cargo_home::{
     CARGO_HOME_PLAN_SCHEMA_VERSION, CARGO_HOME_REPORT_SCHEMA_VERSION, CargoHomeClass,
