@@ -40,7 +40,13 @@ fn run_with_args(
                 &command.scanner_options,
                 &command.inventory_options,
             )?;
-            write_plan(stdout, &plan, command.policy, command.mode)?;
+            write_plan(
+                stdout,
+                &plan,
+                command.policy,
+                command.mode,
+                command.output_format,
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::UnsupportedApply => {
@@ -65,6 +71,7 @@ struct PlanCommand {
     mode: PlanMode,
     roots: Vec<PathBuf>,
     policy: PolicyKind,
+    output_format: OutputFormat,
     scanner_options: ScannerOptions,
     inventory_options: InventoryOptions,
 }
@@ -73,6 +80,12 @@ struct PlanCommand {
 enum PlanMode {
     Scan,
     Plan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    Terminal,
+    Json,
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliError> {
@@ -98,6 +111,7 @@ fn parse_plan_command(
 ) -> Result<Command, CliError> {
     let mut roots = Vec::new();
     let mut policy = PolicyKind::Balanced;
+    let mut output_format = OutputFormat::Terminal;
     let mut scanner_options = ScannerOptions::default();
     let mut inventory_options = InventoryOptions::default();
     let mut args = args.into_iter();
@@ -137,11 +151,7 @@ fn parse_plan_command(
                 inventory_options.follow_symlinks = true;
             }
             "--cross-filesystems" => scanner_options.cross_filesystems = true,
-            "--json" => {
-                return Err(CliError::Usage(
-                    "JSON output is not available yet; use terminal output".to_string(),
-                ));
-            }
+            "--json" => output_format = OutputFormat::Json,
             "--apply" | "--yes" => {
                 return Err(CliError::Usage(
                     "apply is not available yet; this command only builds a dry-run plan"
@@ -163,6 +173,7 @@ fn parse_plan_command(
         mode,
         roots,
         policy,
+        output_format,
         scanner_options,
         inventory_options,
     }))
@@ -241,6 +252,7 @@ enum CliError {
     Usage(String),
     Reclaim(ReclaimError),
     Io(io::Error),
+    Json(serde_json::Error),
 }
 
 impl std::fmt::Display for CliError {
@@ -249,6 +261,7 @@ impl std::fmt::Display for CliError {
             Self::Usage(message) => formatter.write_str(message),
             Self::Reclaim(error) => error.fmt(formatter),
             Self::Io(error) => error.fmt(formatter),
+            Self::Json(error) => error.fmt(formatter),
         }
     }
 }
@@ -259,7 +272,7 @@ impl CliError {
     fn exit_code(&self) -> ExitCode {
         match self {
             Self::Usage(_) => ExitCode::from(2),
-            Self::Reclaim(_) | Self::Io(_) => ExitCode::FAILURE,
+            Self::Reclaim(_) | Self::Io(_) | Self::Json(_) => ExitCode::FAILURE,
         }
     }
 }
@@ -276,6 +289,12 @@ impl From<io::Error> for CliError {
     }
 }
 
+impl From<serde_json::Error> for CliError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +307,7 @@ mod tests {
 
         assert_eq!(command.roots, [PathBuf::from(".")]);
         assert_eq!(command.policy, PolicyKind::Balanced);
+        assert_eq!(command.output_format, OutputFormat::Terminal);
         assert!(!command.scanner_options.allow_name_only_targets);
         Ok(())
     }
@@ -300,6 +320,7 @@ mod tests {
                 "--policy=observe",
                 "--ignore",
                 "target",
+                "--json",
                 "--allow-name-only-targets",
                 "--follow-symlinks",
                 "--cross-filesystems",
@@ -312,6 +333,7 @@ mod tests {
         };
 
         assert_eq!(command.policy, PolicyKind::Observe);
+        assert_eq!(command.output_format, OutputFormat::Json);
         assert_eq!(command.roots, [PathBuf::from("workspace")]);
         assert_eq!(
             command.scanner_options.ignored_paths,

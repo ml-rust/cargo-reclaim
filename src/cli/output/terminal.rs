@@ -1,9 +1,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use cargo_reclaim::{ArtifactClass, Plan, PlanAction, PlanEntry, PolicyKind};
+use cargo_reclaim::{Plan, PlanEntry, PolicyKind};
 
-use super::{CliError, PlanMode};
+use super::labels::{action_label, artifact_label, policy_label};
+use crate::cli::{CliError, PlanMode};
 
 pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "cargo-reclaim")?;
@@ -37,6 +38,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
         output,
         "  --cross-filesystems          Allow recursive scan across filesystem boundaries"
     )?;
+    writeln!(
+        output,
+        "  --json                       Emit one dry-run JSON plan document"
+    )?;
     Ok(())
 }
 
@@ -55,7 +60,7 @@ pub(super) fn write_plan(
     writeln!(output, "dry-run only; no files were deleted or modified")?;
     writeln!(
         output,
-        "human-readable text; use JSON only after a JSON output mode is added"
+        "human-readable text; use --json for a stable structured document"
     )?;
     writeln!(output, "policy: {}", policy_label(policy))?;
     writeln!(output, "roots: {}", join_paths(&plan.input.roots))?;
@@ -103,47 +108,6 @@ fn join_paths(paths: &[PathBuf]) -> String {
         .map(|path| display_path(path))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn policy_label(policy: PolicyKind) -> &'static str {
-    match policy {
-        PolicyKind::Observe => "observe",
-        PolicyKind::Conservative => "conservative",
-        PolicyKind::Balanced => "balanced",
-        PolicyKind::Aggressive => "aggressive",
-        PolicyKind::Custom => "custom",
-    }
-}
-
-fn action_label(action: &PlanAction) -> &'static str {
-    match action {
-        PlanAction::Delete => "delete",
-        PlanAction::Preserve => "preserve",
-        PlanAction::SkipActive => "skip_active",
-        PlanAction::SkipLocked => "skip_locked",
-        PlanAction::Unknown => "unknown",
-        PlanAction::RequiresConfirmation => "requires_confirmation",
-    }
-}
-
-fn artifact_label(artifact_class: ArtifactClass) -> &'static str {
-    match artifact_class {
-        ArtifactClass::Incremental => "incremental",
-        ArtifactClass::Deps => "deps",
-        ArtifactClass::BuildScripts => "build_scripts",
-        ArtifactClass::Fingerprint => "fingerprint",
-        ArtifactClass::Docs => "docs",
-        ArtifactClass::Package => "package",
-        ArtifactClass::Timings => "timings",
-        ArtifactClass::Tmp => "tmp",
-        ArtifactClass::DepInfo => "dep_info",
-        ArtifactClass::ObjectMetadata => "object_metadata",
-        ArtifactClass::FinalExecutable => "final_executable",
-        ArtifactClass::FinalLibrary => "final_library",
-        ArtifactClass::FinalRlib => "final_rlib",
-        ArtifactClass::FinalWasm => "final_wasm",
-        ArtifactClass::Unknown => "unknown",
-    }
 }
 
 fn display_path(path: &Path) -> String {
