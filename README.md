@@ -73,6 +73,7 @@ cargo-reclaim cargo-config apply --preview path/to/preview.json --yes
 ## Common Options
 
 - `--config <path>` loads defaults from a TOML config file.
+- `examples/reclaim.toml` is a tracked starter config that stays within the currently supported keys.
 - `--policy <kind>` selects `observe`, `conservative`, `balanced`, `aggressive`, or `custom`.
 - `--ignore <path>` skips paths during scanning.
 - `--follow-symlinks`, `--allow-name-only-targets`, and `--cross-filesystems` adjust scan coverage.

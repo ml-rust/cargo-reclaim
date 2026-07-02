@@ -1,0 +1,32 @@
+version = 1
+roots = ["projects"]
+ignore = ["projects/pinned"]
+
+[policy]
+mode = "conservative"
+keep_recent_projects = "3 days"
+max_target_size = "5 GiB"
+unattended_allowed = false
+
+[scanner]
+follow_symlinks = true
+allow_name_only_targets = true
+cross_filesystems = true
+
+[planner]
+recent_write_keep_window = "4h"
+
+[scheduler]
+at = "04:15"
+mode = "observe"
+policy = "conservative"
+allow_unattended_cleanup = false
+allow_unattended_high_policy = false
+state_dir = "state"
+log_dir = "logs"
+
+[background]
+enabled = false
+mode = "threshold"
+check_every = "15m"
+only_when_disk_free_below = "12.5%"
