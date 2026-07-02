@@ -14,10 +14,19 @@ pub struct ScannerOptions {
 pub struct TargetDirOverride {
     pub path: PathBuf,
     pub source: TargetDirOverrideSource,
+    kind: CargoOutputKind,
 }
 
 impl TargetDirOverride {
     pub fn new(path: impl Into<PathBuf>, source: impl Into<String>) -> ReclaimResult<Self> {
+        Self::with_kind(path, source, CargoOutputKind::TargetDir)
+    }
+
+    pub(crate) fn with_kind(
+        path: impl Into<PathBuf>,
+        source: impl Into<String>,
+        kind: CargoOutputKind,
+    ) -> ReclaimResult<Self> {
         let path = path.into();
         if path.as_os_str().is_empty() {
             return Err(ReclaimError::EmptyPath);
@@ -26,8 +35,19 @@ impl TargetDirOverride {
         Ok(Self {
             path,
             source: TargetDirOverrideSource::new(source)?,
+            kind,
         })
     }
+
+    pub(crate) fn is_build_dir(&self) -> bool {
+        matches!(self.kind, CargoOutputKind::BuildDir)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CargoOutputKind {
+    TargetDir,
+    BuildDir,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,11 +3,10 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::SystemTime;
 
 use cargo_reclaim::{
     InventoryOptions, PlannerOptions, PolicyKind, ReclaimError, ScannerOptions,
-    build_plan_from_roots_with_options, load_config_from_path,
+    load_config_from_path, platform_active_observation_provider,
 };
 
 mod apply;
@@ -15,13 +14,15 @@ mod cargo_home;
 mod edit_plan;
 mod output;
 mod persistence;
+mod plan;
 mod scheduler;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
 use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_command};
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
-use output::{write_help, write_plan};
-use persistence::{SavePlanContext, SavePlanRequest, parse_duration, save_plan};
+use output::write_help;
+use persistence::{SavePlanRequest, parse_duration};
+use plan::run_plan_command;
 use scheduler::{SchedulerPreviewCommand, parse_scheduler_command, run_scheduler_preview};
 
 pub fn run() -> ExitCode {
@@ -45,36 +46,8 @@ fn run_with_args(
             Ok(ExitCode::SUCCESS)
         }
         Command::Plan(command) => {
-            let plan = build_plan_from_roots_with_options(
-                command.roots,
-                command.policy,
-                &command.scanner_options,
-                &command.inventory_options,
-                &command.planner_options,
-                SystemTime::now(),
-            )?;
-            if let Some(request) = command.save_plan.as_ref() {
-                save_plan(
-                    &plan,
-                    SavePlanContext {
-                        mode: command.mode,
-                        policy: command.policy,
-                        scanner_options: &command.scanner_options,
-                        inventory_options: &command.inventory_options,
-                        planner_options: &command.planner_options,
-                        config_path: command.config_path.as_deref(),
-                        config_version: command.config_version,
-                        request,
-                    },
-                )?;
-            }
-            write_plan(
-                stdout,
-                &plan,
-                command.policy,
-                command.mode,
-                command.output_format,
-            )?;
+            let provider = platform_active_observation_provider();
+            run_plan_command(command, stdout, &provider)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Apply(command) => run_apply(&command, stdout),
@@ -541,7 +514,14 @@ impl From<cargo_reclaim::SchedulerError> for CliError {
 }
 
 #[cfg(test)]
+fn write_manifest(path: &std::path::Path) -> Result<(), std::io::Error> {
+    std::fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")
+}
+
+#[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
 
     #[test]
@@ -736,6 +716,58 @@ mode = "conservative"
             b"target-\xFF"
         );
         Ok(())
+    }
+
+    #[test]
+    fn run_scan_and_plan_use_injected_active_provider() -> Result<(), Box<dyn std::error::Error>> {
+        for mode in ["scan", "plan"] {
+            let temp = TestTemp::new(&format!("cli_active_provider_{mode}"))?;
+            write_manifest(&temp.path)?;
+            std::fs::create_dir_all(temp.path.join("target/debug/incremental"))?;
+            std::fs::write(temp.path.join("target/debug/incremental/cache.bin"), b"abc")?;
+
+            let Command::Plan(command) = parse_args([
+                OsString::from(mode),
+                OsString::from("--json"),
+                temp.path.clone().into_os_string(),
+            ])?
+            else {
+                panic!("expected plan command");
+            };
+            let provider =
+                FakeActiveObservationProvider::new(cargo_reclaim::ActiveObservation::complete([
+                    cargo_reclaim::ObservedCargoProcess::new(cargo_reclaim::CargoTool::Cargo)
+                        .with_cwd(temp.path.join("member")),
+                ]));
+            let mut output = Vec::new();
+
+            run_plan_command(command, &mut output, &provider)?;
+
+            let output = String::from_utf8(output)?;
+            assert!(output.contains("skip_active"));
+        }
+
+        Ok(())
+    }
+
+    struct FakeActiveObservationProvider {
+        observation: cargo_reclaim::ActiveObservation,
+    }
+
+    impl FakeActiveObservationProvider {
+        fn new(observation: cargo_reclaim::ActiveObservation) -> Self {
+            Self { observation }
+        }
+    }
+
+    impl cargo_reclaim::ActiveObservationProvider for FakeActiveObservationProvider {
+        fn observe(
+            &self,
+            scope: &cargo_reclaim::ActiveObservationScope,
+        ) -> cargo_reclaim::ActiveObservation {
+            assert!(!scope.target_contexts().is_empty());
+            self.observation.clone()
+        }
     }
 
     struct TestTemp {

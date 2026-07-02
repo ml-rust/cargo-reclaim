@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::ReclaimResult;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
 use crate::model::{Plan, PlanInput};
@@ -19,6 +20,17 @@ pub struct BuildPlanFromScanItemsRequest<'a, I> {
     pub inventory_options: &'a InventoryOptions,
     pub planner_options: &'a PlannerOptions,
     pub active_observation: &'a ActiveObservation,
+    pub now: SystemTime,
+}
+
+pub struct BuildPlanFromScanItemsWithProviderRequest<'a, I, P> {
+    pub input: PlanInput,
+    pub policy: PolicyKind,
+    pub items: I,
+    pub scanner_options: &'a ScannerOptions,
+    pub inventory_options: &'a InventoryOptions,
+    pub planner_options: &'a PlannerOptions,
+    pub active_observation_provider: &'a P,
     pub now: SystemTime,
 }
 
@@ -83,6 +95,66 @@ pub fn build_plan_from_roots_with_options(
     )
 }
 
+pub fn build_plan_from_roots_with_active_observation_provider(
+    roots: impl IntoIterator<Item = impl Into<PathBuf>>,
+    policy: PolicyKind,
+    scanner_options: &ScannerOptions,
+    inventory_options: &InventoryOptions,
+    planner_options: &PlannerOptions,
+    active_observation_provider: &impl ActiveObservationProvider,
+    now: SystemTime,
+) -> ReclaimResult<Plan> {
+    let roots = roots.into_iter().map(Into::into).collect::<Vec<_>>();
+    let input = PlanInput::new(roots.clone())?;
+    let items = scan_roots(roots, scanner_options)?;
+    let active_observation =
+        active_observation_provider.observe(&active_observation_scope_from_scan_items(&items));
+
+    build_plan_from_scan_items_with_active_observation_impl(BuildPlanFromScanItemsActiveRequest {
+        input,
+        policy,
+        items,
+        scanner_options,
+        inventory_options,
+        planner_options,
+        active_observation: &active_observation,
+        now,
+    })
+}
+
+pub fn build_plan_from_scan_items_with_active_observation_provider<I, P>(
+    request: BuildPlanFromScanItemsWithProviderRequest<'_, I, P>,
+) -> ReclaimResult<Plan>
+where
+    I: IntoIterator<Item = ScanItem>,
+    P: ActiveObservationProvider,
+{
+    let BuildPlanFromScanItemsWithProviderRequest {
+        input,
+        policy,
+        items,
+        scanner_options,
+        inventory_options,
+        planner_options,
+        active_observation_provider,
+        now,
+    } = request;
+    let items = items.into_iter().collect::<Vec<_>>();
+    let scope = active_observation_scope_from_scan_items(&items);
+    let active_observation = active_observation_provider.observe(&scope);
+
+    build_plan_from_scan_items_with_active_observation_impl(BuildPlanFromScanItemsActiveRequest {
+        input,
+        policy,
+        items,
+        scanner_options,
+        inventory_options,
+        planner_options,
+        active_observation: &active_observation,
+        now,
+    })
+}
+
 pub fn build_plan_from_scan_items(
     input: PlanInput,
     policy: PolicyKind,
@@ -128,6 +200,15 @@ pub fn build_plan_from_scan_items_with_options(
     })
 }
 
+pub fn active_observation_scope_from_scan_items(items: &[ScanItem]) -> ActiveObservationScope {
+    ActiveObservationScope::from_target_contexts(items.iter().filter_map(|item| {
+        let ScanItem::TargetCandidate(target_candidate) = item else {
+            return None;
+        };
+        target_candidate.target_context.clone()
+    }))
+}
+
 pub fn build_plan_from_scan_items_with_active_observation<I>(
     request: BuildPlanFromScanItemsRequest<'_, I>,
 ) -> ReclaimResult<Plan>
@@ -135,6 +216,42 @@ where
     I: IntoIterator<Item = ScanItem>,
 {
     let BuildPlanFromScanItemsRequest {
+        input,
+        policy,
+        items,
+        scanner_options,
+        inventory_options,
+        planner_options,
+        active_observation,
+        now,
+    } = request;
+    build_plan_from_scan_items_with_active_observation_impl(BuildPlanFromScanItemsActiveRequest {
+        input,
+        policy,
+        items: items.into_iter().collect::<Vec<_>>(),
+        scanner_options,
+        inventory_options,
+        planner_options,
+        active_observation,
+        now,
+    })
+}
+
+struct BuildPlanFromScanItemsActiveRequest<'a> {
+    input: PlanInput,
+    policy: PolicyKind,
+    items: Vec<ScanItem>,
+    scanner_options: &'a ScannerOptions,
+    inventory_options: &'a InventoryOptions,
+    planner_options: &'a PlannerOptions,
+    active_observation: &'a ActiveObservation,
+    now: SystemTime,
+}
+
+fn build_plan_from_scan_items_with_active_observation_impl(
+    request: BuildPlanFromScanItemsActiveRequest<'_>,
+) -> ReclaimResult<Plan> {
+    let BuildPlanFromScanItemsActiveRequest {
         input,
         policy,
         items,

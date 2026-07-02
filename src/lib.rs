@@ -1,3 +1,4 @@
+pub mod active_process;
 pub mod background;
 pub mod cargo_home;
 pub mod classifier;
@@ -15,6 +16,10 @@ pub mod scanner;
 mod scheduler;
 pub mod watcher;
 
+pub use active_process::{
+    ActiveObservationProvider, ActiveObservationScope, ProcfsActiveObservationProvider,
+    platform_active_observation_provider,
+};
 pub use background::{
     BACKGROUND_RUN_LOG_SCHEMA_VERSION, BackgroundApplyEntrySummary, BackgroundApplySummary,
     BackgroundApplyTotals, BackgroundPlanSummary, BackgroundPlanTotals, BackgroundRunEventKind,
@@ -42,9 +47,12 @@ pub use executor::{
     validate_persisted_plan_for_apply,
 };
 pub use integration::{
-    BuildPlanFromScanItemsRequest, build_plan_from_roots,
-    build_plan_from_roots_with_active_observation, build_plan_from_roots_with_options,
+    BuildPlanFromScanItemsRequest, BuildPlanFromScanItemsWithProviderRequest,
+    active_observation_scope_from_scan_items, build_plan_from_roots,
+    build_plan_from_roots_with_active_observation,
+    build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
     build_plan_from_scan_items, build_plan_from_scan_items_with_active_observation,
+    build_plan_from_scan_items_with_active_observation_provider,
     build_plan_from_scan_items_with_options,
 };
 pub use inventory::{

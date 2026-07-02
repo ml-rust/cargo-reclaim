@@ -96,13 +96,14 @@ pub(crate) fn classify_target_candidate_with_overrides(
     }
 
     let normalized_path = lexically_normalize(path);
+    let build_root = configured_build_root(target_dir_overrides);
 
     if path.join(CACHEDIR_TAG).is_file() {
         return Ok(TargetCandidate::candidate(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::strong_marker(CACHEDIR_TAG)?,
-            target_context(path, project),
+            target_context(path, project, build_root),
         ));
     }
 
@@ -111,7 +112,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::strong_marker(RUSTC_INFO)?,
-            target_context(path, project),
+            target_context(path, project, build_root),
         ));
     }
 
@@ -123,7 +124,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::configured_path(target_dir_override.source.label.clone())?,
-            target_context(path, project),
+            target_context(path, project, build_root),
         ));
     }
 
@@ -134,7 +135,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::project_context(project.manifest_path.clone())?,
-            Some(TargetContext::new(path).with_project_root(&project.root_path)),
+            target_context(path, Some(project), build_root),
         ));
     }
 
@@ -143,7 +144,7 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::weak_name_only(TARGET_DIR_NAME)?,
-            target_context(path, project),
+            target_context(path, project, build_root),
         ));
     }
 
@@ -153,14 +154,29 @@ pub(crate) fn classify_target_candidate_with_overrides(
     ))
 }
 
-fn target_context(path: &Path, project: Option<&CargoProject>) -> Option<TargetContext> {
+fn target_context(
+    path: &Path,
+    project: Option<&CargoProject>,
+    build_root: Option<&Path>,
+) -> Option<TargetContext> {
     let mut target_context = TargetContext::new(path);
 
     if let Some(project) = project {
         target_context = target_context.with_project_root(&project.root_path);
     }
 
+    if let Some(build_root) = build_root {
+        target_context = target_context.with_build_root(build_root);
+    }
+
     Some(target_context)
+}
+
+fn configured_build_root(target_dir_overrides: &[TargetDirOverride]) -> Option<&Path> {
+    target_dir_overrides
+        .iter()
+        .find(|override_dir| override_dir.is_build_dir())
+        .map(|override_dir| override_dir.path.as_path())
 }
 
 fn lexically_normalize(path: impl AsRef<Path>) -> PathBuf {

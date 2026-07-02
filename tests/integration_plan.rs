@@ -4,11 +4,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    ActiveObservation, ArtifactClass, CargoTool, InventoryOptions, ObservedCargoProcess,
-    PlanAction, PlannerOptions, PolicyKind, ScannerOptions, TargetCandidate, TargetCandidateKind,
-    TargetEvidence, build_plan_from_roots, build_plan_from_roots_with_active_observation,
-    build_plan_from_roots_with_options, build_plan_from_scan_items,
-    planner_candidates_from_target_root,
+    ActiveObservation, ActiveObservationProvider, ActiveObservationScope, ArtifactClass, CargoTool,
+    InventoryOptions, ObservedCargoProcess, PlanAction, PlannerOptions, PolicyKind, ScannerOptions,
+    TargetCandidate, TargetCandidateKind, TargetEvidence, build_plan_from_roots,
+    build_plan_from_roots_with_active_observation,
+    build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
+    build_plan_from_scan_items, planner_candidates_from_target_root,
 };
 
 #[test]
@@ -159,6 +160,77 @@ fn active_project_observation_skips_scanned_delete_candidates() -> Result<(), Bo
     assert_eq!(incremental.action, PlanAction::SkipActive);
     assert_eq!(plan.totals.delete_candidate_count, 0);
     assert_eq!(plan.totals.preserved_count, 1);
+    Ok(())
+}
+
+#[test]
+fn active_provider_cargo_cwd_under_scanned_project_yields_skip_active() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("integration_active_provider")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    let provider = FakeActiveObservationProvider::new(ActiveObservation::complete([
+        ObservedCargoProcess::new(CargoTool::Cargo).with_cwd(temp.path().join("member")),
+    ]));
+    let plan = build_plan_from_roots_with_active_observation_provider(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions::default(),
+        &provider,
+        SystemTime::now(),
+    )?;
+
+    let incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
+    assert_eq!(incremental.action, PlanAction::SkipActive);
+    Ok(())
+}
+
+#[test]
+fn configured_build_dir_reference_protects_target_and_build_candidates()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_active_build_dir")?;
+    write_manifest(temp.path())?;
+    fs::create_dir(temp.path().join(".cargo"))?;
+    fs::write(
+        temp.path().join(".cargo/config.toml"),
+        "[build]\nbuild-dir = \"custom-build\"\n",
+    )?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::create_dir_all(temp.path().join("custom-build/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+    fs::write(
+        temp.path().join("custom-build/debug/incremental/cache.bin"),
+        b"def",
+    )?;
+
+    let provider = FakeActiveObservationProvider::new(ActiveObservation::complete([
+        ObservedCargoProcess::new(CargoTool::Rustc)
+            .with_referenced_path(temp.path().join("custom-build/debug/deps/unit.o")),
+    ]));
+    let plan = build_plan_from_roots_with_active_observation_provider(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions::default(),
+        &provider,
+        SystemTime::now(),
+    )?;
+
+    let target_incremental = entry_for(&plan, temp.path().join("target/debug/incremental"))?;
+    let build_incremental = entry_for(&plan, temp.path().join("custom-build/debug/incremental"))?;
+    assert_eq!(target_incremental.action, PlanAction::SkipActive);
+    assert_eq!(build_incremental.action, PlanAction::SkipActive);
     Ok(())
 }
 
@@ -367,6 +439,23 @@ fn entry_for(
         .iter()
         .find(|entry| entry.snapshot.path == path)
         .ok_or_else(|| format!("missing plan entry for {}", path.display()).into())
+}
+
+struct FakeActiveObservationProvider {
+    observation: ActiveObservation,
+}
+
+impl FakeActiveObservationProvider {
+    fn new(observation: ActiveObservation) -> Self {
+        Self { observation }
+    }
+}
+
+impl ActiveObservationProvider for FakeActiveObservationProvider {
+    fn observe(&self, scope: &ActiveObservationScope) -> ActiveObservation {
+        assert!(!scope.target_contexts().is_empty());
+        self.observation.clone()
+    }
 }
 
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {

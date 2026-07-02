@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::ReclaimResult;
 
-use super::foundation::TargetDirOverride;
+use super::foundation::{CargoOutputKind, TargetDirOverride};
 
 const CONFIG_DIR: &str = ".cargo";
 const EXTENSIONLESS_CONFIG: &str = "config";
@@ -317,9 +317,11 @@ fn build_output_dirs(
     let mut output = CargoOutputDirs::default();
     let target_path = resolve_config_path(&target, project_root, cargo_home, &mut output);
     if target_is_configured && let Some(path) = target_path.as_ref() {
-        output
-            .dirs
-            .push(TargetDirOverride::new(path, target.source.clone())?);
+        output.dirs.push(TargetDirOverride::with_kind(
+            path,
+            target.source.clone(),
+            CargoOutputKind::TargetDir,
+        )?);
     }
 
     if let Some(build_dir) = config.build_dir {
@@ -329,9 +331,11 @@ fn build_output_dirs(
                 lexically_normalize(target_path) != lexically_normalize(&path)
             })
         {
-            output
-                .dirs
-                .push(TargetDirOverride::new(path, build_dir.source)?);
+            output.dirs.push(TargetDirOverride::with_kind(
+                path,
+                build_dir.source,
+                CargoOutputKind::BuildDir,
+            )?);
         }
     }
 
