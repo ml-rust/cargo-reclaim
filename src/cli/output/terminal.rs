@@ -45,6 +45,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
         output,
         "  cargo-config preview  Preview read-only Cargo config write plan"
     )?;
+    writeln!(
+        output,
+        "  cargo-config apply --preview <path> --yes  Apply a Cargo config preview"
+    )?;
     writeln!(output)?;
     writeln!(output, "Options:")?;
     writeln!(

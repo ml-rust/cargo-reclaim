@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use cargo_reclaim::CargoConfigRecommendReport;
-use cargo_reclaim::config::CargoConfigPreviewReport;
+use cargo_reclaim::config::{CargoConfigApplyReport, CargoConfigPreviewReport};
 
 use super::super::CliError;
 use super::labels::{
@@ -166,6 +166,56 @@ pub(super) fn write_terminal_preview_report(
                 "problem: {}\t{}",
                 display_path(&problem.path),
                 display_text(&problem.message)
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn write_terminal_apply_report(
+    output: &mut impl Write,
+    report: &CargoConfigApplyReport,
+) -> Result<(), CliError> {
+    writeln!(output, "cargo-reclaim cargo-config apply")?;
+    if report.modified_cargo_config_files {
+        writeln!(output, "Cargo config files were modified")?;
+    } else {
+        writeln!(output, "No Cargo config files were modified")?;
+    }
+    writeln!(
+        output,
+        "human-readable text; use --json for a stable structured document"
+    )?;
+    writeln!(
+        output,
+        "preview path: {}",
+        display_path(&report.preview_path)
+    )?;
+    writeln!(
+        output,
+        "target config file: {}",
+        display_path(&report.target_config_file)
+    )?;
+    writeln!(output, "applied: {}", report.applied)?;
+    writeln!(
+        output,
+        "modified cargo config files: {}",
+        report.modified_cargo_config_files
+    )?;
+    writeln!(output, "operations: {}", report.operations.len())?;
+
+    if !report.operations.is_empty() {
+        writeln!(output)?;
+        for operation in &report.operations {
+            writeln!(
+                output,
+                "operation: {}\t{}\t{}\t{}\t{}",
+                display_text(&operation.key),
+                display_text(operation.current.as_deref().unwrap_or("")),
+                display_text(operation.recommended.as_deref().unwrap_or("")),
+                preview_operation_status_label(operation.status),
+                display_text(&operation.reason)
             )?;
         }
     }

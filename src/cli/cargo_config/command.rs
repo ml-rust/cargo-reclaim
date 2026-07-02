@@ -3,17 +3,25 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cargo_reclaim::config::{CargoConfigPreviewRequest, build_cargo_config_preview_report};
+use cargo_reclaim::config::{
+    CargoConfigApplyRequest, CargoConfigPreviewRequest, apply_cargo_config_preview,
+    build_cargo_config_preview_report,
+};
 use cargo_reclaim::{CargoConfigRecommendRequest, build_cargo_config_recommend_report};
 
 use super::super::{CliError, OutputFormat, next_path};
-use super::json::{write_json_preview_report, write_json_recommend_report};
-use super::terminal::{write_terminal_preview_report, write_terminal_recommend_report};
+use super::json::{
+    write_json_apply_report, write_json_preview_report, write_json_recommend_report,
+};
+use super::terminal::{
+    write_terminal_apply_report, write_terminal_preview_report, write_terminal_recommend_report,
+};
 
 #[derive(Debug)]
 pub(in crate::cli) struct CargoConfigCommand {
     subcommand: CargoConfigSubcommand,
     project: PathBuf,
+    preview_path: Option<PathBuf>,
     output_format: OutputFormat,
 }
 
@@ -21,6 +29,7 @@ pub(in crate::cli) struct CargoConfigCommand {
 enum CargoConfigSubcommand {
     Recommend,
     Preview,
+    Apply,
 }
 
 pub(in crate::cli) fn parse_cargo_config_command(
@@ -29,13 +38,15 @@ pub(in crate::cli) fn parse_cargo_config_command(
     let mut args = args.into_iter();
     let Some(subcommand) = args.next() else {
         return Err(CliError::Usage(
-            "cargo-config requires `recommend` or `preview`".to_string(),
+            "cargo-config requires `recommend`, `preview`, or `apply`".to_string(),
         ));
     };
     let subcommand_text = subcommand.to_string_lossy();
     let subcommand = parse_subcommand(&subcommand_text)?;
 
     let mut project = PathBuf::from(".");
+    let mut preview_path = None;
+    let mut yes = false;
     let mut output_format = OutputFormat::Terminal;
     while let Some(arg) = args.next() {
         let Some(arg_text) = arg.as_os_str().to_str() else {
@@ -45,15 +56,14 @@ pub(in crate::cli) fn parse_cargo_config_command(
         };
         match arg_text {
             "-h" | "--help" => {
-                return Err(CliError::Usage(format!(
-                    "usage: cargo-reclaim cargo-config {} [--project <path>] [--json]",
-                    subcommand.name()
-                )));
+                return Err(CliError::Usage(usage_for_subcommand(subcommand)));
             }
             "--project" => {
+                reject_project_for_apply(subcommand)?;
                 project = next_path(&mut args, "--project")?;
             }
             value if value.starts_with("--project=") => {
+                reject_project_for_apply(subcommand)?;
                 let path = &value["--project=".len()..];
                 if path.is_empty() {
                     return Err(CliError::Usage("--project requires a value".to_string()));
@@ -61,7 +71,21 @@ pub(in crate::cli) fn parse_cargo_config_command(
                 project = PathBuf::from(path);
             }
             "--json" => output_format = OutputFormat::Json,
-            "--apply" | "--yes" => {
+            "--preview" if subcommand == CargoConfigSubcommand::Apply => {
+                preview_path = Some(next_path(&mut args, "--preview")?);
+            }
+            value
+                if subcommand == CargoConfigSubcommand::Apply
+                    && value.starts_with("--preview=") =>
+            {
+                let path = &value["--preview=".len()..];
+                if path.is_empty() {
+                    return Err(CliError::Usage("--preview requires a value".to_string()));
+                }
+                preview_path = Some(PathBuf::from(path));
+            }
+            "--yes" if subcommand == CargoConfigSubcommand::Apply => yes = true,
+            "--apply" | "--yes" | "--preview" => {
                 return Err(CliError::Usage(format!(
                     "cargo-config {} is read-only/dry-run only; no Cargo config files can be modified",
                     subcommand.name()
@@ -78,9 +102,23 @@ pub(in crate::cli) fn parse_cargo_config_command(
         }
     }
 
+    if subcommand == CargoConfigSubcommand::Apply {
+        if preview_path.is_none() {
+            return Err(CliError::Usage(
+                "cargo-config apply requires --preview <path>".to_string(),
+            ));
+        }
+        if !yes {
+            return Err(CliError::Usage(
+                "cargo-config apply requires --yes".to_string(),
+            ));
+        }
+    }
+
     Ok(CargoConfigCommand {
         subcommand,
         project,
+        preview_path,
         output_format,
     })
 }
@@ -92,6 +130,7 @@ pub(in crate::cli) fn run_cargo_config_command(
     match command.subcommand {
         CargoConfigSubcommand::Recommend => run_recommend_command(command, stdout)?,
         CargoConfigSubcommand::Preview => run_preview_command(command, stdout)?,
+        CargoConfigSubcommand::Apply => run_apply_command(command, stdout)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -124,12 +163,32 @@ fn run_preview_command(
     Ok(())
 }
 
+fn run_apply_command(
+    command: &CargoConfigCommand,
+    stdout: &mut impl Write,
+) -> Result<(), CliError> {
+    let Some(preview_path) = command.preview_path.as_ref() else {
+        return Err(CliError::Usage(
+            "cargo-config apply requires --preview <path>".to_string(),
+        ));
+    };
+    let report = apply_cargo_config_preview(CargoConfigApplyRequest {
+        preview_path: preview_path.clone(),
+    })?;
+    match command.output_format {
+        OutputFormat::Terminal => write_terminal_apply_report(stdout, &report)?,
+        OutputFormat::Json => write_json_apply_report(stdout, &report)?,
+    }
+    Ok(())
+}
+
 fn parse_subcommand(value: &str) -> Result<CargoConfigSubcommand, CliError> {
     match value {
         "recommend" => Ok(CargoConfigSubcommand::Recommend),
         "preview" => Ok(CargoConfigSubcommand::Preview),
+        "apply" => Ok(CargoConfigSubcommand::Apply),
         value => Err(CliError::Usage(format!(
-            "unknown cargo-config command `{value}`; expected `recommend` or `preview`"
+            "unknown cargo-config command `{value}`; expected `recommend`, `preview`, or `apply`"
         ))),
     }
 }
@@ -139,6 +198,28 @@ impl CargoConfigSubcommand {
         match self {
             Self::Recommend => "recommend",
             Self::Preview => "preview",
+            Self::Apply => "apply",
         }
     }
+}
+
+fn usage_for_subcommand(subcommand: CargoConfigSubcommand) -> String {
+    match subcommand {
+        CargoConfigSubcommand::Recommend | CargoConfigSubcommand::Preview => format!(
+            "usage: cargo-reclaim cargo-config {} [--project <path>] [--json]",
+            subcommand.name()
+        ),
+        CargoConfigSubcommand::Apply => {
+            "usage: cargo-reclaim cargo-config apply --preview <path> --yes [--json]".to_string()
+        }
+    }
+}
+
+fn reject_project_for_apply(subcommand: CargoConfigSubcommand) -> Result<(), CliError> {
+    if subcommand == CargoConfigSubcommand::Apply {
+        return Err(CliError::Usage(
+            "cargo-config apply does not accept --project; use --preview <path>".to_string(),
+        ));
+    }
+    Ok(())
 }

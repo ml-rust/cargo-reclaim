@@ -243,11 +243,203 @@ fn cargo_config_preview_rejects_apply_flags() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn cargo_config_apply_preview_creates_absent_config() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_config_apply_absent")?;
+    let project = temp.path().join("project");
+    write_project_manifest(&project)?;
+    let config_path = project.join(".cargo/config.toml");
+    let preview_path = generate_preview_json(temp.path(), &project)?;
+
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "apply", "--preview"])
+        .arg(&preview_path)
+        .args(["--yes", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["command"], "cargo-config apply");
+    assert_eq!(document["preview_path"], path_string(&preview_path));
+    assert_eq!(document["target_config_file"], path_string(&config_path));
+    assert_eq!(document["applied"], true);
+    assert_eq!(document["modified_cargo_config_files"], true);
+    assert_eq!(document["operations"][0]["status"], "insert");
+
+    let config = fs::read_to_string(&config_path)?;
+    assert!(config.contains("[build]"));
+    assert!(config.contains("build-dir = \"target/build\""));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_apply_preview_preserves_existing_comments_and_keys() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_config_apply_existing")?;
+    let project = temp.path().join("project");
+    write_project_config(
+        &project,
+        "# cargo settings\n[build]\n# output root\ntarget-dir = \"target-out\"\n",
+    )?;
+    let preview_path = generate_preview_json(temp.path(), &project)?;
+
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "apply", "--preview"])
+        .arg(&preview_path)
+        .args(["--yes", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["applied"], true);
+    assert_eq!(document["modified_cargo_config_files"], true);
+
+    let config = fs::read_to_string(project.join(".cargo/config.toml"))?;
+    assert!(config.contains("# cargo settings"));
+    assert!(config.contains("# output root"));
+    assert!(config.contains("target-dir = \"target-out\""));
+    assert!(config.contains("build-dir = \"target/build\""));
+    Ok(())
+}
+
+#[test]
+fn cargo_config_apply_preview_requires_yes_without_mutation() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_config_apply_requires_yes")?;
+    let project = temp.path().join("project");
+    write_project_manifest(&project)?;
+    let config_path = project.join(".cargo/config.toml");
+    let preview_path = generate_preview_json(temp.path(), &project)?;
+
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "apply", "--preview"])
+        .arg(&preview_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("requires --yes"));
+    assert!(!config_path.exists());
+    Ok(())
+}
+
+#[test]
+fn cargo_config_apply_preview_refuses_stale_snapshot_without_mutation() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("cli_cargo_config_apply_stale")?;
+    let project = temp.path().join("project");
+    write_project_config(&project, "[build]\ntarget-dir = \"target-out\"\n")?;
+    let config_path = project.join(".cargo/config.toml");
+    let preview_path = generate_preview_json(temp.path(), &project)?;
+    let stale_config = "[build]\ntarget-dir = \"changed-target\"\n";
+    fs::write(&config_path, stale_config)?;
+
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "apply", "--preview"])
+        .arg(&preview_path)
+        .args(["--yes", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["applied"], false);
+    assert_eq!(document["modified_cargo_config_files"], false);
+    assert_eq!(document["operations"][0]["status"], "refused");
+    assert!(
+        document["operations"][0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("snapshot"))
+    );
+    assert_eq!(fs::read_to_string(&config_path)?, stale_config);
+    Ok(())
+}
+
+#[test]
+fn cargo_config_apply_preview_refuses_refused_operation_without_mutation()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_config_apply_refused_preview")?;
+    let project = temp.path().join("project");
+    write_project_config(
+        &project,
+        "[build]\ntarget-dir = \"target-out\"\nbuild-dir = \"build-out\"\n",
+    )?;
+    let config_path = project.join(".cargo/config.toml");
+    let original_config = fs::read_to_string(&config_path)?;
+    let preview_path = generate_preview_json(temp.path(), &project)?;
+
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "apply", "--preview"])
+        .arg(&preview_path)
+        .args(["--yes", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["applied"], false);
+    assert_eq!(document["modified_cargo_config_files"], false);
+    assert_eq!(document["operations"][0]["status"], "refused");
+    assert!(
+        document["operations"][0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("supported"))
+    );
+    assert_eq!(fs::read_to_string(&config_path)?, original_config);
+    Ok(())
+}
+
+#[test]
+fn cargo_config_apply_preview_refuses_non_cargo_config_target_without_mutation()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cargo_config_apply_target_path")?;
+    let project = temp.path().join("project");
+    write_project_manifest(&project)?;
+    let preview_path = generate_preview_json(temp.path(), &project)?;
+    let mut preview: Value = serde_json::from_slice(&fs::read(&preview_path)?)?;
+    let target_path = temp.path().join("not-cargo/config.toml");
+    preview["target_config_file"] = Value::String(path_string(&target_path));
+    fs::write(&preview_path, serde_json::to_vec(&preview)?)?;
+
+    let output = command_with_isolated_cargo_home(temp.path())
+        .args(["cargo-config", "apply", "--preview"])
+        .arg(&preview_path)
+        .args(["--yes", "--json"])
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["applied"], false);
+    assert_eq!(document["modified_cargo_config_files"], false);
+    assert_eq!(document["operations"][0]["status"], "refused");
+    assert!(
+        document["operations"][0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains(".cargo/config.toml"))
+    );
+    assert!(!target_path.exists());
+    Ok(())
+}
+
 fn write_project_config(project: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(project.join(".cargo"))?;
     write_project_manifest(project)?;
     fs::write(project.join(".cargo/config.toml"), contents)?;
     Ok(())
+}
+
+fn generate_preview_json(root: &Path, project: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let output = command_with_isolated_cargo_home(root)
+        .args(["cargo-config", "preview", "--json", "--project"])
+        .arg(project)
+        .output()?;
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let preview_path = root.join("preview.json");
+    fs::write(&preview_path, output.stdout)?;
+    Ok(preview_path)
 }
 
 fn write_project_manifest(project: &Path) -> Result<(), Box<dyn Error>> {

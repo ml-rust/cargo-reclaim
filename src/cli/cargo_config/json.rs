@@ -1,7 +1,8 @@
 use std::io::Write;
 
 use cargo_reclaim::config::{
-    CargoConfigFileSnapshot, CargoConfigPreviewOperation, CargoConfigPreviewReport,
+    CargoConfigApplyReport, CargoConfigFileSnapshot, CargoConfigPreviewOperation,
+    CargoConfigPreviewReport,
 };
 use cargo_reclaim::{
     CargoConfigOutputDir, CargoConfigProblem, CargoConfigRecommendReport,
@@ -27,6 +28,16 @@ pub(super) fn write_json_preview_report(
     report: &CargoConfigPreviewReport,
 ) -> Result<(), CliError> {
     let document = JsonCargoConfigPreviewReport::from_report(report);
+    serde_json::to_writer(&mut *output, &document)?;
+    writeln!(output)?;
+    Ok(())
+}
+
+pub(super) fn write_json_apply_report(
+    output: &mut impl Write,
+    report: &CargoConfigApplyReport,
+) -> Result<(), CliError> {
+    let document = JsonCargoConfigApplyReport::from_report(report);
     serde_json::to_writer(&mut *output, &document)?;
     writeln!(output)?;
     Ok(())
@@ -95,6 +106,35 @@ struct JsonCargoConfigPreviewReport {
     operations: Vec<JsonCargoConfigPreviewOperation>,
     unsupported: Vec<JsonCargoConfigUnsupported>,
     problems: Vec<JsonCargoConfigProblem>,
+}
+
+#[derive(Serialize)]
+struct JsonCargoConfigApplyReport {
+    schema_version: u16,
+    command: &'static str,
+    preview_path: String,
+    target_config_file: String,
+    applied: bool,
+    modified_cargo_config_files: bool,
+    operations: Vec<JsonCargoConfigPreviewOperation>,
+}
+
+impl JsonCargoConfigApplyReport {
+    fn from_report(report: &CargoConfigApplyReport) -> Self {
+        Self {
+            schema_version: report.schema_version,
+            command: "cargo-config apply",
+            preview_path: path_string(&report.preview_path),
+            target_config_file: path_string(&report.target_config_file),
+            applied: report.applied,
+            modified_cargo_config_files: report.modified_cargo_config_files,
+            operations: report
+                .operations
+                .iter()
+                .map(JsonCargoConfigPreviewOperation::from_operation)
+                .collect(),
+        }
+    }
 }
 
 impl JsonCargoConfigPreviewReport {
