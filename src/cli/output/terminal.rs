@@ -41,6 +41,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
         output,
         "  cargo-config recommend  Report read-only Cargo build output configuration recommendations"
     )?;
+    writeln!(
+        output,
+        "  cargo-config preview  Preview read-only Cargo config write plan"
+    )?;
     writeln!(output)?;
     writeln!(output, "Options:")?;
     writeln!(

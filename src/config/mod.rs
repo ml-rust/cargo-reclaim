@@ -5,8 +5,11 @@ mod parse;
 mod values;
 
 pub use cargo_config::{
-    CARGO_CONFIG_RECOMMEND_SCHEMA_VERSION, CargoConfigOutputDir, CargoConfigRecommendReport,
-    CargoConfigRecommendRequest, CargoConfigRecommendation, build_cargo_config_recommend_report,
+    CARGO_CONFIG_PREVIEW_SCHEMA_VERSION, CARGO_CONFIG_RECOMMEND_SCHEMA_VERSION,
+    CargoConfigFileSnapshot, CargoConfigOutputDir, CargoConfigPreviewOperation,
+    CargoConfigPreviewOperationStatus, CargoConfigPreviewReport, CargoConfigPreviewRequest,
+    CargoConfigRecommendReport, CargoConfigRecommendRequest, CargoConfigRecommendation,
+    build_cargo_config_preview_report, build_cargo_config_recommend_report,
 };
 pub use error::ConfigError;
 pub use model::{

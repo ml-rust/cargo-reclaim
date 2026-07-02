@@ -1,5 +1,8 @@
 use std::io::Write;
 
+use cargo_reclaim::config::{
+    CargoConfigFileSnapshot, CargoConfigPreviewOperation, CargoConfigPreviewReport,
+};
 use cargo_reclaim::{
     CargoConfigOutputDir, CargoConfigProblem, CargoConfigRecommendReport,
     CargoConfigRecommendation, CargoConfigUnsupported,
@@ -7,13 +10,23 @@ use cargo_reclaim::{
 use serde::Serialize;
 
 use super::super::CliError;
-use super::labels::{path_string, unsupported_reason_label};
+use super::labels::{path_string, preview_operation_status_label, unsupported_reason_label};
 
 pub(super) fn write_json_recommend_report(
     output: &mut impl Write,
     report: &CargoConfigRecommendReport,
 ) -> Result<(), CliError> {
     let document = JsonCargoConfigRecommendReport::from_report(report);
+    serde_json::to_writer(&mut *output, &document)?;
+    writeln!(output)?;
+    Ok(())
+}
+
+pub(super) fn write_json_preview_report(
+    output: &mut impl Write,
+    report: &CargoConfigPreviewReport,
+) -> Result<(), CliError> {
+    let document = JsonCargoConfigPreviewReport::from_report(report);
     serde_json::to_writer(&mut *output, &document)?;
     writeln!(output)?;
     Ok(())
@@ -66,6 +79,89 @@ impl JsonCargoConfigRecommendReport {
                 .iter()
                 .map(JsonCargoConfigProblem::from_problem)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonCargoConfigPreviewReport {
+    schema_version: u16,
+    command: &'static str,
+    dry_run: bool,
+    modified_cargo_config_files: bool,
+    project: String,
+    target_config_file: String,
+    target_config_snapshot: JsonCargoConfigFileSnapshot,
+    operations: Vec<JsonCargoConfigPreviewOperation>,
+    unsupported: Vec<JsonCargoConfigUnsupported>,
+    problems: Vec<JsonCargoConfigProblem>,
+}
+
+impl JsonCargoConfigPreviewReport {
+    fn from_report(report: &CargoConfigPreviewReport) -> Self {
+        Self {
+            schema_version: report.schema_version,
+            command: "cargo-config preview",
+            dry_run: report.dry_run,
+            modified_cargo_config_files: report.modified_cargo_config_files,
+            project: path_string(&report.project),
+            target_config_file: path_string(&report.target_config_file),
+            target_config_snapshot: JsonCargoConfigFileSnapshot::from_snapshot(
+                &report.target_config_snapshot,
+            ),
+            operations: report
+                .operations
+                .iter()
+                .map(JsonCargoConfigPreviewOperation::from_operation)
+                .collect(),
+            unsupported: report
+                .unsupported
+                .iter()
+                .map(JsonCargoConfigUnsupported::from_unsupported)
+                .collect(),
+            problems: report
+                .problems
+                .iter()
+                .map(JsonCargoConfigProblem::from_problem)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonCargoConfigFileSnapshot {
+    exists: bool,
+    hash: Option<String>,
+    size_bytes: Option<u64>,
+}
+
+impl JsonCargoConfigFileSnapshot {
+    fn from_snapshot(snapshot: &CargoConfigFileSnapshot) -> Self {
+        Self {
+            exists: snapshot.exists,
+            hash: snapshot.hash.clone(),
+            size_bytes: snapshot.size_bytes,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonCargoConfigPreviewOperation {
+    key: String,
+    current: Option<String>,
+    recommended: Option<String>,
+    status: &'static str,
+    reason: String,
+}
+
+impl JsonCargoConfigPreviewOperation {
+    fn from_operation(operation: &CargoConfigPreviewOperation) -> Self {
+        Self {
+            key: operation.key.clone(),
+            current: operation.current.clone(),
+            recommended: operation.recommended.clone(),
+            status: preview_operation_status_label(operation.status),
+            reason: operation.reason.clone(),
         }
     }
 }
