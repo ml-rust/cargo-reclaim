@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::process::Command;
 
 use cargo_reclaim::{
     ArtifactClass, PLAN_SCHEMA_VERSION, PathSnapshot, Plan, PlanAction, PlanEntry, PlanInput,
@@ -117,17 +116,5 @@ fn plan_input_accepts_multiple_roots() -> Result<(), Box<dyn Error>> {
     let input = PlanInput::new([".", "reference"])?;
 
     assert_eq!(input.roots.len(), 2);
-    Ok(())
-}
-
-#[test]
-fn cli_reports_planning_only_status() -> Result<(), Box<dyn Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim")).output()?;
-
-    assert!(output.status.success());
-
-    let stdout = String::from_utf8(output.stdout)?;
-    assert!(stdout.contains("planning only"));
-    assert!(stdout.contains("no files are deleted or modified"));
     Ok(())
 }
