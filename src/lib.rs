@@ -18,6 +18,7 @@ pub use model::{
 pub use planner::{PlannerCandidate, build_plan, plan_candidate};
 pub use policy::PolicyKind;
 pub use scanner::{
-    CargoProject, ScannerOptions, SkipReason, TargetCandidate, TargetCandidateKind,
-    TargetDirOverride, TargetDirOverrideSource, classify_target_candidate, detect_cargo_project,
+    CargoProject, ScanItem, ScanSkip, ScanSkipReason, ScannerOptions, SkipReason, TargetCandidate,
+    TargetCandidateKind, TargetDirOverride, TargetDirOverrideSource, classify_target_candidate,
+    detect_cargo_project, scan_roots,
 };

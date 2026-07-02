@@ -5,6 +5,9 @@ use crate::error::{ReclaimError, ReclaimResult};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ScannerOptions {
     pub follow_symlinks: bool,
+    pub allow_name_only_targets: bool,
+    pub cross_filesystems: bool,
+    pub ignored_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,9 +23,10 @@ impl TargetDirOverride {
             return Err(ReclaimError::EmptyPath);
         }
 
-        let source = TargetDirOverrideSource::new(source)?;
-
-        Ok(Self { path, source })
+        Ok(Self {
+            path,
+            source: TargetDirOverrideSource::new(source)?,
+        })
     }
 }
 

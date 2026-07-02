@@ -182,6 +182,7 @@ fn symlink_candidate_is_skipped_by_default_and_allowed_when_enabled() -> Result<
         None,
         &ScannerOptions {
             follow_symlinks: true,
+            ..ScannerOptions::default()
         },
     )?;
     assert_eq!(
