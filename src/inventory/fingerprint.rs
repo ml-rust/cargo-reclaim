@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -18,9 +18,10 @@ pub(crate) fn append_fingerprint_group_candidates(
     evidence: &TargetEvidence,
     target_context: &TargetContext,
     options: &InventoryOptions,
+    keep_rustc_hashes: &[u64],
     candidates: &mut Vec<PlannerCandidate>,
 ) -> ReclaimResult<()> {
-    let hashes = collect_fingerprint_hashes(target_root, options)?;
+    let hashes = collect_fingerprint_hashes(target_root, options, keep_rustc_hashes)?;
     if hashes.is_empty() {
         return Ok(());
     }
@@ -69,25 +70,32 @@ pub(crate) fn append_fingerprint_group_candidates(
 fn collect_fingerprint_hashes(
     target_root: &Path,
     options: &InventoryOptions,
+    keep_rustc_hashes: &[u64],
 ) -> ReclaimResult<HashSet<String>> {
-    let mut hashes = HashSet::new();
+    let mut hashes = HashMap::new();
+    let keep_rustc_hashes = keep_rustc_hashes.iter().copied().collect::<HashSet<_>>();
     let mut visited_dirs = HashSet::new();
     collect_fingerprint_hashes_from_child(
         target_root,
         PathBuf::new(),
         options,
+        &keep_rustc_hashes,
         &mut visited_dirs,
         &mut hashes,
     )?;
-    Ok(hashes)
+    Ok(hashes
+        .into_iter()
+        .filter_map(|(hash, status)| status.should_emit().then_some(hash))
+        .collect())
 }
 
 fn collect_fingerprint_hashes_from_child(
     target_root: &Path,
     child_path: PathBuf,
     options: &InventoryOptions,
+    keep_rustc_hashes: &HashSet<u64>,
     visited_dirs: &mut HashSet<PathBuf>,
-    hashes: &mut HashSet<String>,
+    hashes: &mut HashMap<String, FingerprintHashStatus>,
 ) -> ReclaimResult<()> {
     let full_path = target_root.join(&child_path);
     if is_configured_skipped(&full_path, options) {
@@ -108,10 +116,10 @@ fn collect_fingerprint_hashes_from_child(
 
     if metadata.is_dir() {
         if is_in_fingerprint_dir(&child_path)
-            && fingerprint_dir_has_rustc_metadata(&full_path)?
             && let Some(hash) = cargo_hash_suffix(child_path.file_name())
         {
-            hashes.insert(hash.to_string());
+            let status = fingerprint_dir_rustc_status(&full_path, keep_rustc_hashes)?;
+            hashes.entry(hash.to_string()).or_default().merge(status);
         }
 
         let canonical_path = fs::canonicalize(&full_path)
@@ -128,6 +136,7 @@ fn collect_fingerprint_hashes_from_child(
                 target_root,
                 child_path.join(file_name),
                 options,
+                keep_rustc_hashes,
                 visited_dirs,
                 hashes,
             )?;
@@ -309,7 +318,43 @@ fn cargo_hash_suffix(file_name: Option<&OsStr>) -> Option<&str> {
     (hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(hash)
 }
 
-fn fingerprint_dir_has_rustc_metadata(path: &Path) -> ReclaimResult<bool> {
+#[derive(Debug, Clone, Copy, Default)]
+struct FingerprintHashStatus {
+    has_kept: bool,
+    has_unkept: bool,
+}
+
+impl FingerprintHashStatus {
+    fn from_rustc(rustc: u64, keep_rustc_hashes: &HashSet<u64>) -> Self {
+        if keep_rustc_hashes.contains(&rustc) {
+            Self {
+                has_kept: true,
+                has_unkept: false,
+            }
+        } else {
+            Self {
+                has_kept: false,
+                has_unkept: true,
+            }
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.has_kept |= other.has_kept;
+        self.has_unkept |= other.has_unkept;
+    }
+
+    fn should_emit(self) -> bool {
+        // If a cargo hash appears with both kept and unkept rustc values, stay conservative
+        // and skip emitting it so we do not delete a shared hash group accidentally.
+        self.has_unkept && !self.has_kept
+    }
+}
+
+fn fingerprint_dir_rustc_status(
+    path: &Path,
+    keep_rustc_hashes: &HashSet<u64>,
+) -> ReclaimResult<FingerprintHashStatus> {
     let entries = fs::read_dir(path).map_err(|error| inventory_read_error(path, error))?;
     for entry in entries {
         let entry = entry.map_err(|error| inventory_read_error(path, error))?;
@@ -320,15 +365,16 @@ fn fingerprint_dir_has_rustc_metadata(path: &Path) -> ReclaimResult<bool> {
         let contents =
             fs::read_to_string(&path).map_err(|error| inventory_read_error(&path, error))?;
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) else {
-            return Ok(false);
+            return Ok(FingerprintHashStatus::default());
         };
         return Ok(value
             .get("rustc")
             .and_then(serde_json::Value::as_u64)
-            .is_some());
+            .map(|rustc| FingerprintHashStatus::from_rustc(rustc, keep_rustc_hashes))
+            .unwrap_or_default());
     }
 
-    Ok(false)
+    Ok(FingerprintHashStatus::default())
 }
 
 fn is_protected_file_name(file_name: Option<&OsStr>) -> bool {

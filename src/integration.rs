@@ -309,6 +309,7 @@ fn build_plan_from_scan_items_with_active_observation_impl(
                 &evidence,
                 &target_context,
                 &inventory_options,
+                &planner_options.keep_rustc_hashes,
                 &mut target_candidates,
             )?;
             candidates.extend(target_candidates);

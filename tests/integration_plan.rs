@@ -161,6 +161,100 @@ fn scanned_project_target_adds_hash_grouped_intermediates() -> Result<(), Box<dy
 }
 
 #[test]
+fn keep_rustc_hash_preserves_matching_hash_grouped_intermediates() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_keep_rustc_hash")?;
+    write_manifest(temp.path())?;
+    let kept_hash = "0123456789abcdef";
+    let unkept_hash = "1111111111111111";
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/kept-{kept_hash}")))?;
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/unkept-{unkept_hash}")))?;
+    fs::write(
+        target.join(format!(
+            "debug/.fingerprint/kept-{kept_hash}/fingerprint.json"
+        )),
+        br#"{"rustc":7}"#,
+    )?;
+    fs::write(
+        target.join(format!(
+            "debug/.fingerprint/unkept-{unkept_hash}/fingerprint.json"
+        )),
+        br#"{"rustc":8}"#,
+    )?;
+    fs::write(target.join(format!("debug/kept-{kept_hash}.json")), b"kept")?;
+    fs::write(
+        target.join(format!("debug/unkept-{unkept_hash}.json")),
+        b"unkept",
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            keep_rustc_hashes: vec![7],
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    let kept = entry_for(&plan, target.join(format!("debug/kept-{kept_hash}.json")))?;
+    assert_eq!(kept.artifact_class, ArtifactClass::Unknown);
+    assert_eq!(kept.action, PlanAction::Unknown);
+
+    let unkept = entry_for(
+        &plan,
+        target.join(format!("debug/unkept-{unkept_hash}.json")),
+    )?;
+    assert_eq!(
+        unkept.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(unkept.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
+fn keep_rustc_hash_preserves_conflicting_duplicate_hash_group() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_keep_rustc_hash_conflict")?;
+    write_manifest(temp.path())?;
+    let hash = "0123456789abcdef";
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/kept-{hash}")))?;
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/unkept-{hash}")))?;
+    fs::write(
+        target.join(format!("debug/.fingerprint/kept-{hash}/fingerprint.json")),
+        br#"{"rustc":7}"#,
+    )?;
+    fs::write(
+        target.join(format!("debug/.fingerprint/unkept-{hash}/fingerprint.json")),
+        br#"{"rustc":8}"#,
+    )?;
+    fs::write(
+        target.join(format!("debug/conflicting-{hash}.json")),
+        b"conflict",
+    )?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            keep_rustc_hashes: vec![7],
+            ..PlannerOptions::default()
+        },
+        SystemTime::now(),
+    )?;
+
+    let entry = entry_for(&plan, target.join(format!("debug/conflicting-{hash}.json")))?;
+    assert_eq!(entry.artifact_class, ArtifactClass::Unknown);
+    assert_eq!(entry.action, PlanAction::Unknown);
+    Ok(())
+}
+
+#[test]
 fn hash_grouped_intermediates_respect_policy_and_weak_evidence() -> Result<(), Box<dyn Error>> {
     let hash = "0123456789abcdef";
     let strong = TestTemp::new("integration_hash_policy_strong")?;

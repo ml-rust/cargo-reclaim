@@ -161,6 +161,7 @@ fn parse_plan_command(
     let mut cli_cross_filesystems = false;
     let mut cli_recent_write_keep_window = false;
     let mut cli_keep_size = false;
+    let mut cli_keep_rustc_hashes = false;
     let mut whole_target_source = None;
     let mut args = args.into_iter();
 
@@ -262,6 +263,18 @@ fn parse_plan_command(
                 planner_options.keep_size_bytes = Some(parse_size(&value["--keep-size=".len()..])?);
                 cli_keep_size = true;
             }
+            "--keep-rustc-hash" => {
+                planner_options
+                    .keep_rustc_hashes
+                    .push(parse_u64(&next_value(&mut args, "--keep-rustc-hash")?)?);
+                cli_keep_rustc_hashes = true;
+            }
+            value if value.starts_with("--keep-rustc-hash=") => {
+                planner_options
+                    .keep_rustc_hashes
+                    .push(parse_u64(&value["--keep-rustc-hash=".len()..])?);
+                cli_keep_rustc_hashes = true;
+            }
             "--json" => output_format = OutputFormat::Json,
             "--save-plan" => {
                 if mode != PlanMode::Plan {
@@ -328,6 +341,7 @@ fn parse_plan_command(
             .unwrap_or_default(),
     };
     if let Some(config) = config {
+        let config_keep_rustc_hashes = config.keep_rustc_hashes;
         let mut ignored_paths = config.ignored_paths;
         ignored_paths.extend(scanner_options.ignored_paths);
         scanner_options.ignored_paths = ignored_paths;
@@ -351,6 +365,9 @@ fn parse_plan_command(
         }
         if !cli_keep_size {
             planner_options.keep_size_bytes = config.keep_size_bytes;
+        }
+        if !cli_keep_rustc_hashes {
+            planner_options.keep_rustc_hashes = config_keep_rustc_hashes;
         }
         if whole_target_source.is_none()
             && let Some(whole_target) = config.whole_target
@@ -528,6 +545,12 @@ fn parse_policy(value: &str) -> Result<PolicyKind, CliError> {
             "unknown policy `{value}`; expected observe, conservative, balanced, aggressive, or custom"
         ))),
     }
+}
+
+fn parse_u64(value: &str) -> Result<u64, CliError> {
+    value
+        .parse::<u64>()
+        .map_err(|_| CliError::Usage(format!("invalid u64 value `{value}`")))
 }
 
 fn parse_whole_target_mode(value: &str) -> Result<WholeTargetMode, CliError> {
@@ -763,6 +786,9 @@ mod tests {
                 "--keep-days",
                 "3",
                 "--keep-size=64MiB",
+                "--keep-rustc-hash",
+                "1",
+                "--keep-rustc-hash=2",
                 "--whole-target",
                 "confirm",
                 "workspace",
@@ -800,6 +826,7 @@ mod tests {
             command.planner_options.keep_size_bytes,
             Some(64 * 1024 * 1024)
         );
+        assert_eq!(command.planner_options.keep_rustc_hashes, [1, 2]);
         assert_eq!(
             command.planner_options.whole_target_mode,
             WholeTargetMode::Confirm
@@ -832,6 +859,7 @@ cross_filesystems = true
 [planner]
 recent_write_keep_window = "2h"
 keep_size = "32 MiB"
+keep_rustc_hashes = [7, 8]
 "#,
         )?;
 
@@ -846,6 +874,7 @@ keep_size = "32 MiB"
             OsString::from("--skip=cli-skip"),
             OsString::from("--keep-recent-writes=30m"),
             OsString::from("--keep-size=8MiB"),
+            OsString::from("--keep-rustc-hash=9"),
             OsString::from("cli-root"),
         ])?
         else {
@@ -886,11 +915,48 @@ keep_size = "32 MiB"
             command.planner_options.keep_size_bytes,
             Some(8 * 1024 * 1024)
         );
+        assert_eq!(command.planner_options.keep_rustc_hashes, [9]);
         assert_eq!(
             command.planner_options.whole_target_mode,
             WholeTargetMode::Off
         );
         Ok(())
+    }
+
+    #[test]
+    fn parse_plan_uses_config_rustc_hashes_when_cli_absent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TestTemp::new("cli_parse_config_rustc_hashes")?;
+        let config_path = temp.path.join("reclaim.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[planner]
+keep_rustc_hashes = [3, 5]
+"#,
+        )?;
+
+        let Command::Plan(command) = parse_args([
+            OsString::from("scan"),
+            OsString::from("--config"),
+            config_path.into_os_string(),
+        ])?
+        else {
+            panic!("expected plan command");
+        };
+
+        assert_eq!(command.planner_options.keep_rustc_hashes, [3, 5]);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_plan_rejects_invalid_rustc_hash() {
+        assert!(matches!(
+            parse_args(["plan", "--keep-rustc-hash", "abc"].map(OsString::from)),
+            Err(CliError::Usage(message)) if message.contains("invalid u64 value `abc`")
+        ));
     }
 
     #[test]

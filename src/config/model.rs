@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::error::ConfigError;
-use super::parse::{BackgroundDocument, ConfigDocument, PolicyConfig};
+use super::parse::{BackgroundDocument, ConfigDocument, PlannerConfig, PolicyConfig};
 use super::values::{
     parse_config_duration, parse_config_percentage_basis_points, parse_config_size,
     resolve_config_path,
@@ -25,6 +25,7 @@ pub struct ReclaimConfig {
     pub scheduler: SchedulerConfig,
     pub recent_write_keep_window: Option<Duration>,
     pub keep_size_bytes: Option<u64>,
+    pub keep_rustc_hashes: Vec<u64>,
 }
 
 impl ReclaimConfig {
@@ -32,26 +33,37 @@ impl ReclaimConfig {
         document: ConfigDocument,
         relative_base: Option<&Path>,
     ) -> Result<Self, ConfigError> {
-        if document.version != 1 {
-            return Err(ConfigError::UnsupportedVersion(document.version));
+        let ConfigDocument {
+            version,
+            roots,
+            ignore,
+            skip,
+            policy,
+            scanner,
+            planner,
+            scheduler,
+            background,
+        } = document;
+        if version != 1 {
+            return Err(ConfigError::UnsupportedVersion(version));
         }
 
-        let policy_keep_recent_projects = document
-            .policy
+        let policy_keep_recent_projects = policy
             .as_ref()
             .and_then(|policy| policy.keep_recent_projects.as_deref())
             .map(parse_config_duration)
             .transpose()?;
-        let planner_recent_write_keep_window = document
-            .planner
-            .as_ref()
-            .and_then(|planner| planner.recent_write_keep_window.as_deref())
+        let PlannerConfig {
+            recent_write_keep_window,
+            keep_days,
+            keep_size,
+            keep_rustc_hashes,
+        } = planner.unwrap_or_default();
+        let planner_recent_write_keep_window = recent_write_keep_window
+            .as_deref()
             .map(parse_config_duration)
             .transpose()?;
-        let planner_keep_days_window = document
-            .planner
-            .as_ref()
-            .and_then(|planner| planner.keep_days)
+        let planner_keep_days_window = keep_days
             .map(|days| {
                 if days == 0 {
                     return Err(ConfigError::InvalidDuration(days.to_string()));
@@ -59,60 +71,49 @@ impl ReclaimConfig {
                 Ok(Duration::from_secs(days.saturating_mul(24 * 60 * 60)))
             })
             .transpose()?;
-        let planner_keep_size_bytes = document
-            .planner
-            .as_ref()
-            .and_then(|planner| planner.keep_size.as_deref())
-            .map(parse_config_size)
-            .transpose()?;
-        let policy = document.policy.as_ref();
-        let policy_thresholds = document
-            .policy
+        let planner_keep_size_bytes = keep_size.as_deref().map(parse_config_size).transpose()?;
+        let policy_thresholds = policy
             .as_ref()
             .map(PolicyThresholdConfig::from_document)
             .transpose()?
             .unwrap_or_default();
-        let background = document
-            .background
+        let background = background
             .map(BackgroundConfig::from_document)
             .transpose()?
             .unwrap_or_default();
 
         Ok(Self {
-            version: document.version,
-            roots: document
-                .roots
+            version,
+            roots: roots
                 .into_iter()
                 .map(|path| resolve_config_path(path, relative_base))
                 .collect(),
-            ignored_paths: document
-                .ignore
+            ignored_paths: ignore
                 .into_iter()
                 .map(|path| resolve_config_path(path, relative_base))
                 .collect(),
-            skipped_paths: document
-                .skip
+            skipped_paths: skip
                 .into_iter()
                 .map(|path| resolve_config_path(path, relative_base))
                 .collect(),
-            policy: policy.and_then(|policy| policy.mode.clone()),
+            policy: policy.as_ref().and_then(|policy| policy.mode.clone()),
             whole_target: policy
+                .as_ref()
                 .and_then(|policy| policy.whole_target.as_deref())
                 .map(WholeTargetConfig::parse)
                 .transpose()?,
             allow_unattended_whole_target_delete: policy
+                .as_ref()
                 .and_then(|policy| policy.allow_unattended_whole_target_delete),
             policy_thresholds,
             background,
-            scanner: document.scanner.unwrap_or_default(),
-            scheduler: document
-                .scheduler
-                .unwrap_or_default()
-                .resolve_paths(relative_base),
+            scanner: scanner.unwrap_or_default(),
+            scheduler: scheduler.unwrap_or_default().resolve_paths(relative_base),
             recent_write_keep_window: planner_recent_write_keep_window
                 .or(planner_keep_days_window)
                 .or(policy_keep_recent_projects),
             keep_size_bytes: planner_keep_size_bytes,
+            keep_rustc_hashes,
         })
     }
 }

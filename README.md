@@ -102,4 +102,5 @@ cargo-reclaim cargo-config apply --preview path/to/preview.json --yes
 - `--keep-recent-writes <dur>` preserves delete candidates that were modified recently.
 - `--keep-days <days>` is a day-count alias for recent-write preservation.
 - `--keep-size <size>` preserves delete candidates at or below the given size.
+- `--keep-rustc-hash <u64>` preserves fingerprint grouped intermediates whose Cargo fingerprint JSON records that `rustc` hash.
 - `--json` emits a structured document instead of terminal text.

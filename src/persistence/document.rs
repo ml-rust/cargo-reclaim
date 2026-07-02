@@ -128,6 +128,8 @@ impl PersistedInventoryOptions {
 pub struct PersistedPlannerOptions {
     pub recent_write_keep_window_seconds: Option<u64>,
     pub keep_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub keep_rustc_hashes: Vec<u64>,
     #[serde(default, skip_serializing_if = "is_default_whole_target_mode")]
     pub whole_target_mode: PersistedWholeTargetMode,
 }
@@ -139,6 +141,7 @@ impl PersistedPlannerOptions {
                 .recent_write_keep_window
                 .map(|duration| duration.as_secs()),
             keep_size_bytes: options.keep_size_bytes,
+            keep_rustc_hashes: options.keep_rustc_hashes.clone(),
             whole_target_mode: PersistedWholeTargetMode::from_mode(options.whole_target_mode),
         }
     }

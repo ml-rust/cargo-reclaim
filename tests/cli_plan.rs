@@ -489,7 +489,15 @@ fn save_plan_records_keep_days_and_keep_size() -> Result<(), Box<dyn Error>> {
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
-        .args(["--keep-days", "2", "--keep-size", "3B"])
+        .args([
+            "--keep-days",
+            "2",
+            "--keep-size",
+            "3B",
+            "--keep-rustc-hash",
+            "7",
+            "--keep-rustc-hash=8",
+        ])
         .arg(temp.path())
         .output()?;
 
@@ -502,6 +510,10 @@ fn save_plan_records_keep_days_and_keep_size() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         persisted["invocation"]["planner_options"]["keep_size_bytes"],
         3
+    );
+    assert_eq!(
+        persisted["invocation"]["planner_options"]["keep_rustc_hashes"],
+        serde_json::json!([7, 8])
     );
     assert_eq!(persisted["plan"]["entries"][0]["action"], "skip_active");
     Ok(())

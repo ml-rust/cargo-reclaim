@@ -61,11 +61,13 @@ pub(super) struct PolicyConfig {
     pub unattended_allowed: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(super) struct PlannerConfig {
     pub recent_write_keep_window: Option<String>,
     pub keep_days: Option<u64>,
     pub keep_size: Option<String>,
+    #[serde(default)]
+    pub keep_rustc_hashes: Vec<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +112,7 @@ cross_filesystems = true
 [planner]
 recent_write_keep_window = "4h"
 keep_size = "64 MiB"
+keep_rustc_hashes = [1, 2]
 
 [scheduler]
 at = "04:15"
@@ -149,6 +152,7 @@ field = true
             4 * 60 * 60
         );
         assert_eq!(config.keep_size_bytes, Some(64 * 1024 * 1024));
+        assert_eq!(config.keep_rustc_hashes, [1, 2]);
         assert_eq!(config.scanner.follow_symlinks, Some(true));
         assert_eq!(config.scanner.allow_name_only_targets, Some(true));
         assert_eq!(config.scanner.cross_filesystems, Some(true));

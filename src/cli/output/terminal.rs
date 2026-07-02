@@ -97,6 +97,10 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     )?;
     writeln!(
         output,
+        "  --keep-rustc-hash <u64>      Preserve fingerprint grouped intermediates for a rustc hash"
+    )?;
+    writeln!(
+        output,
         "  --cross-filesystems          Allow recursive scan across filesystem boundaries"
     )?;
     writeln!(

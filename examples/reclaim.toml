@@ -19,6 +19,7 @@ cross_filesystems = true
 [planner]
 recent_write_keep_window = "4h"
 keep_size = "64 MiB"
+keep_rustc_hashes = []
 
 [scheduler]
 at = "04:15"
