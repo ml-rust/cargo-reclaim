@@ -16,6 +16,8 @@ The default mode is conservative: `scan` and `plan` are dry-run only, `apply` va
 ## Safety Model
 
 - `scan` and `plan` only report what would be reclaimed.
+- `targets` lists Cargo target directories without deleting anything.
+- `targets clean` validates selected target directories and only deletes when `--yes` is present.
 - `apply` requires an explicit plan path and supports validation-only mode unless `--yes` is set.
 - Persisted plans are revalidated at apply time, so stale or changed entries can be skipped instead of blindly removed.
 - `cargo-home report` and `cargo-config recommend` are read-only.
@@ -33,11 +35,59 @@ cargo-reclaim apply --plan reclaim-plan.json --yes
 cargo-reclaim edit-plan --plan reclaim-plan.json --list
 cargo-reclaim edit-plan --plan reclaim-plan.json --select target/doc
 cargo-reclaim edit-plan --plan reclaim-plan.json --interactive
+cargo-reclaim targets .
+cargo-reclaim targets clean --interactive .
+cargo-reclaim targets clean --interactive --yes .
 ```
 
 `scan` and `plan` both build a read-only cleanup plan for one or more roots. `plan` can also persist the plan with `--save-plan`, which is what the later `apply` flow consumes.
 
 `edit-plan --interactive` reads and rewrites an explicit saved plan. It accepts entry numbers, project groups such as `p1`, class groups such as `c:incremental`, and `none` or `cancel`; project groups select only entries that are already delete candidates, and `whole_target` entries must be selected by entry number.
+
+## Real Usage Recipes
+
+```sh
+# Find the largest Cargo target directories under a project tree.
+cargo-reclaim targets ~/Projects
+
+# Produce machine-readable target inventory for another tool.
+cargo-reclaim targets ~/Projects --json
+
+# Review and validate selected target deletion without deleting anything.
+cargo-reclaim targets clean --interactive ~/Projects
+
+# Delete selected target directories after the same validation pass.
+cargo-reclaim targets clean --interactive --yes ~/Projects
+
+# Delete one known target directory without typing it into a saved plan.
+cargo-reclaim targets clean --target ~/Projects/old-crate/target --yes
+
+# Trim incremental artifacts from an active project, preserving recent writes.
+cargo-reclaim plan ~/Projects/my-crate --policy balanced --whole-target off --keep-recent-writes 4h --save-plan /tmp/my-crate-reclaim.json
+cargo-reclaim apply --plan /tmp/my-crate-reclaim.json
+cargo-reclaim apply --plan /tmp/my-crate-reclaim.json --yes
+
+# Run one service cycle from a config file for diagnostics.
+cargo-reclaim scheduler service run --config ~/.config/cargo-reclaim/reclaim.toml --max-cycles 1 --json
+
+# Check whether the resident scheduler service is alive and what it last did.
+cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml
+cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
+
+# Preview platform service artifacts before installing them.
+cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
+cargo-reclaim scheduler preview --platform launchd --config ~/.config/cargo-reclaim/reclaim.toml
+cargo-reclaim scheduler preview --platform task-scheduler --config ~/.config/cargo-reclaim/reclaim.toml
+
+# Install a resident background scheduler on the current platform.
+cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
+
+# Clean Cargo home caches through a persisted, revalidated plan.
+cargo-reclaim cargo-home report --cargo-home ~/.cargo
+cargo-reclaim cargo-home plan --cargo-home ~/.cargo --policy conservative --save-plan /tmp/cargo-home-reclaim.json
+cargo-reclaim cargo-home apply --plan /tmp/cargo-home-reclaim.json
+cargo-reclaim cargo-home apply --plan /tmp/cargo-home-reclaim.json --yes
+```
 
 ## Validation And Apply Flow
 
@@ -60,6 +110,22 @@ cargo-reclaim cargo-home apply --plan cargo-home-plan.json --yes
 ```
 
 `cargo-home report` summarizes Cargo home caches and preserved paths. `cargo-home plan` builds a dry-run cleanup plan for the Cargo home tree, and `cargo-home apply` validates or executes only a saved Cargo home plan; `apply` does not accept a live `--cargo-home` path.
+
+## Target Directory Commands
+
+```sh
+cargo-reclaim targets .
+cargo-reclaim targets list ~/Projects --json
+cargo-reclaim target ~/Projects
+cargo-reclaim targets clean --interactive ~/Projects
+cargo-reclaim targets clean --interactive --yes ~/Projects
+cargo-reclaim targets clean --target ~/Projects/my-crate/target --yes
+cargo-reclaim targets clean --target ~/Projects/a/target --target ~/Projects/b/target --yes
+```
+
+`targets` discovers Cargo target directories from project context, configured Cargo target directories, and target-root evidence, then reports their measured size largest-first. `target` is an alias for `targets`, and `targets list` is the explicit form of the default list command.
+
+`targets clean` is for whole target directory cleanup when that is the intended operation. Without `--yes`, it validates and reports what would be deleted. With `--interactive`, it prints numbered target choices and accepts numbers such as `1`, `1,3`, or `1 3`; with `--target`, it cleans explicit paths. Selected cleanup still goes through persisted-plan validation before deletion.
 
 ## Scheduler Commands
 
