@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::scanner::{CargoConfigUnsupportedReason, resolve_project_output_dirs_with_env};
 use cargo_reclaim::{
-    ScannerOptions, SkipReason, TargetDirOverride, TargetDirOverrideSource, TargetEvidence,
+    ScannerOptions, TargetDirOverride, TargetDirOverrideSource, TargetEvidence,
     classify_target_candidate, detect_cargo_project,
 };
 
@@ -200,7 +200,10 @@ fn symlink_candidate_is_skipped_by_default_and_allowed_when_enabled() -> Result<
     let skipped =
         classify_target_candidate(&linked_target, None, None, &ScannerOptions::default())?;
     assert_eq!(skipped.evidence, None);
-    assert_eq!(skipped.skip_reason, Some(SkipReason::SymlinkNotFollowed));
+    assert_eq!(
+        skipped.skip_reason,
+        Some(cargo_reclaim::SkipReason::SymlinkNotFollowed)
+    );
 
     let followed = classify_target_candidate(
         &linked_target,
@@ -232,7 +235,10 @@ fn broken_symlink_candidate_is_still_skipped_by_default() -> Result<(), Box<dyn 
         classify_target_candidate(&linked_target, None, None, &ScannerOptions::default())?;
 
     assert_eq!(skipped.evidence, None);
-    assert_eq!(skipped.skip_reason, Some(SkipReason::SymlinkNotFollowed));
+    assert_eq!(
+        skipped.skip_reason,
+        Some(cargo_reclaim::SkipReason::SymlinkNotFollowed)
+    );
     Ok(())
 }
 

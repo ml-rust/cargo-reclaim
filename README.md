@@ -10,13 +10,9 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
 
 <p>
   <a href="https://docs.rs/cargo-reclaim"><strong>Docs</strong></a>
-  ·
   <a href="https://crates.io/crates/cargo-reclaim"><strong>Crate</strong></a>
-  ·
   <a href="#main-commands"><strong>Commands</strong></a>
-  ·
   <a href="#real-usage-recipes"><strong>Recipes</strong></a>
-  ·
   <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
 </p>
 

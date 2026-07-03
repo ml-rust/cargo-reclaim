@@ -143,7 +143,10 @@ fn cargo_config_preview_json_creates_no_config_file_when_absent() -> Result<(), 
     assert_eq!(document["command"], "cargo-config preview");
     assert_eq!(document["dry_run"], true);
     assert_eq!(document["modified_cargo_config_files"], false);
-    assert_eq!(document["target_config_file"], path_string(&config_path));
+    assert_eq!(
+        document["target_config_file"],
+        canonical_path_string(&config_path)?
+    );
     assert_eq!(document["target_config_snapshot"]["exists"], false);
     assert!(document["target_config_snapshot"]["hash"].is_null());
     assert!(document["target_config_snapshot"]["size_bytes"].is_null());
@@ -178,7 +181,10 @@ fn cargo_config_preview_json_preserves_existing_config() -> Result<(), Box<dyn E
     assert!(String::from_utf8(output.stderr)?.is_empty());
     assert_eq!(fs::read_to_string(&config_path)?, original_config);
     let document: Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(document["target_config_file"], path_string(&config_path));
+    assert_eq!(
+        document["target_config_file"],
+        canonical_path_string(&config_path)?
+    );
     assert_eq!(document["target_config_snapshot"]["exists"], true);
     assert!(
         document["target_config_snapshot"]["hash"]
@@ -277,7 +283,10 @@ fn cargo_config_apply_preview_creates_absent_config() -> Result<(), Box<dyn Erro
     assert_eq!(document["schema_version"], 1);
     assert_eq!(document["command"], "cargo-config apply");
     assert_eq!(document["preview_path"], path_string(&preview_path));
-    assert_eq!(document["target_config_file"], path_string(&config_path));
+    assert_eq!(
+        document["target_config_file"],
+        canonical_path_string(&config_path)?
+    );
     assert_eq!(document["applied"], true);
     assert_eq!(document["modified_cargo_config_files"], true);
     assert_eq!(document["operations"][0]["status"], "insert");
@@ -476,6 +485,22 @@ fn command_with_isolated_cargo_home(root: &Path) -> Command {
 
 fn path_string(path: impl AsRef<Path>) -> String {
     path.as_ref().display().to_string()
+}
+
+fn canonical_path_string(path: impl AsRef<Path>) -> Result<String, Box<dyn Error>> {
+    let path = path.as_ref();
+    let existing = path
+        .ancestors()
+        .find(|ancestor| ancestor.exists())
+        .ok_or("path has no existing ancestor")?;
+    let canonical = existing.canonicalize()?;
+    let suffix = path.strip_prefix(existing)?;
+    let normalized = if suffix.as_os_str().is_empty() {
+        canonical
+    } else {
+        canonical.join(suffix)
+    };
+    Ok(normalized.display().to_string())
 }
 
 struct TestTemp {

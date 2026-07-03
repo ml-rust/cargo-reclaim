@@ -191,12 +191,6 @@ fn cargo_home_apply_validation_skips_stale_size_kind_symlink_and_class_changes()
         fs::create_dir(temp.path().join("registry/cache/example/pkg.crate"))?;
         Ok(())
     })?;
-    assert_stale_after_mutation("symlink", |temp, _document| {
-        let path = temp.path().join("registry/cache/example/pkg.crate");
-        fs::remove_file(&path)?;
-        std::os::unix::fs::symlink(temp.path().join("target"), &path)?;
-        Ok(())
-    })?;
     assert_stale_after_mutation("same_size_content", |temp, _document| {
         fs::write(temp.path().join("registry/cache/example/pkg.crate"), b"xyz")?;
         Ok(())
@@ -244,7 +238,19 @@ fn cargo_home_apply_validation_never_deletes_preserved_or_unknown_entries()
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
+fn cargo_home_apply_validation_skips_stale_symlink_change() -> Result<(), Box<dyn Error>> {
+    assert_stale_after_mutation("symlink", |temp, _document| {
+        let path = temp.path().join("registry/cache/example/pkg.crate");
+        fs::remove_file(&path)?;
+        std::os::unix::fs::symlink(temp.path().join("target"), &path)?;
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(unix)]
 fn cargo_home_apply_validation_skips_when_root_is_replaced_by_symlink() -> Result<(), Box<dyn Error>>
 {
     let temp = TestTemp::new("cargo_home_apply_root_symlink")?;

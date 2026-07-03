@@ -10,8 +10,7 @@ use cargo_reclaim::{
     TargetEvidence, ToolchainHashError, ToolchainHashResolver, ToolchainHashResult,
     WholeTargetMode, build_plan_from_roots, build_plan_from_roots_with_active_observation,
     build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
-    build_plan_from_scan_items, planner_candidates_from_target_root,
-    resolve_toolchain_hash_options,
+    build_plan_from_scan_items, resolve_toolchain_hash_options,
 };
 
 #[test]
@@ -1182,7 +1181,7 @@ fn symlinked_target_root_is_rejected_by_inventory_by_default() -> Result<(), Box
     let linked_target = temp.path().join("target");
     symlink(&real_target, &linked_target)?;
 
-    let result = planner_candidates_from_target_root(
+    let result = cargo_reclaim::planner_candidates_from_target_root(
         &linked_target,
         TargetEvidence::strong_marker("CACHEDIR.TAG")?,
         &InventoryOptions::default(),
