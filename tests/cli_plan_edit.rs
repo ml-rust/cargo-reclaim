@@ -355,7 +355,7 @@ fn edit_plan_interactive_project_group_includes_strong_marker_target() -> Result
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr)?;
     assert!(stderr.contains("Project groups:"));
-    assert!(stderr.contains(&temp.path().join("Cargo.toml").display().to_string()));
+    assert!(contains_path(&stderr, temp.path().join("Cargo.toml")));
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("selected: 1"));
 
@@ -1006,6 +1006,11 @@ fn edit_plan_interactive_output(
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
     Ok(())
+}
+
+fn contains_path(text: &str, path: impl AsRef<Path>) -> bool {
+    text.replace('\\', "/")
+        .contains(&path.as_ref().display().to_string().replace('\\', "/"))
 }
 
 struct TestTemp {

@@ -31,8 +31,8 @@ fn plan_command_prints_dry_run_summary_and_entries() -> Result<(), Box<dyn Error
     assert!(stdout.contains("entries: 2"));
     assert!(stdout.contains("delete\tincremental\t"));
     assert!(stdout.contains("preserve\tdocs\t"));
-    assert!(stdout.contains("target/debug/incremental"));
-    assert!(stdout.contains("target/doc"));
+    assert!(contains_path_fragment(&stdout, "target/debug/incremental"));
+    assert!(contains_path_fragment(&stdout, "target/doc"));
     assert!(String::from_utf8(output.stderr)?.is_empty());
     Ok(())
 }
@@ -1023,6 +1023,10 @@ fn follow_symlinks_option_includes_symlinked_project_end_to_end() -> Result<(), 
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
     Ok(())
+}
+
+fn contains_path_fragment(text: &str, fragment: &str) -> bool {
+    text.replace('\\', "/").contains(fragment)
 }
 
 struct TestTemp {

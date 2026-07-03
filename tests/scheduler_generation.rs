@@ -334,6 +334,7 @@ fn escapes_paths_in_scripts_and_xml() -> Result<(), Box<dyn std::error::Error>> 
         .expect("xml");
     assert!(
         xml.contents
+            .replace('\\', "/")
             .contains("-NoProfile -ExecutionPolicy Bypass -File &apos;/tmp/state &amp; logs/state/scheduler-runner-daily-workstation.ps1&apos;")
     );
     Ok(())
@@ -475,7 +476,7 @@ fn task_scheduler_install_plan_uses_state_xml_path() -> Result<(), Box<dyn std::
         .to_string();
 
     assert_eq!(
-        xml,
+        xml.replace('\\', "/"),
         "/tmp/cargo reclaim/state/cargo-reclaim-daily-workstation.xml"
     );
     assert!(has_command(

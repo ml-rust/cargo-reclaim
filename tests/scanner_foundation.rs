@@ -386,7 +386,7 @@ fn cargo_config_build_dir_templates_resolve_workspace_root_and_cargo_cache_home(
         dirs.dirs[1].path,
         temp.path()
             .join("cargo-home/builds")
-            .join(temp.path().strip_prefix("/").unwrap_or(temp.path()))
+            .join(temp.path().to_string_lossy().trim_start_matches('/'))
     );
     Ok(())
 }

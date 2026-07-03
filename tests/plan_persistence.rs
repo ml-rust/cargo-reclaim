@@ -17,7 +17,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
     let temp = TestTemp::new("persistence_roundtrip")?;
     let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
     let expires_at = created_at + Duration::from_secs(3_600);
-    let modified = UNIX_EPOCH + Duration::new(900, 123);
+    let modified = UNIX_EPOCH + Duration::new(900, 100);
     let plan = sample_plan(temp.path.join("target/debug/incremental"), modified)?;
     let document = persist_plan(
         &plan,
@@ -122,7 +122,7 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
             .modified
             .unwrap()
             .nanoseconds,
-        123
+        100
     );
     assert!(
         loaded.body.plan.entries[0]

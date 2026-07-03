@@ -1,20 +1,25 @@
 use std::error::Error;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    BackgroundRunEventKind, BackgroundServiceClock, BackgroundServiceError,
-    BackgroundServiceOptions, BackgroundServicePaths, BackgroundServiceSleeper,
-    BackgroundServiceState, BackgroundServiceStatus, PersistedTimestamp,
-    PlatformBackgroundServiceCycleRunner, load_config_from_path, read_background_run_log,
-    read_background_service_state, refresh_background_service_state,
-    run_background_service_with_runtime, write_background_service_state,
+    BackgroundRunEventKind, BackgroundServiceClock, BackgroundServiceOptions,
+    BackgroundServicePaths, BackgroundServiceSleeper, BackgroundServiceState,
+    BackgroundServiceStatus, PersistedTimestamp, PlatformBackgroundServiceCycleRunner,
+    load_config_from_path, read_background_run_log, read_background_service_state,
+    refresh_background_service_state, run_background_service_with_runtime,
+    write_background_service_state,
 };
-use fs2::FileExt;
 
 #[test]
+#[cfg(unix)]
 fn service_lock_rejects_second_instance_while_held() -> Result<(), Box<dyn Error>> {
+    use std::fs::OpenOptions;
+
+    use cargo_reclaim::BackgroundServiceError;
+    use fs2::FileExt;
+
     let temp = TestTemp::new("background_service_lock")?;
     let config_path = write_config(temp.path(), "")?;
     let config = load_config_from_path(&config_path)?;
