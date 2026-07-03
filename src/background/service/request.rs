@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::config::{BackgroundMode, ReclaimConfig, WholeTargetConfig};
-use crate::disk::disk_free_basis_points;
+use crate::disk::disk_free_space;
 use crate::inventory::InventoryOptions;
 use crate::planner::{PlannerOptions, WholeTargetMode};
 use crate::policy::PolicyKind;
@@ -31,6 +31,7 @@ pub(crate) struct BackgroundCycleRequestContext {
     background_mode: Option<BackgroundMode>,
     max_target_size_bytes: Option<u64>,
     disk_free_below_basis_points: Option<u16>,
+    min_free_disk_bytes: Option<u64>,
 }
 
 impl BackgroundCycleRequestContext {
@@ -58,6 +59,7 @@ impl BackgroundCycleRequestContext {
             background_mode: config.background.mode,
             max_target_size_bytes: config.policy_thresholds.max_target_size_bytes,
             disk_free_below_basis_points: config.background.only_when_disk_free_below_basis_points,
+            min_free_disk_bytes: config.background.min_free_disk_bytes,
         })
     }
 
@@ -100,16 +102,18 @@ impl BackgroundCycleRequestContext {
                 &self.scanner_options,
                 &self.inventory_options,
             )?;
-            let disk_free_basis_points = self.observed_disk_free_basis_points()?;
+            let disk_free_space = self.observed_disk_free_space()?;
             return Ok(decide_watcher_thresholds(WatcherDecisionInput {
                 enabled: self.background_enabled,
                 mode: WatcherMode::Threshold,
                 thresholds: WatcherThresholds {
                     max_target_size_bytes: self.max_target_size_bytes,
                     disk_free_below_basis_points: self.disk_free_below_basis_points,
+                    min_free_disk_bytes: self.min_free_disk_bytes,
                 },
                 observed_targets,
-                disk_free_basis_points,
+                disk_free_basis_points: disk_free_space.and_then(|space| space.free_basis_points()),
+                disk_free_bytes: disk_free_space.map(|space| space.available_bytes),
                 selected_policy: self.policy,
                 unattended_allowed: self.mode == SchedulerMode::Cleanup && self.allow_apply,
             }));
@@ -128,8 +132,10 @@ impl BackgroundCycleRequestContext {
         })
     }
 
-    fn observed_disk_free_basis_points(&self) -> BackgroundServiceResult<Option<u16>> {
-        if self.disk_free_below_basis_points.is_none() {
+    fn observed_disk_free_space(
+        &self,
+    ) -> BackgroundServiceResult<Option<crate::disk::DiskFreeSpace>> {
+        if self.disk_free_below_basis_points.is_none() && self.min_free_disk_bytes.is_none() {
             return Ok(None);
         }
         let root = self
@@ -137,7 +143,9 @@ impl BackgroundCycleRequestContext {
             .first()
             .map(PathBuf::as_path)
             .unwrap_or_else(|| Path::new("."));
-        disk_free_basis_points(root).map_err(BackgroundServiceError::from)
+        disk_free_space(root)
+            .map(Some)
+            .map_err(BackgroundServiceError::from)
     }
 }
 
@@ -266,6 +274,9 @@ fn planner_options_from_config(config: &ReclaimConfig) -> PlannerOptions {
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
         keep_size_bytes: config.keep_size_bytes,
+        target_size_goal_bytes: config.policy_thresholds.target_size_goal_bytes,
+        target_free_disk_bytes: config.background.target_free_disk_bytes,
+        minimum_reclaim_bytes: None,
         keep_rustc_hashes: config.keep_rustc_hashes.clone(),
         keep_installed_toolchains: config.keep_installed_toolchains,
         keep_toolchains: config.keep_toolchains.clone(),

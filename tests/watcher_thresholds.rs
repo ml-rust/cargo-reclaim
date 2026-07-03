@@ -19,9 +19,11 @@ fn threshold_input() -> WatcherDecisionInput {
         thresholds: WatcherThresholds {
             max_target_size_bytes: Some(100),
             disk_free_below_basis_points: Some(1_500),
+            min_free_disk_bytes: Some(1_000),
         },
         observed_targets: vec![observed_target("/workspace/a/target", 90)],
         disk_free_basis_points: Some(2_000),
+        disk_free_bytes: Some(2_000),
         selected_policy: PolicyKind::Balanced,
         unattended_allowed: false,
     }
@@ -97,6 +99,23 @@ fn disk_free_below_threshold_triggers_plan_only() {
 }
 
 #[test]
+fn disk_free_bytes_below_threshold_triggers_plan_only() {
+    let mut input = threshold_input();
+    input.disk_free_bytes = Some(999);
+
+    let decision = decide_watcher_thresholds(input);
+
+    assert_eq!(decision.state, WatcherDecisionState::TriggeredPlanOnly);
+    assert_eq!(
+        decision.reasons,
+        [WatcherTriggerReason::DiskFreeBytesBelow {
+            free_bytes: 999,
+            min_free_disk_bytes: 1_000
+        }]
+    );
+}
+
+#[test]
 fn equal_thresholds_do_not_trigger() {
     let mut input = threshold_input();
     input.observed_targets = vec![observed_target("/workspace/a/target", 100)];
@@ -113,6 +132,7 @@ fn missing_disk_metric_does_not_trigger() {
     let mut input = threshold_input();
     input.thresholds.max_target_size_bytes = None;
     input.disk_free_basis_points = None;
+    input.disk_free_bytes = None;
 
     let decision = decide_watcher_thresholds(input);
 

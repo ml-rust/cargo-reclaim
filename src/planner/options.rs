@@ -4,6 +4,9 @@ use std::time::Duration;
 pub struct PlannerOptions {
     pub recent_write_keep_window: Option<Duration>,
     pub keep_size_bytes: Option<u64>,
+    pub target_size_goal_bytes: Option<u64>,
+    pub target_free_disk_bytes: Option<u64>,
+    pub minimum_reclaim_bytes: Option<u64>,
     pub keep_rustc_hashes: Vec<u64>,
     pub keep_installed_toolchains: bool,
     pub keep_toolchains: Vec<String>,

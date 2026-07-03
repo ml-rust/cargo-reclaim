@@ -134,6 +134,12 @@ impl PersistedInventoryOptions {
 pub struct PersistedPlannerOptions {
     pub recent_write_keep_window_seconds: Option<u64>,
     pub keep_size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_size_goal_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_free_disk_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_reclaim_bytes: Option<u64>,
     #[serde(default)]
     pub keep_rustc_hashes: Vec<u64>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -151,6 +157,9 @@ impl PersistedPlannerOptions {
                 .recent_write_keep_window
                 .map(|duration| duration.as_secs()),
             keep_size_bytes: options.keep_size_bytes,
+            target_size_goal_bytes: options.target_size_goal_bytes,
+            target_free_disk_bytes: options.target_free_disk_bytes,
+            minimum_reclaim_bytes: options.minimum_reclaim_bytes,
             keep_rustc_hashes: options.keep_rustc_hashes.clone(),
             keep_installed_toolchains: options.keep_installed_toolchains,
             keep_toolchains: options.keep_toolchains.clone(),

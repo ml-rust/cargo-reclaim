@@ -5,15 +5,13 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use cargo_reclaim::{
-    BackgroundMode, BackgroundRunReport, BackgroundRunRequest, BackgroundRunTrigger,
+    BackgroundMode, BackgroundRunReport, BackgroundRunRequest, BackgroundRunTrigger, DiskFreeSpace,
     InventoryOptions, PlannerOptions, PolicyKind, ScannerOptions, SchedulerMode, WatcherDecision,
     WatcherDecisionInput, WatcherDecisionState, WatcherMode, WatcherObservedTarget,
-    WatcherThresholds, load_config_from_path, platform_active_observation_provider,
-    run_background_cleanup_cycle, scan_roots, snapshot_path,
+    WatcherThresholds, disk_free_space, load_config_from_path,
+    platform_active_observation_provider, run_background_cleanup_cycle, scan_roots, snapshot_path,
 };
-use cargo_reclaim::{
-    ScanItem, TargetCandidateKind, WholeTargetConfig, WholeTargetMode, disk_free_basis_points,
-};
+use cargo_reclaim::{ScanItem, TargetCandidateKind, WholeTargetConfig, WholeTargetMode};
 
 use super::super::{
     CliError, OutputFormat, inline_config_path, next_path, next_value, parse_policy,
@@ -130,7 +128,7 @@ pub(super) fn run_scheduler_cycle(
     let planner_options = planner_options_from_config(&config);
     let observed_targets =
         observed_targets_from_roots(&roots, &scanner_options, &inventory_options)?;
-    let disk_free_basis_points = observed_disk_free_basis_points(&config, &roots)?;
+    let disk_free_space = observed_disk_free_space(&config, &roots)?;
 
     let now = SystemTime::now();
     let request = BackgroundRunRequest {
@@ -148,7 +146,7 @@ pub(super) fn run_scheduler_cycle(
             &config,
             policy,
             observed_targets,
-            disk_free_basis_points,
+            disk_free_space,
         )),
         config_path: Some(command.config_path.clone()),
         config_version: Some(config.version),
@@ -266,6 +264,9 @@ fn planner_options_from_config(config: &cargo_reclaim::ReclaimConfig) -> Planner
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
         keep_size_bytes: config.keep_size_bytes,
+        target_size_goal_bytes: config.policy_thresholds.target_size_goal_bytes,
+        target_free_disk_bytes: config.background.target_free_disk_bytes,
+        minimum_reclaim_bytes: None,
         keep_rustc_hashes: config.keep_rustc_hashes.clone(),
         keep_installed_toolchains: config.keep_installed_toolchains,
         keep_toolchains: config.keep_toolchains.clone(),
@@ -290,7 +291,7 @@ fn run_decision(
     config: &cargo_reclaim::ReclaimConfig,
     policy: PolicyKind,
     observed_targets: Vec<WatcherObservedTarget>,
-    disk_free_basis_points: Option<u16>,
+    disk_free_space: Option<DiskFreeSpace>,
 ) -> WatcherDecision {
     let enabled = config.background.enabled.unwrap_or(true);
     if !enabled {
@@ -309,9 +310,11 @@ fn run_decision(
                 disk_free_below_basis_points: config
                     .background
                     .only_when_disk_free_below_basis_points,
+                min_free_disk_bytes: config.background.min_free_disk_bytes,
             },
             observed_targets,
-            disk_free_basis_points,
+            disk_free_basis_points: disk_free_space.and_then(|space| space.free_basis_points()),
+            disk_free_bytes: disk_free_space.map(|space| space.available_bytes),
             selected_policy: policy,
             unattended_allowed: mode == SchedulerMode::Cleanup && allow_apply,
         });
@@ -353,14 +356,15 @@ fn observed_targets_from_roots(
     Ok(observed_targets)
 }
 
-fn observed_disk_free_basis_points(
+fn observed_disk_free_space(
     config: &cargo_reclaim::ReclaimConfig,
     roots: &[PathBuf],
-) -> Result<Option<u16>, CliError> {
+) -> Result<Option<DiskFreeSpace>, CliError> {
     if config
         .background
         .only_when_disk_free_below_basis_points
         .is_none()
+        && config.background.min_free_disk_bytes.is_none()
     {
         return Ok(None);
     }
@@ -368,7 +372,7 @@ fn observed_disk_free_basis_points(
         .first()
         .map(PathBuf::as_path)
         .unwrap_or_else(|| std::path::Path::new("."));
-    disk_free_basis_points(root).map_err(CliError::from)
+    disk_free_space(root).map(Some).map_err(CliError::from)
 }
 
 fn scheduler_run_exit_code(report: &BackgroundRunReport) -> ExitCode {

@@ -58,6 +58,7 @@ pub(super) struct PolicyConfig {
     pub allow_unattended_whole_target_delete: Option<bool>,
     pub keep_recent_projects: Option<String>,
     pub max_target_size: Option<String>,
+    pub target_size_goal: Option<String>,
     pub unattended_allowed: Option<bool>,
 }
 
@@ -80,6 +81,8 @@ pub(super) struct BackgroundDocument {
     pub mode: Option<String>,
     pub check_every: Option<String>,
     pub only_when_disk_free_below: Option<String>,
+    pub min_free_disk: Option<String>,
+    pub target_free_disk: Option<String>,
 }
 
 #[cfg(test)]
@@ -104,6 +107,7 @@ whole_target = "confirm"
 allow_unattended_whole_target_delete = false
 keep_recent_projects = "3 days"
 max_target_size = "5 GiB"
+target_size_goal = "4 GiB"
 unattended_allowed = true
 remove_classes = ["incremental"]
 preserve_final_artifacts = true
@@ -135,6 +139,8 @@ enabled = true
 mode = "threshold"
 check_every = "15m"
 only_when_disk_free_below = "12.5%"
+min_free_disk = "20 GiB"
+target_free_disk = "30 GiB"
 
 [future]
 field = true
@@ -177,6 +183,10 @@ field = true
             config.policy_thresholds.max_target_size_bytes,
             Some(5 * 1024 * 1024 * 1024)
         );
+        assert_eq!(
+            config.policy_thresholds.target_size_goal_bytes,
+            Some(4 * 1024 * 1024 * 1024)
+        );
         assert_eq!(config.policy_thresholds.unattended_allowed, Some(true));
         assert_eq!(config.background.enabled, Some(true));
         assert_eq!(config.background.mode, Some(BackgroundMode::Threshold));
@@ -190,6 +200,14 @@ field = true
         assert_eq!(
             config.background.only_when_disk_free_below_basis_points,
             Some(1250)
+        );
+        assert_eq!(
+            config.background.min_free_disk_bytes,
+            Some(20 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(
+            config.background.target_free_disk_bytes,
+            Some(30 * 1024 * 1024 * 1024)
         );
         Ok(())
     }

@@ -3,8 +3,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ArtifactClass, PathKind, PathSnapshot, PlanAction, PlanInput, PlannerCandidate, PlannerOptions,
-    PolicyKind, TargetEvidence, WholeTargetMode, build_plan, plan_candidate,
-    plan_candidate_with_active_observation, plan_candidate_with_options,
+    PolicyKind, TargetEvidence, WholeTargetMode, build_plan, build_plan_with_options,
+    plan_candidate, plan_candidate_with_active_observation, plan_candidate_with_options,
 };
 
 fn candidate(
@@ -166,6 +166,59 @@ fn keep_size_does_not_mask_weak_evidence_confirmation() -> Result<(), Box<dyn Er
     )?;
 
     assert_eq!(entry.action, PlanAction::RequiresConfirmation);
+    Ok(())
+}
+
+#[test]
+fn minimum_reclaim_budget_preserves_lower_priority_delete_candidates_after_goal()
+-> Result<(), Box<dyn Error>> {
+    let plan = build_plan_with_options(
+        PlanInput::from_root("target")?,
+        PolicyKind::Balanced,
+        [
+            candidate(
+                "target/debug/fingerprint-group",
+                50,
+                ArtifactClass::FingerprintGroupIntermediate,
+                TargetEvidence::strong_marker("fingerprint metadata")?,
+            )?,
+            candidate(
+                "target/tmp",
+                10,
+                ArtifactClass::Tmp,
+                TargetEvidence::strong_marker("tmp marker")?,
+            )?,
+            candidate(
+                "target/debug/incremental",
+                100,
+                ArtifactClass::Incremental,
+                TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            )?,
+        ],
+        &PlannerOptions {
+            minimum_reclaim_bytes: Some(60),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    let actions = plan
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                &entry.snapshot.path,
+                &entry.action,
+                entry.policy_reason.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(actions[0].1, &PlanAction::Preserve);
+    assert!(actions[0].2.contains("cleanup goal"));
+    assert_eq!(actions[1].1, &PlanAction::Delete);
+    assert_eq!(actions[2].1, &PlanAction::Delete);
+    assert_eq!(plan.totals.delete_candidate_count, 2);
     Ok(())
 }
 

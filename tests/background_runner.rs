@@ -126,6 +126,77 @@ fn triggered_plan_and_apply_logs_apply_completion() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn target_size_goal_derives_minimum_reclaim_budget_for_triggered_run() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("background_runner_target_goal")?;
+    let target_entry = temp.path.join("project/target/debug/incremental/cache.bin");
+    write_project_target_file(&target_entry)?;
+    let mut request = request(
+        &temp,
+        "run-target-goal",
+        WatcherDecision {
+            state: WatcherDecisionState::TriggeredPlanOnly,
+            reasons: vec![WatcherTriggerReason::TargetSizeExceeded {
+                path: temp.path.join("project/target"),
+                size_bytes: 10,
+                max_target_size_bytes: 8,
+            }],
+        },
+    )?;
+    request.planner_options.target_size_goal_bytes = Some(4);
+
+    let report = run_background_cleanup_cycle(request, &NoopActiveProvider)?;
+
+    assert!(report.plan_id.is_some());
+    let plan_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(temp.path.join("plan.json"))?)?;
+    assert_eq!(
+        plan_json["invocation"]["planner_options"]["target_size_goal_bytes"],
+        4
+    );
+    assert_eq!(
+        plan_json["invocation"]["planner_options"]["minimum_reclaim_bytes"],
+        6
+    );
+    Ok(())
+}
+
+#[test]
+fn target_free_disk_derives_minimum_reclaim_budget_for_triggered_run() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("background_runner_free_goal")?;
+    let target_entry = temp.path.join("project/target/debug/incremental/cache.bin");
+    write_project_target_file(&target_entry)?;
+    let mut request = request(
+        &temp,
+        "run-free-goal",
+        WatcherDecision {
+            state: WatcherDecisionState::TriggeredPlanOnly,
+            reasons: vec![WatcherTriggerReason::DiskFreeBytesBelow {
+                free_bytes: 10,
+                min_free_disk_bytes: 20,
+            }],
+        },
+    )?;
+    request.planner_options.target_free_disk_bytes = Some(40);
+
+    let report = run_background_cleanup_cycle(request, &NoopActiveProvider)?;
+
+    assert!(report.plan_id.is_some());
+    let plan_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(temp.path.join("plan.json"))?)?;
+    assert_eq!(
+        plan_json["invocation"]["planner_options"]["target_free_disk_bytes"],
+        40
+    );
+    assert_eq!(
+        plan_json["invocation"]["planner_options"]["minimum_reclaim_bytes"],
+        30
+    );
+    Ok(())
+}
+
+#[test]
 fn failure_after_start_appends_failed_record() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("background_runner_failure")?;
     let target_entry = temp.path.join("project/target/debug/incremental/cache.bin");

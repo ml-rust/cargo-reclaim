@@ -201,6 +201,10 @@ pub enum BackgroundTriggerReasonSummary {
         free_basis_points: u16,
         threshold_basis_points: u16,
     },
+    DiskFreeBytesBelow {
+        free_bytes: u64,
+        min_free_disk_bytes: u64,
+    },
 }
 
 impl BackgroundTriggerReasonSummary {
@@ -221,6 +225,13 @@ impl BackgroundTriggerReasonSummary {
             } => Self::DiskFreeBelow {
                 free_basis_points: *free_basis_points,
                 threshold_basis_points: *threshold_basis_points,
+            },
+            WatcherTriggerReason::DiskFreeBytesBelow {
+                free_bytes,
+                min_free_disk_bytes,
+            } => Self::DiskFreeBytesBelow {
+                free_bytes: *free_bytes,
+                min_free_disk_bytes: *min_free_disk_bytes,
             },
         }
     }

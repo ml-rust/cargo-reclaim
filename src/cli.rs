@@ -392,6 +392,8 @@ fn parse_plan_command(
         if !cli_keep_size {
             planner_options.keep_size_bytes = config.keep_size_bytes;
         }
+        planner_options.target_size_goal_bytes = config.policy_thresholds.target_size_goal_bytes;
+        planner_options.target_free_disk_bytes = config.background.target_free_disk_bytes;
         if !cli_keep_rustc_hashes {
             planner_options.keep_rustc_hashes = config_keep_rustc_hashes;
         }
@@ -910,6 +912,7 @@ skip = ["configured-root/vendor"]
 mode = "observe"
 whole_target = "delete"
 allow_unattended_whole_target_delete = false
+target_size_goal = "4 GiB"
 
 [scanner]
 follow_symlinks = true
@@ -977,6 +980,10 @@ keep_toolchains = ["stable"]
         assert_eq!(
             command.planner_options.keep_size_bytes,
             Some(8 * 1024 * 1024)
+        );
+        assert_eq!(
+            command.planner_options.target_size_goal_bytes,
+            Some(4 * 1024 * 1024 * 1024)
         );
         assert_eq!(command.planner_options.keep_rustc_hashes, [9]);
         assert!(command.planner_options.keep_installed_toolchains);

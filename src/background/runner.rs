@@ -18,7 +18,8 @@ use crate::policy::PolicyKind;
 use crate::scanner::ScannerOptions;
 use crate::toolchain_hash::{ToolchainHashError, resolve_command_toolchain_hash_options};
 use crate::watcher::{
-    WatcherDecision, WatcherDecisionInput, WatcherDecisionState, decide_watcher_thresholds,
+    WatcherDecision, WatcherDecisionInput, WatcherDecisionState, WatcherTriggerReason,
+    decide_watcher_thresholds,
 };
 
 use super::{
@@ -183,6 +184,7 @@ fn run_after_started(
     append_record_or_failure(&request, &triggered)?;
 
     let mut planner_options = request.planner_options.clone();
+    apply_target_size_goal_budget(&mut planner_options, &decision);
     resolve_command_toolchain_hash_options(&mut planner_options)
         .map_err(|source| failure(&request, BackgroundRunnerError::ToolchainHash(source)))?;
 
@@ -263,6 +265,63 @@ fn should_skip(state: WatcherDecisionState) -> bool {
             | WatcherDecisionState::NonThresholdMode
             | WatcherDecisionState::NotTriggered
     )
+}
+
+fn apply_target_size_goal_budget(options: &mut PlannerOptions, decision: &WatcherDecision) {
+    let Some(target_size_goal_bytes) = options.target_size_goal_bytes else {
+        apply_target_free_disk_budget(options, decision);
+        return;
+    };
+
+    let required_reclaim_bytes = decision
+        .reasons
+        .iter()
+        .filter_map(|reason| match reason {
+            WatcherTriggerReason::TargetSizeExceeded { size_bytes, .. } => {
+                size_bytes.checked_sub(target_size_goal_bytes)
+            }
+            WatcherTriggerReason::DiskFreeBelow { .. }
+            | WatcherTriggerReason::DiskFreeBytesBelow { .. } => None,
+        })
+        .max();
+
+    if let Some(required_reclaim_bytes) = required_reclaim_bytes {
+        options.minimum_reclaim_bytes = Some(
+            options
+                .minimum_reclaim_bytes
+                .unwrap_or(0)
+                .max(required_reclaim_bytes),
+        );
+    }
+
+    apply_target_free_disk_budget(options, decision);
+}
+
+fn apply_target_free_disk_budget(options: &mut PlannerOptions, decision: &WatcherDecision) {
+    let Some(target_free_disk_bytes) = options.target_free_disk_bytes else {
+        return;
+    };
+
+    let required_reclaim_bytes = decision
+        .reasons
+        .iter()
+        .filter_map(|reason| match reason {
+            WatcherTriggerReason::DiskFreeBytesBelow { free_bytes, .. } => {
+                target_free_disk_bytes.checked_sub(*free_bytes)
+            }
+            WatcherTriggerReason::TargetSizeExceeded { .. }
+            | WatcherTriggerReason::DiskFreeBelow { .. } => None,
+        })
+        .max();
+
+    if let Some(required_reclaim_bytes) = required_reclaim_bytes {
+        options.minimum_reclaim_bytes = Some(
+            options
+                .minimum_reclaim_bytes
+                .unwrap_or(0)
+                .max(required_reclaim_bytes),
+        );
+    }
 }
 
 fn plan_invocation(

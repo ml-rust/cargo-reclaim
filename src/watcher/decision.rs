@@ -12,6 +12,7 @@ pub enum WatcherMode {
 pub struct WatcherThresholds {
     pub max_target_size_bytes: Option<u64>,
     pub disk_free_below_basis_points: Option<u16>,
+    pub min_free_disk_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub struct WatcherDecisionInput {
     pub thresholds: WatcherThresholds,
     pub observed_targets: Vec<WatcherObservedTarget>,
     pub disk_free_basis_points: Option<u16>,
+    pub disk_free_bytes: Option<u64>,
     pub selected_policy: PolicyKind,
     pub unattended_allowed: bool,
 }
@@ -56,6 +58,10 @@ pub enum WatcherTriggerReason {
     DiskFreeBelow {
         free_basis_points: u16,
         threshold_basis_points: u16,
+    },
+    DiskFreeBytesBelow {
+        free_bytes: u64,
+        min_free_disk_bytes: u64,
     },
 }
 
@@ -116,6 +122,16 @@ fn threshold_reasons(input: &WatcherDecisionInput) -> Vec<WatcherTriggerReason> 
         reasons.push(WatcherTriggerReason::DiskFreeBelow {
             free_basis_points,
             threshold_basis_points,
+        });
+    }
+
+    if let (Some(free_bytes), Some(min_free_disk_bytes)) =
+        (input.disk_free_bytes, input.thresholds.min_free_disk_bytes)
+        && free_bytes < min_free_disk_bytes
+    {
+        reasons.push(WatcherTriggerReason::DiskFreeBytesBelow {
+            free_bytes,
+            min_free_disk_bytes,
         });
     }
 

@@ -145,6 +145,7 @@ impl WholeTargetConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PolicyThresholdConfig {
     pub max_target_size_bytes: Option<u64>,
+    pub target_size_goal_bytes: Option<u64>,
     pub unattended_allowed: Option<bool>,
 }
 
@@ -153,6 +154,11 @@ impl PolicyThresholdConfig {
         Ok(Self {
             max_target_size_bytes: document
                 .max_target_size
+                .as_deref()
+                .map(parse_config_size)
+                .transpose()?,
+            target_size_goal_bytes: document
+                .target_size_goal
                 .as_deref()
                 .map(parse_config_size)
                 .transpose()?,
@@ -167,6 +173,8 @@ pub struct BackgroundConfig {
     pub mode: Option<BackgroundMode>,
     pub check_every: Option<Duration>,
     pub only_when_disk_free_below_basis_points: Option<u16>,
+    pub min_free_disk_bytes: Option<u64>,
+    pub target_free_disk_bytes: Option<u64>,
 }
 
 impl BackgroundConfig {
@@ -183,6 +191,16 @@ impl BackgroundConfig {
                 .only_when_disk_free_below
                 .as_deref()
                 .map(parse_config_percentage_basis_points)
+                .transpose()?,
+            min_free_disk_bytes: document
+                .min_free_disk
+                .as_deref()
+                .map(parse_config_size)
+                .transpose()?,
+            target_free_disk_bytes: document
+                .target_free_disk
+                .as_deref()
+                .map(parse_config_size)
                 .transpose()?,
         })
     }

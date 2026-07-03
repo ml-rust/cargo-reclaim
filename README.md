@@ -73,6 +73,8 @@ cargo-reclaim scheduler service status --config reclaim.toml
 
 `scheduler preview` emits the platform-specific installation artifacts without writing them, including a systemd user service plus timer on Linux. `scheduler install` and `scheduler uninstall` can stay in dry-run mode or execute through the selected backend. Installed artifacts supervise `scheduler service run`, which keeps a resident background loop alive, records durable service state, and writes JSONL run logs. By default installs use the generic `cargo-reclaim` scheduler service; set `[scheduler] name = "workstation"` only when you intentionally want a separate named scheduler instance. `scheduler service run` and `scheduler service status` are config-driven; `status` reads persisted service state and can report `unknown` before the service has written state. `scheduler run` remains available as a single-cycle background execution entrypoint for diagnostics and compatibility.
 
+Threshold background mode supports both project and global disk pressure controls. `[policy] max_target_size` is the per-target high-water trigger and `target_size_goal` is the lower trim goal for budgeted selection. `[background] only_when_disk_free_below` keeps the existing percentage trigger; `min_free_disk` adds an absolute free-space trigger and `target_free_disk` sets the global free-space goal used to budget a cleanup run.
+
 ## Platform Notes
 
 - Linux uses `procfs` for active-process detection, so it can observe running `cargo` and `rustc` processes when `/proc` is readable; on non-Linux platforms active-process detection is not attempted and the planner proceeds without live process observation.

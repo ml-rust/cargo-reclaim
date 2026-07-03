@@ -37,6 +37,9 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
                 &PlannerOptions {
                     recent_write_keep_window: Some(Duration::from_secs(900)),
                     keep_size_bytes: Some(4096),
+                    target_size_goal_bytes: Some(1024 * 1024),
+                    target_free_disk_bytes: Some(2 * 1024 * 1024),
+                    minimum_reclaim_bytes: Some(512 * 1024),
                     keep_rustc_hashes: vec![1, 2],
                     keep_installed_toolchains: true,
                     keep_toolchains: vec!["stable".to_string()],
@@ -77,6 +80,26 @@ fn persists_and_loads_plan_with_stable_id_and_timestamps() -> Result<(), Box<dyn
     assert_eq!(
         loaded.body.invocation.planner_options.keep_size_bytes,
         Some(4096)
+    );
+    assert_eq!(
+        loaded
+            .body
+            .invocation
+            .planner_options
+            .target_size_goal_bytes,
+        Some(1024 * 1024)
+    );
+    assert_eq!(
+        loaded.body.invocation.planner_options.minimum_reclaim_bytes,
+        Some(512 * 1024)
+    );
+    assert_eq!(
+        loaded
+            .body
+            .invocation
+            .planner_options
+            .target_free_disk_bytes,
+        Some(2 * 1024 * 1024)
     );
     assert_eq!(
         loaded.body.invocation.planner_options.keep_rustc_hashes,

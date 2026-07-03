@@ -19,6 +19,10 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
         config.policy_thresholds.max_target_size_bytes,
         Some(5 * 1024 * 1024 * 1024)
     );
+    assert_eq!(
+        config.policy_thresholds.target_size_goal_bytes,
+        Some(4 * 1024 * 1024 * 1024)
+    );
     assert_eq!(config.policy_thresholds.unattended_allowed, Some(false));
     assert_eq!(config.scanner.follow_symlinks, Some(true));
     assert_eq!(config.scanner.allow_name_only_targets, Some(true));
@@ -48,6 +52,14 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
     assert_eq!(
         config.background.only_when_disk_free_below_basis_points,
         Some(1250)
+    );
+    assert_eq!(
+        config.background.min_free_disk_bytes,
+        Some(20 * 1024 * 1024 * 1024)
+    );
+    assert_eq!(
+        config.background.target_free_disk_bytes,
+        Some(30 * 1024 * 1024 * 1024)
     );
 
     Ok(())
