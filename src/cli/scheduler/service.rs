@@ -496,19 +496,11 @@ mod tests {
         let config = parse_config("version = 1\n")?;
         let paths = service_paths(Path::new("/tmp/projects/nodedb.toml"), &config)?;
 
-        assert!(
-            paths
-                .state_dir
-                .display()
-                .to_string()
-                .ends_with("cargo-reclaim")
-        );
+        assert!(paths.state_dir.ends_with("cargo-reclaim"));
         assert!(
             paths
                 .log_dir
-                .display()
-                .to_string()
-                .ends_with("cargo-reclaim/logs")
+                .ends_with(Path::new("cargo-reclaim").join("logs"))
         );
         Ok(())
     }
