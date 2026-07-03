@@ -1009,7 +1009,8 @@ fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 fn contains_path(text: &str, path: impl AsRef<Path>) -> bool {
-    text.replace('\\', "/")
+    text.replace("\\\\", "/")
+        .replace('\\', "/")
         .contains(&path.as_ref().display().to_string().replace('\\', "/"))
 }
 

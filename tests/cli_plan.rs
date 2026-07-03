@@ -1026,7 +1026,9 @@ fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 fn contains_path_fragment(text: &str, fragment: &str) -> bool {
-    text.replace('\\', "/").contains(fragment)
+    text.replace("\\\\", "/")
+        .replace('\\', "/")
+        .contains(fragment)
 }
 
 struct TestTemp {

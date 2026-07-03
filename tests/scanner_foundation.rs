@@ -386,7 +386,7 @@ fn cargo_config_build_dir_templates_resolve_workspace_root_and_cargo_cache_home(
         dirs.dirs[1].path,
         temp.path()
             .join("cargo-home/builds")
-            .join(temp.path().to_string_lossy().trim_start_matches('/'))
+            .join(workspace_root_template_path(temp.path()))
     );
     Ok(())
 }
@@ -421,6 +421,12 @@ fn env_for(temp: &std::path::Path) -> Vec<(String, String)> {
         ),
         ("HOME".to_string(), temp.join("home").display().to_string()),
     ]
+}
+
+fn workspace_root_template_path(path: &std::path::Path) -> String {
+    path.to_string_lossy()
+        .trim_start_matches('/')
+        .replace(":\\", ":")
 }
 
 fn write_manifest(path: &std::path::Path) -> Result<(), Box<dyn Error>> {
