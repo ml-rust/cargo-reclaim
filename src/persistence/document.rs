@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::inventory::InventoryOptions;
@@ -212,7 +213,7 @@ impl PersistedPlanSnapshot {
             input: PersistedPlanInput::from_input(&plan.input),
             entries: plan
                 .entries
-                .iter()
+                .par_iter()
                 .map(PersistedPlanEntry::from_entry)
                 .collect::<PlanPersistenceResult<Vec<_>>>()?,
             skipped_paths: plan

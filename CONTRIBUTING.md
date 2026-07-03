@@ -4,7 +4,7 @@ Thanks for contributing to [cargo-reclaim](https://crates.io/crates/cargo-reclai
 
 ## Prerequisites
 
-- Rust 1.85+ (edition 2024).
+- Rust 1.88+ (edition 2024).
 - A clean understanding of whether your change affects read-only reporting, plan generation, persisted plans, or deletion.
 - A clean working tree before opening a pull request, except for intentional files in the change.
 

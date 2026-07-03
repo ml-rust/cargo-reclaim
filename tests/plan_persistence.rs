@@ -383,6 +383,66 @@ fn persists_hash_grouped_intermediate_artifact_class() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+#[test]
+fn persists_entries_in_plan_order_when_converted_in_parallel() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("persistence_parallel_order")?;
+    let created_at = UNIX_EPOCH + Duration::from_secs(1_000);
+    let expires_at = created_at + Duration::from_secs(3_600);
+    let mut entries = Vec::new();
+
+    for index in 0..32 {
+        let path = temp
+            .path
+            .join(format!("target/debug/incremental/unit-{index:02}"));
+        fs::create_dir_all(&path)?;
+        fs::write(path.join("cache.bin"), format!("cache-{index}"))?;
+        entries.push(PlanEntry::new(
+            PathSnapshot::with_details(
+                path.clone(),
+                index + 1,
+                PathKind::Directory,
+                Some(created_at),
+            )?,
+            ArtifactClass::Incremental,
+            TargetEvidence::project_context("Cargo.toml")?,
+            PlanAction::Delete,
+            "derived intermediate output",
+            false,
+        )?);
+    }
+
+    let expected_paths = entries
+        .iter()
+        .map(|entry| entry.snapshot.path.display().to_string())
+        .collect::<Vec<_>>();
+    let plan = Plan::new(PlanInput::from_root(".")?, entries);
+    let document = persist_plan(
+        &plan,
+        SavePlanOptions {
+            created_at,
+            expires_at,
+            interactive_selection_modified: false,
+            invocation: PlanInvocation::new(
+                PlanCommandKind::Plan,
+                PolicyKind::Balanced,
+                &ScannerOptions::default(),
+                &InventoryOptions::default(),
+                &PlannerOptions::default(),
+            ),
+        },
+    )?;
+    let persisted_paths = document
+        .body
+        .plan
+        .entries
+        .iter()
+        .map(|entry| entry.snapshot.path.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(persisted_paths, expected_paths);
+    Ok(())
+}
+
 fn sample_plan(path: PathBuf, modified: SystemTime) -> Result<Plan, Box<dyn Error>> {
     fs::create_dir_all(&path)?;
     fs::write(path.join("cache.bin"), b"abc")?;

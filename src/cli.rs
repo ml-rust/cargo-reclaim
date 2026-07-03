@@ -563,7 +563,7 @@ fn inline_path(
         if let Some(value) = arg
             .as_os_str()
             .to_str()
-            .and_then(|value| value.strip_prefix(&format!("{option}=")))
+            .and_then(|value| value.strip_prefix(prefix))
         {
             if value.is_empty() {
                 return Err(CliError::Usage(format!("{option} requires a value")));

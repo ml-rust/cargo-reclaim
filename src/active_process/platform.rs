@@ -15,8 +15,7 @@ impl ActiveObservationProvider for PlatformActiveObservationProvider {
 
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = scope;
-            crate::planner::ActiveObservation::not_attempted()
+            super::sysinfo_provider::SysinfoActiveObservationProvider.observe(scope)
         }
     }
 }

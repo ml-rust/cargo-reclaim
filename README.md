@@ -108,7 +108,7 @@ From a checkout:
 cargo install --path .
 ```
 
-Supported Rust: `cargo-reclaim` targets Rust 1.85+ for edition 2024 support.
+Supported Rust: `cargo-reclaim` targets Rust 1.88+.
 
 ## Main Commands
 
@@ -237,7 +237,7 @@ target_free_disk = "200 GiB"
 
 ## Platform Notes
 
-- Linux uses `procfs` for active-process detection when `/proc` is readable; on non-Linux platforms active-process detection is not attempted and the planner proceeds without live process observation.
+- Linux uses `procfs` for active-process detection when `/proc` is readable; macOS and Windows use a native process-table provider through `sysinfo`.
 - Scheduler preview, install, and uninstall support `systemd-user` on Linux, `launchd` on macOS, and `task-scheduler` on Windows.
 - The scheduler service persists state and run logs. `scheduler service status` may return `unknown` until the service has written state, keeps `running` when PID liveness cannot be inspected, and reports `stale` when a saved running PID is definitely dead.
 - Cargo config resolution treats `build-dir = "{workspace-root}/{workspace-path-hash}"` as unsupported, so that template is reported instead of being used as a write target.

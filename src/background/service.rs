@@ -296,7 +296,7 @@ fn write_lock_file(mut file: &File, path: &Path) -> BackgroundServiceResult<()> 
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[allow(dead_code)]
 enum ProcessLiveness {
     Alive,
     Dead,

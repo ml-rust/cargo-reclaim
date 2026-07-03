@@ -20,7 +20,7 @@ pub mod watcher;
 
 pub use active_process::{
     ActiveObservationProvider, ActiveObservationScope, ProcfsActiveObservationProvider,
-    platform_active_observation_provider,
+    SysinfoActiveObservationProvider, platform_active_observation_provider,
 };
 pub use background::{
     BACKGROUND_RUN_LOG_SCHEMA_VERSION, BACKGROUND_SERVICE_STATE_SCHEMA_VERSION,

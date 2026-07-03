@@ -35,6 +35,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 - Config-driven scheduler execution.
 - Resident scheduler service support with platform preview/install/uninstall flows for Linux `systemd-user`, macOS `launchd`, and Windows Task Scheduler.
+- Active `cargo`/`rustc` process detection on Linux through procfs and on macOS/Windows through a native process-table provider.
 - Threshold background cleanup with per-target size ceilings, target size goals, absolute free-space triggers, and durable service state.
 - Durable scheduler run logs and state directories.
 
