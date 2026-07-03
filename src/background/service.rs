@@ -313,7 +313,7 @@ fn process_liveness(pid: u32) -> ProcessLiveness {
         if Path::new("/proc").join(pid.to_string()).exists() {
             ProcessLiveness::Alive
         } else {
-            ProcessLiveness::Dead
+            ProcessLiveness::Unknown
         }
     }
 

@@ -164,11 +164,44 @@ cargo-reclaim scheduler service status --config reclaim.toml
 
 Threshold background mode supports both project and global disk pressure controls. `[policy] max_target_size` is the per-target high-water trigger and `target_size_goal` is the lower trim goal for budgeted selection. `[background] only_when_disk_free_below` keeps the existing percentage trigger; `min_free_disk` adds an absolute free-space trigger and `target_free_disk` sets the global free-space goal used to budget a cleanup run.
 
+Recommended active-project scheduler shape:
+
+```toml
+version = 1
+roots = ["/home/you/Projects/my-crate"]
+
+[policy]
+mode = "balanced"
+whole_target = "off"
+allow_unattended_whole_target_delete = false
+max_target_size = "100 GiB"
+target_size_goal = "80 GiB"
+
+[planner]
+recent_write_keep_window = "4h"
+
+[scheduler]
+at = "04:15"
+mode = "cleanup"
+policy = "balanced"
+allow_unattended_cleanup = true
+allow_unattended_high_policy = true
+state_dir = "/home/you/.local/state/cargo-reclaim/my-crate"
+log_dir = "/home/you/.local/state/cargo-reclaim/my-crate/logs"
+
+[background]
+enabled = true
+mode = "threshold"
+check_every = "30m"
+min_free_disk = "150 GiB"
+target_free_disk = "200 GiB"
+```
+
 ## Platform Notes
 
 - Linux uses `procfs` for active-process detection, so it can observe running `cargo` and `rustc` processes when `/proc` is readable; on non-Linux platforms active-process detection is not attempted and the planner proceeds without live process observation.
 - `scheduler preview`, `install`, and `uninstall` support backend-specific artifacts for `systemd-user` on Linux, `launchd` on macOS, and `task-scheduler` on Windows.
-- The scheduler service is a resident loop started by installed service artifacts; it persists service state and run logs, while `scheduler service status` reports the last recorded state, may return `unknown` until the service has written state, and reports `stale` when a saved running PID is definitely dead.
+- The scheduler service is a resident loop started by installed service artifacts; it persists service state and run logs, while `scheduler service status` reports the last recorded state, may return `unknown` until the service has written state, leaves `running` unchanged when PID liveness cannot be inspected from the current environment, and reports `stale` when a saved running PID is definitely dead.
 - Cargo config resolution treats `build-dir = "{workspace-root}/{workspace-path-hash}"` as unsupported, so that template is reported instead of being used as a write target.
 
 ## Cargo Config Commands

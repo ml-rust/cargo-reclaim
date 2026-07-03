@@ -248,6 +248,40 @@ fn running_state_with_dead_pid_refreshes_to_stale() {
     );
 }
 
+#[test]
+fn running_state_with_unverifiable_pid_stays_running() {
+    let state = BackgroundServiceState {
+        schema_version: 1,
+        status: BackgroundServiceStatus::Running,
+        pid: Some(u32::MAX),
+        started_at: Some(PersistedTimestamp {
+            unix_seconds: 10,
+            nanoseconds: 0,
+        }),
+        last_run_id: Some("scheduler-test".to_owned()),
+        last_run_at: None,
+        next_run_at: Some(PersistedTimestamp {
+            unix_seconds: 20,
+            nanoseconds: 0,
+        }),
+        consecutive_failures: 0,
+        last_problem: None,
+    };
+
+    let refreshed = refresh_background_service_state(state);
+
+    assert_eq!(refreshed.status, BackgroundServiceStatus::Running);
+    assert_eq!(refreshed.pid, Some(u32::MAX));
+    assert_eq!(
+        refreshed.next_run_at,
+        Some(PersistedTimestamp {
+            unix_seconds: 20,
+            nanoseconds: 0,
+        })
+    );
+    assert_eq!(refreshed.last_problem, None);
+}
+
 #[derive(Default)]
 struct FakeSleeper {
     sleeps: Vec<Duration>,
