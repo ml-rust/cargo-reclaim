@@ -94,6 +94,31 @@ fn configured_override_preserves_source_label() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn configured_override_takes_precedence_over_cache_marker() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("configured_override_marker")?;
+    let target = temp.path().join("custom-target");
+    fs::create_dir(&target)?;
+    fs::write(
+        target.join("CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )?;
+    let target_dir_override = TargetDirOverride::new(&target, "CARGO_TARGET_DIR")?;
+
+    let candidate = classify_target_candidate(
+        &target,
+        None,
+        Some(&target_dir_override),
+        &ScannerOptions::default(),
+    )?;
+
+    assert_eq!(
+        candidate.evidence,
+        Some(TargetEvidence::configured_path("CARGO_TARGET_DIR")?)
+    );
+    Ok(())
+}
+
+#[test]
 fn configured_override_uses_lexical_path_matching() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("configured_override_normalized")?;
     let target = temp.path().join("target");

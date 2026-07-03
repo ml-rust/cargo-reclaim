@@ -98,6 +98,18 @@ pub(crate) fn classify_target_candidate_with_overrides(
     let normalized_path = lexically_normalize(path);
     let build_root = configured_build_root(target_dir_overrides);
 
+    if let Some(target_dir_override) = target_dir_overrides
+        .iter()
+        .find(|override_dir| lexically_normalize(&override_dir.path) == normalized_path)
+    {
+        return Ok(TargetCandidate::candidate(
+            path.to_path_buf(),
+            TargetCandidateKind::CargoTargetDir,
+            TargetEvidence::configured_path(target_dir_override.source.label.clone())?,
+            target_context(path, project, build_root),
+        ));
+    }
+
     if path.join(CACHEDIR_TAG).is_file() {
         return Ok(TargetCandidate::candidate(
             path.to_path_buf(),
@@ -112,18 +124,6 @@ pub(crate) fn classify_target_candidate_with_overrides(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::strong_marker(RUSTC_INFO)?,
-            target_context(path, project, build_root),
-        ));
-    }
-
-    if let Some(target_dir_override) = target_dir_overrides
-        .iter()
-        .find(|override_dir| lexically_normalize(&override_dir.path) == normalized_path)
-    {
-        return Ok(TargetCandidate::candidate(
-            path.to_path_buf(),
-            TargetCandidateKind::CargoTargetDir,
-            TargetEvidence::configured_path(target_dir_override.source.label.clone())?,
             target_context(path, project, build_root),
         ));
     }

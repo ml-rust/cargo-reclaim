@@ -67,6 +67,27 @@ fn root_snapshot_measures_target_directory_without_relative_child() -> Result<()
 
 #[test]
 #[cfg(unix)]
+fn root_snapshot_counts_child_symlink_without_following_it() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::symlink;
+
+    let temp = TestTemp::new("inventory_root_child_symlink")?;
+    let target = temp.path().join("target");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&target)?;
+    fs::write(&outside, b"outside")?;
+    symlink(&outside, target.join("linked"))?;
+
+    let snapshot = snapshot_path(&target, &InventoryOptions::default())?;
+
+    assert_eq!(snapshot.path, target);
+    assert!(snapshot.size_bytes > 0);
+    assert!(snapshot.size_bytes < 4096);
+    assert_eq!(snapshot.path_kind, PathKind::Directory);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
 fn symlink_snapshot_is_rejected_by_default_and_followed_when_enabled() -> Result<(), Box<dyn Error>>
 {
     use std::os::unix::fs::symlink;

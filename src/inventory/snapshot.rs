@@ -81,12 +81,35 @@ fn measure_path(
     visited_dirs: &mut HashSet<PathBuf>,
     deep_directory_measurement: bool,
 ) -> ReclaimResult<MeasuredPath> {
+    measure_path_with_symlink_policy(
+        path,
+        options,
+        visited_dirs,
+        deep_directory_measurement,
+        true,
+    )
+}
+
+fn measure_path_with_symlink_policy(
+    path: &Path,
+    options: &InventoryOptions,
+    visited_dirs: &mut HashSet<PathBuf>,
+    deep_directory_measurement: bool,
+    reject_unfollowed_symlink: bool,
+) -> ReclaimResult<MeasuredPath> {
     let metadata = symlink_metadata(path)?;
 
     if metadata.file_type().is_symlink() {
         if !options.follow_symlinks {
-            return Err(ReclaimError::InventorySymlinkNotFollowed {
-                path: path.to_path_buf(),
+            if reject_unfollowed_symlink {
+                return Err(ReclaimError::InventorySymlinkNotFollowed {
+                    path: path.to_path_buf(),
+                });
+            }
+            return Ok(MeasuredPath {
+                size_bytes: metadata.len(),
+                path_kind: PathKind::Symlink,
+                modified: metadata.modified().ok(),
             });
         }
 
@@ -172,7 +195,8 @@ fn measure_directory(
         if is_configured_skipped(&entry.path(), options) {
             continue;
         }
-        let measured = measure_path(&entry.path(), options, visited_dirs, true)?;
+        let measured =
+            measure_path_with_symlink_policy(&entry.path(), options, visited_dirs, true, false)?;
         size_bytes = size_bytes.saturating_add(measured.size_bytes);
     }
 

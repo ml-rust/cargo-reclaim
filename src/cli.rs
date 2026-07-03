@@ -19,6 +19,7 @@ mod output;
 mod persistence;
 mod plan;
 mod scheduler;
+mod targets;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
 use cargo_config::{CargoConfigCommand, parse_cargo_config_command, run_cargo_config_command};
@@ -29,6 +30,7 @@ use output::write_help;
 use persistence::{SavePlanRequest, parse_days, parse_duration, parse_size};
 use plan::run_plan_command;
 use scheduler::{SchedulerPreviewCommand, parse_scheduler_command, run_scheduler_preview};
+use targets::{TargetsCommand, parse_targets_command, run_targets_command};
 
 pub fn run() -> ExitCode {
     let mut stdout = io::stdout();
@@ -78,6 +80,7 @@ fn run_with_args(
         Command::SchedulerPreview(command) => run_scheduler_preview(&command, stdout),
         Command::CargoConfig(command) => run_cargo_config_command(&command, stdout),
         Command::CargoHome(command) => run_cargo_home_command(&command, stdout),
+        Command::Targets(command) => run_targets_command(&command, stdout),
     }
 }
 
@@ -91,6 +94,7 @@ enum Command {
     SchedulerPreview(SchedulerPreviewCommand),
     CargoConfig(CargoConfigCommand),
     CargoHome(CargoHomeCommand),
+    Targets(TargetsCommand),
 }
 
 #[derive(Debug)]
@@ -139,8 +143,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "scheduler" => parse_scheduler_command(args).map(Command::SchedulerPreview),
         "cargo-config" => parse_cargo_config_command(args).map(Command::CargoConfig),
         "cargo-home" => parse_cargo_home_command(args).map(Command::CargoHome),
+        "targets" | "target" => parse_targets_command(args).map(Command::Targets),
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, or `help`"
+            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `targets`, or `help`"
         ))),
     }
 }
