@@ -81,6 +81,8 @@ jobs:
         run: |
           VERSION="${{ needs.validate-version.outputs.version }}"
           sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" Cargo.toml
+          # Keep --locked publish valid after stamping prerelease tag versions.
+          cargo generate-lockfile
           echo "Stamped package version to $VERSION"
       - name: Publish cargo-reclaim
         env:
