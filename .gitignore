@@ -4,12 +4,6 @@
 Cargo.toml.orig
 *.crate
 
-# Data directories (fallback default or manual testing)
-/data/
-/nodedb-data/
-**/*.rs.bk
-*.pdb
-
 # IDE and Editor files
 .vscode/
 .idea/

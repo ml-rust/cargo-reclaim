@@ -1,8 +1,6 @@
 # cargo-reclaim
 
-cargo-reclaim is a trust-first Rust artifact cleanup tool for Cargo projects and Cargo home data. It scans for reclaimable build outputs and cache entries, builds dry-run plans, persists plans for later validation, and only removes data after a fresh revalidation pass.
-
-Supported Rust: `cargo-reclaim` targets Rust 1.85+ for edition 2024 support.
+cargo-reclaim keeps Rust workstations from filling up with Cargo build artifacts by finding target directories, trimming stale deps and incremental caches, and running safe scheduled cleanup without wiping active builds. It is a smarter, background-friendly companion to `cargo clean` for large Rust projects and long-running development machines.
 
 ## Why Not `cargo clean`?
 
