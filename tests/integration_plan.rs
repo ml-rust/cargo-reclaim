@@ -5,10 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ActiveObservation, ActiveObservationProvider, ActiveObservationScope, ArtifactClass, CargoTool,
-    InventoryOptions, ObservedCargoProcess, PathKind, PlanAction, PlannerOptions, PolicyKind,
-    ScannerOptions, TargetCandidate, TargetCandidateKind, TargetEvidence, ToolchainHashError,
-    ToolchainHashResolver, ToolchainHashResult, WholeTargetMode, build_plan_from_roots,
-    build_plan_from_roots_with_active_observation,
+    InventoryOptions, ObservedCargoProcess, PathKind, PlanAction, PlanInput, PlanSkipReason,
+    PlannerOptions, PolicyKind, ScanItem, ScannerOptions, TargetCandidate, TargetCandidateKind,
+    TargetEvidence, ToolchainHashError, ToolchainHashResolver, ToolchainHashResult,
+    WholeTargetMode, build_plan_from_roots, build_plan_from_roots_with_active_observation,
     build_plan_from_roots_with_active_observation_provider, build_plan_from_roots_with_options,
     build_plan_from_scan_items, planner_candidates_from_target_root,
     resolve_toolchain_hash_options,
@@ -552,6 +552,41 @@ fn scanner_skips_are_carried_as_plan_diagnostics() -> Result<(), Box<dyn Error>>
         entry.snapshot.path == temp.path().join("target/debug/incremental")
             && entry.action == PlanAction::Delete
     }));
+    Ok(())
+}
+
+#[test]
+fn vanished_inventory_paths_become_plan_skipped_diagnostics() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_vanished_inventory")?;
+    let target = temp.path().join("target");
+
+    let plan = build_plan_from_scan_items(
+        PlanInput::from_root(temp.path())?,
+        PolicyKind::Balanced,
+        [ScanItem::TargetCandidate(TargetCandidate {
+            path: target.clone(),
+            kind: TargetCandidateKind::CargoTargetDir,
+            evidence: Some(TargetEvidence::strong_marker("CACHEDIR.TAG")?),
+            target_context: None,
+            skip_reason: None,
+        })],
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+
+    assert!(plan.entries.is_empty());
+    assert_eq!(plan.totals.skipped_path_count, 1);
+    assert_eq!(plan.skipped_paths[0].path, target);
+    assert_eq!(
+        plan.skipped_paths[0].reason,
+        PlanSkipReason::VanishedDuringInventory
+    );
+    assert!(
+        plan.skipped_paths[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("active build"))
+    );
     Ok(())
 }
 

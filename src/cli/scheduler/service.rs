@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use cargo_reclaim::{
-    BackgroundServiceOptions, BackgroundServicePaths, BackgroundServiceState,
-    BackgroundServiceStatus, DEFAULT_SCHEDULER_INSTANCE_NAME, ReclaimConfig, SchedulerPlatform,
-    default_instance_log_dir, default_instance_state_dir, default_log_dir, default_state_dir,
-    load_config_from_path, read_background_service_state, refresh_background_service_state,
+    BackgroundRunEventKind, BackgroundRunLogRecord, BackgroundServiceOptions,
+    BackgroundServicePaths, BackgroundServiceState, BackgroundServiceStatus,
+    DEFAULT_SCHEDULER_INSTANCE_NAME, ReclaimConfig, SchedulerPlatform, default_instance_log_dir,
+    default_instance_state_dir, default_log_dir, default_state_dir, load_config_from_path,
+    read_background_run_log, read_background_service_state, refresh_background_service_state,
     run_background_service, scheduler_instance_name_from_config,
 };
 
@@ -180,6 +181,7 @@ fn run_service(
             "scheduler-service-run",
             &summary.state,
             Some(summary.cycles_completed),
+            None,
         )?,
     }
     Ok(ExitCode::SUCCESS)
@@ -195,9 +197,16 @@ fn run_status(
     let state = read_background_service_state(&paths.state_path)?
         .map(refresh_background_service_state)
         .unwrap_or_else(BackgroundServiceState::missing);
+    let run_summary = read_run_summary(&paths.log_dir.join("runs.jsonl"))?;
     match command.output_format {
-        OutputFormat::Terminal => write_status_terminal(output, &state)?,
-        OutputFormat::Json => write_status_json(output, "scheduler-service-status", &state, None)?,
+        OutputFormat::Terminal => write_status_terminal(output, &state, run_summary.as_ref())?,
+        OutputFormat::Json => write_status_json(
+            output,
+            "scheduler-service-status",
+            &state,
+            None,
+            run_summary.as_ref(),
+        )?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -256,6 +265,7 @@ fn default_service_log_dir(instance_name: &str) -> PathBuf {
 fn write_status_terminal(
     output: &mut impl Write,
     state: &BackgroundServiceState,
+    run_summary: Option<&RunSummary>,
 ) -> Result<(), CliError> {
     writeln!(
         output,
@@ -271,6 +281,23 @@ fn write_status_terminal(
     if let Some(problem) = &state.last_problem {
         writeln!(output, "problem: {problem}")?;
     }
+    if let Some(summary) = run_summary {
+        writeln!(output, "run log records: {}", summary.record_count)?;
+        writeln!(output, "started cycles: {}", summary.started_count)?;
+        writeln!(
+            output,
+            "apply completed cycles: {}",
+            summary.apply_completed_count
+        )?;
+        writeln!(output, "failed cycles: {}", summary.failed_count)?;
+        writeln!(output, "applied bytes: {}", summary.applied_bytes)?;
+        if let Some(run_id) = &summary.last_event_run_id {
+            writeln!(output, "last event run: {run_id}")?;
+        }
+        if let Some(kind) = summary.last_event_kind {
+            writeln!(output, "last event: {}", run_event_kind_label(kind))?;
+        }
+    }
     Ok(())
 }
 
@@ -279,6 +306,7 @@ fn write_status_json(
     command: &'static str,
     state: &BackgroundServiceState,
     cycles_completed: Option<usize>,
+    run_summary: Option<&RunSummary>,
 ) -> Result<(), CliError> {
     let document = serde_json::json!({
         "command": command,
@@ -292,10 +320,100 @@ fn write_status_json(
         "consecutive_failures": state.consecutive_failures,
         "last_problem": state.last_problem,
         "cycles_completed": cycles_completed,
+        "run_log": run_summary.map(JsonRunSummary::from),
     });
     serde_json::to_writer(&mut *output, &document)?;
     writeln!(output)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunSummary {
+    record_count: usize,
+    started_count: usize,
+    apply_completed_count: usize,
+    failed_count: usize,
+    applied_bytes: u64,
+    last_event_run_id: Option<String>,
+    last_event_kind: Option<BackgroundRunEventKind>,
+}
+
+#[derive(serde::Serialize)]
+struct JsonRunSummary {
+    record_count: usize,
+    started_count: usize,
+    apply_completed_count: usize,
+    failed_count: usize,
+    applied_bytes: u64,
+    last_event_run_id: Option<String>,
+    last_event: Option<&'static str>,
+}
+
+impl From<&RunSummary> for JsonRunSummary {
+    fn from(summary: &RunSummary) -> Self {
+        Self {
+            record_count: summary.record_count,
+            started_count: summary.started_count,
+            apply_completed_count: summary.apply_completed_count,
+            failed_count: summary.failed_count,
+            applied_bytes: summary.applied_bytes,
+            last_event_run_id: summary.last_event_run_id.clone(),
+            last_event: summary.last_event_kind.map(run_event_kind_label),
+        }
+    }
+}
+
+fn read_run_summary(path: &std::path::Path) -> Result<Option<RunSummary>, CliError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    Ok(Some(summarize_run_log(&read_background_run_log(path)?)))
+}
+
+fn summarize_run_log(records: &[BackgroundRunLogRecord]) -> RunSummary {
+    let mut summary = RunSummary {
+        record_count: records.len(),
+        started_count: 0,
+        apply_completed_count: 0,
+        failed_count: 0,
+        applied_bytes: 0,
+        last_event_run_id: None,
+        last_event_kind: None,
+    };
+
+    for record in records {
+        match record.kind {
+            BackgroundRunEventKind::Started => summary.started_count += 1,
+            BackgroundRunEventKind::ApplyCompleted => {
+                summary.apply_completed_count += 1;
+                if let Some(apply) = &record.apply {
+                    summary.applied_bytes = summary
+                        .applied_bytes
+                        .saturating_add(apply.totals.applied_bytes);
+                }
+            }
+            BackgroundRunEventKind::Failed => summary.failed_count += 1,
+            BackgroundRunEventKind::Triggered
+            | BackgroundRunEventKind::PlanBuilt
+            | BackgroundRunEventKind::Skipped => {}
+        }
+        summary.last_event_run_id = Some(record.run_id.clone());
+        summary.last_event_kind = Some(record.kind);
+    }
+
+    summary
+}
+
+fn run_event_kind_label(kind: BackgroundRunEventKind) -> &'static str {
+    match kind {
+        BackgroundRunEventKind::Started => "started",
+        BackgroundRunEventKind::Triggered => "triggered",
+        BackgroundRunEventKind::PlanBuilt => "plan_built",
+        BackgroundRunEventKind::ApplyCompleted => "apply_completed",
+        BackgroundRunEventKind::Skipped => "skipped",
+        BackgroundRunEventKind::Failed => "failed",
+    }
 }
 
 fn status_label(status: BackgroundServiceStatus) -> &'static str {

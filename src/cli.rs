@@ -629,6 +629,7 @@ enum CliError {
     CargoHome(cargo_reclaim::CargoHomeError),
     BackgroundRunner(cargo_reclaim::BackgroundRunnerError),
     BackgroundService(cargo_reclaim::BackgroundServiceError),
+    BackgroundRunLog(cargo_reclaim::BackgroundRunLogError),
     ToolchainHash(ToolchainHashError),
 }
 
@@ -647,6 +648,7 @@ impl std::fmt::Display for CliError {
             Self::CargoHome(error) => error.fmt(formatter),
             Self::BackgroundRunner(error) => error.fmt(formatter),
             Self::BackgroundService(error) => error.fmt(formatter),
+            Self::BackgroundRunLog(error) => error.fmt(formatter),
             Self::ToolchainHash(error) => error.fmt(formatter),
         }
     }
@@ -669,6 +671,7 @@ impl CliError {
             Self::CargoHome(_) => "cargo_home",
             Self::BackgroundRunner(_) => "background_runner",
             Self::BackgroundService(_) => "background_service",
+            Self::BackgroundRunLog(_) => "background_run_log",
             Self::ToolchainHash(_) => "toolchain_hash",
         }
     }
@@ -683,7 +686,7 @@ impl CliError {
             | Self::Json(_)
             | Self::Persistence(_) => 1,
             Self::Scheduler(_) => 2,
-            Self::CargoHome(_) | Self::BackgroundRunner(_) => 1,
+            Self::CargoHome(_) | Self::BackgroundRunner(_) | Self::BackgroundRunLog(_) => 1,
             Self::ToolchainHash(_) => 1,
             Self::BackgroundService(error) => match error {
                 cargo_reclaim::BackgroundServiceError::Config(_)
@@ -765,6 +768,12 @@ impl From<cargo_reclaim::BackgroundRunnerError> for CliError {
 impl From<cargo_reclaim::BackgroundServiceError> for CliError {
     fn from(error: cargo_reclaim::BackgroundServiceError) -> Self {
         Self::BackgroundService(error)
+    }
+}
+
+impl From<cargo_reclaim::BackgroundRunLogError> for CliError {
+    fn from(error: cargo_reclaim::BackgroundRunLogError) -> Self {
+        Self::BackgroundRunLog(error)
     }
 }
 

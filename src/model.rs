@@ -103,6 +103,7 @@ pub enum PlanSkipReason {
     CargoConfigUnsupported,
     CargoConfigProblem,
     ReadError,
+    VanishedDuringInventory,
 }
 
 impl PlanSkipReason {
@@ -117,6 +118,7 @@ impl PlanSkipReason {
             Self::CargoConfigUnsupported => "cargo_config_unsupported",
             Self::CargoConfigProblem => "cargo_config_problem",
             Self::ReadError => "read_error",
+            Self::VanishedDuringInventory => "vanished_during_inventory",
         }
     }
 }

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
-use crate::error::ReclaimResult;
+use crate::error::{ReclaimError, ReclaimResult};
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
 use crate::inventory::{append_fingerprint_group_candidates, snapshot_path};
 use crate::model::{ArtifactClass, Plan, PlanInput, PlanSkip, PlanSkipReason};
@@ -306,29 +306,50 @@ fn build_plan_from_scan_items_with_active_observation_impl(
         if planner_options.whole_target_mode == WholeTargetMode::Off
             || has_skipped_descendant(&target_candidate.path, &inventory_options)
         {
-            let mut target_candidates = planner_candidates_from_target_root_with_context(
+            let mut target_candidates = match planner_candidates_from_target_root_with_context(
                 &target_candidate.path,
                 evidence.clone(),
                 target_context.clone(),
                 &inventory_options,
-            )?;
-            append_fingerprint_group_candidates(
+            ) {
+                Ok(candidates) => candidates,
+                Err(error) => {
+                    if push_vanished_inventory_skip(&error, &mut skipped_paths)? {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
+            match append_fingerprint_group_candidates(
                 &target_candidate.path,
                 &evidence,
                 &target_context,
                 &inventory_options,
                 &planner_options.keep_rustc_hashes,
                 &mut target_candidates,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(error) => {
+                    if push_vanished_inventory_skip(&error, &mut skipped_paths)? {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
             candidates.extend(target_candidates);
         } else {
+            let snapshot = match snapshot_path(&target_candidate.path, &inventory_options) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    if push_vanished_inventory_skip(&error, &mut skipped_paths)? {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
             candidates.push(
-                PlannerCandidate::new(
-                    snapshot_path(&target_candidate.path, &inventory_options)?,
-                    ArtifactClass::WholeTarget,
-                    evidence,
-                )
-                .with_target_context(target_context),
+                PlannerCandidate::new(snapshot, ArtifactClass::WholeTarget, evidence)
+                    .with_target_context(target_context),
             );
         }
     }
@@ -346,6 +367,22 @@ fn build_plan_from_scan_items_with_active_observation_impl(
         plan.entries,
         skipped_paths,
     ))
+}
+
+fn push_vanished_inventory_skip(
+    error: &ReclaimError,
+    skipped_paths: &mut Vec<PlanSkip>,
+) -> ReclaimResult<bool> {
+    let ReclaimError::MissingInventoryPath { path } = error else {
+        return Ok(false);
+    };
+
+    skipped_paths.push(PlanSkip::new(
+        path.clone(),
+        PlanSkipReason::VanishedDuringInventory,
+        Some("path vanished while building the cleanup plan; this usually means an active build changed target contents".to_string()),
+    )?);
+    Ok(true)
 }
 
 fn plan_skip_from_scan_skip(skip: ScanSkip) -> ReclaimResult<PlanSkip> {

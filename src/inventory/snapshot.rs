@@ -192,8 +192,14 @@ fn symlink_metadata(path: &Path) -> ReclaimResult<Metadata> {
 }
 
 fn inventory_read_error(path: &Path, error: io::Error) -> ReclaimError {
-    ReclaimError::InventoryRead {
-        path: path.to_path_buf(),
-        message: error.to_string(),
+    if error.kind() == io::ErrorKind::NotFound {
+        ReclaimError::MissingInventoryPath {
+            path: path.to_path_buf(),
+        }
+    } else {
+        ReclaimError::InventoryRead {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        }
     }
 }
