@@ -103,6 +103,10 @@ fn cargo_artifact_dir_index(components: &[&OsStr]) -> Option<usize> {
 fn classify_file_artifact(components: &[&OsStr]) -> ArtifactClass {
     let extension = file_extension(components);
 
+    if is_deps_output_location(components) {
+        return ArtifactClass::DepsOutput;
+    }
+
     if is_known_intermediate_file_location(components) {
         if extension.is_some_and(|extension| extension == "d") {
             return ArtifactClass::DepInfo;
@@ -122,18 +126,6 @@ fn classify_file_artifact(components: &[&OsStr]) -> ArtifactClass {
             }
             Some(extension) if extension == "exe" => return ArtifactClass::FinalExecutable,
             None => return ArtifactClass::FinalExecutable,
-            _ => {}
-        }
-    }
-
-    if is_deps_final_output_location(components) {
-        match extension {
-            Some(extension) if extension == "rlib" => return ArtifactClass::FinalRlib,
-            Some(extension) if extension == "wasm" => return ArtifactClass::FinalWasm,
-            Some(extension) if extension == "exe" => return ArtifactClass::FinalExecutable,
-            Some(extension) if has_dynamic_or_static_library_extension(extension) => {
-                return ArtifactClass::FinalLibrary;
-            }
             _ => {}
         }
     }
@@ -174,7 +166,7 @@ fn is_final_output_location(components: &[&OsStr]) -> bool {
     }
 }
 
-fn is_deps_final_output_location(components: &[&OsStr]) -> bool {
+fn is_deps_output_location(components: &[&OsStr]) -> bool {
     match components {
         [profile, dir, _] => is_profile_root(profile) && *dir == "deps",
         [triple, profile, dir, _] => {

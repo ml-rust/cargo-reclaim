@@ -39,6 +39,9 @@ impl PolicyKind {
                 | ArtifactClass::Fingerprint
                 | ArtifactClass::Tmp
                 | ArtifactClass::FingerprintGroupIntermediate
+                | ArtifactClass::StaleDeps
+                | ArtifactClass::StaleIncremental
+                | ArtifactClass::DepsOutput
                 | ArtifactClass::DepInfo
                 | ArtifactClass::ObjectMetadata
         )

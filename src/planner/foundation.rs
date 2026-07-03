@@ -84,7 +84,20 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
-    if is_recently_modified(&snapshot.modified, options, now) {
+    if artifact_class == ArtifactClass::DepsOutput && options.recent_write_keep_window.is_none() {
+        return PlanEntry::preserved(
+            snapshot,
+            artifact_class,
+            evidence,
+            "deps outputs require a recent-write keep window before automatic deletion",
+        );
+    }
+
+    if !matches!(
+        artifact_class,
+        ArtifactClass::StaleDeps | ArtifactClass::StaleIncremental
+    ) && is_recently_modified(&snapshot.modified, options, now)
+    {
         return PlanEntry::new(
             snapshot,
             artifact_class,

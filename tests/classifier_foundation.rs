@@ -23,15 +23,15 @@ fn stable_directories_classify_from_target_relative_paths() {
 
 #[test]
 fn intermediate_files_classify_only_in_known_locations() {
-    for (path, artifact_class) in [
-        ("debug/deps/example.d", ArtifactClass::DepInfo),
-        ("release/deps/example.o", ArtifactClass::ObjectMetadata),
-        (
-            "x86_64-unknown-linux-gnu/debug/deps/example.obj",
-            ArtifactClass::ObjectMetadata,
-        ),
+    for path in [
+        "debug/deps/example.d",
+        "release/deps/example.o",
+        "x86_64-unknown-linux-gnu/debug/deps/example.obj",
     ] {
-        assert_eq!(classify_target_relative_path(path), artifact_class);
+        assert_eq!(
+            classify_target_relative_path(path),
+            ArtifactClass::DepsOutput
+        );
     }
 
     assert_eq!(
@@ -84,25 +84,25 @@ fn final_outputs_classify_from_profile_roots() {
 }
 
 #[test]
-fn extension_bearing_deps_outputs_remain_protected_final_outputs() {
-    for (path, artifact_class) in [
-        ("debug/deps/libexample.rlib", ArtifactClass::FinalRlib),
-        ("debug/deps/libexample.so", ArtifactClass::FinalLibrary),
-        ("release/deps/example.exe", ArtifactClass::FinalExecutable),
-        ("release/deps/example.wasm", ArtifactClass::FinalWasm),
-        (
-            "x86_64-unknown-linux-gnu/debug/deps/libexample.rlib",
-            ArtifactClass::FinalRlib,
-        ),
+fn direct_deps_outputs_are_rebuildable_deps_outputs_not_profile_root_final_outputs() {
+    for path in [
+        "debug/deps/libexample.rlib",
+        "debug/deps/libexample.rmeta",
+        "debug/deps/libexample.so",
+        "release/deps/example.exe",
+        "release/deps/example.wasm",
+        "debug/deps/example-123",
+        "x86_64-unknown-linux-gnu/debug/deps/libexample.rlib",
     ] {
-        assert_eq!(classify_target_relative_path(path), artifact_class);
-        assert!(PolicyKind::is_default_protected_output(artifact_class));
+        assert_eq!(
+            classify_target_relative_path(path),
+            ArtifactClass::DepsOutput
+        );
     }
 
-    assert_eq!(
-        classify_target_relative_path("debug/deps/example-123"),
-        ArtifactClass::Deps
-    );
+    assert!(!PolicyKind::is_default_protected_output(
+        ArtifactClass::DepsOutput
+    ));
 }
 
 #[test]

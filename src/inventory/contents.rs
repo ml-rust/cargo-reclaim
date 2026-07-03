@@ -75,8 +75,11 @@ fn collect_child_candidates(
         return Ok(());
     }
 
-    let symlink_metadata = fs::symlink_metadata(&full_path)
-        .map_err(|error| inventory_read_error(&full_path, error))?;
+    let symlink_metadata = match fs::symlink_metadata(&full_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(inventory_read_error(&full_path, error)),
+    };
 
     if symlink_metadata.file_type().is_symlink() && !options.follow_symlinks {
         return Ok(());
@@ -156,10 +159,17 @@ fn collect_child_candidates(
 }
 
 fn should_emit_shallow_candidate(child_path: &Path) -> bool {
-    classify_target_relative_path(child_path) != ArtifactClass::Unknown
+    !matches!(
+        classify_target_relative_path(child_path),
+        ArtifactClass::Unknown | ArtifactClass::Deps
+    )
 }
 
 fn should_descend_shallow(child_path: &Path) -> bool {
+    if classify_target_relative_path(child_path) == ArtifactClass::Deps {
+        return true;
+    }
+
     let components = child_path.components().count();
     if components == 0 || components >= 3 {
         return false;

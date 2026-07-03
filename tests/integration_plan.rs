@@ -70,7 +70,7 @@ fn scanned_project_target_builds_policy_plan_from_artifact_boundaries() -> Resul
 }
 
 #[test]
-fn scanned_project_target_keeps_deps_as_shallow_preserved_boundary_by_default()
+fn scanned_project_target_keeps_deps_outputs_preserved_without_keep_window()
 -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_project_deps_plan")?;
     write_manifest(temp.path())?;
@@ -88,23 +88,15 @@ fn scanned_project_target_keeps_deps_as_shallow_preserved_boundary_by_default()
         &InventoryOptions::default(),
     )?;
 
-    let deps_entry = entry_for(&plan, deps.clone())?;
-    assert_eq!(deps_entry.artifact_class, ArtifactClass::Deps);
-    assert_eq!(deps_entry.action, PlanAction::Preserve);
-
     for child in [
         deps.join("sample-123.d"),
         deps.join("sample-123.o"),
         deps.join("libsample-123.rlib"),
         deps.join("sample-123"),
     ] {
-        assert!(
-            plan.entries
-                .iter()
-                .all(|entry| entry.snapshot.path != child),
-            "default inventory should not descend into {}",
-            child.display()
-        );
+        let entry = entry_for(&plan, child)?;
+        assert_eq!(entry.artifact_class, ArtifactClass::DepsOutput);
+        assert_eq!(entry.action, PlanAction::Preserve);
     }
 
     Ok(())
@@ -153,19 +145,15 @@ fn scanned_project_target_adds_hash_grouped_intermediates() -> Result<(), Box<dy
     );
     assert_eq!(profile.action, PlanAction::Delete);
 
-    for skipped_deps_child in [
+    for deps_child in [
         target.join(format!("debug/deps/sample-{hash}.json")),
         target.join(format!("debug/deps/sample-{hash}.d")),
         target.join(format!("debug/deps/libsample-{hash}.rlib")),
         target.join(format!("debug/deps/sample-{hash}.rmeta")),
     ] {
-        assert!(
-            plan.entries
-                .iter()
-                .all(|entry| entry.snapshot.path != skipped_deps_child),
-            "default inventory should not descend into {}",
-            skipped_deps_child.display()
-        );
+        let entry = entry_for(&plan, deps_child)?;
+        assert_eq!(entry.artifact_class, ArtifactClass::DepsOutput);
+        assert_eq!(entry.action, PlanAction::Preserve);
     }
 
     let binary = entry_for(&plan, target.join(format!("debug/sample-{hash}")))?;
@@ -976,6 +964,106 @@ fn protected_outputs_are_preserved_from_scanned_target_contents() -> Result<(), 
         assert_eq!(entry.action, PlanAction::Preserve);
     }
 
+    Ok(())
+}
+
+#[test]
+fn deps_outputs_are_reclaimable_only_with_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("integration_deps_output_window")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/deps"))?;
+    let deps_binary = temp
+        .path()
+        .join("target/debug/deps/sample-0123456789abcdef");
+    let deps_rlib = temp
+        .path()
+        .join("target/debug/deps/libsample-0123456789abcdef.rlib");
+    fs::write(&deps_binary, b"bin")?;
+    fs::write(&deps_rlib, b"rlib")?;
+
+    let without_window = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+    for path in [&deps_binary, &deps_rlib] {
+        let entry = entry_for(&without_window, path.to_path_buf())?;
+        assert_eq!(entry.artifact_class, ArtifactClass::DepsOutput);
+        assert_eq!(entry.action, PlanAction::Preserve);
+    }
+
+    let with_window = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            recent_write_keep_window: Some(std::time::Duration::from_secs(1)),
+            ..PlannerOptions::default()
+        },
+        SystemTime::now() + std::time::Duration::from_secs(10),
+    )?;
+    for path in [&deps_binary, &deps_rlib] {
+        let entry = entry_for(&with_window, path.to_path_buf())?;
+        assert_eq!(entry.artifact_class, ArtifactClass::DepsOutput);
+        assert_eq!(entry.action, PlanAction::Delete);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn persisted_deps_output_delete_entry_uses_fast_snapshot_revalidation() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("integration_deps_output_persistence")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/deps"))?;
+    let deps_binary = temp
+        .path()
+        .join("target/debug/deps/sample-0123456789abcdef");
+    fs::write(&deps_binary, b"bin")?;
+
+    let plan = build_plan_from_roots_with_options(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+        &PlannerOptions {
+            recent_write_keep_window: Some(std::time::Duration::from_secs(1)),
+            ..PlannerOptions::default()
+        },
+        SystemTime::now() + std::time::Duration::from_secs(10),
+    )?;
+    let created_at = SystemTime::now();
+    let document = cargo_reclaim::persist_plan(
+        &plan,
+        cargo_reclaim::SavePlanOptions {
+            created_at,
+            expires_at: created_at + std::time::Duration::from_secs(300),
+            interactive_selection_modified: false,
+            invocation: cargo_reclaim::PlanInvocation::new(
+                cargo_reclaim::PlanCommandKind::Plan,
+                PolicyKind::Balanced,
+                &ScannerOptions::default(),
+                &InventoryOptions::default(),
+                &PlannerOptions {
+                    recent_write_keep_window: Some(std::time::Duration::from_secs(1)),
+                    ..PlannerOptions::default()
+                },
+            ),
+        },
+    )?;
+    let value = serde_json::to_value(&document)?;
+    let deps_entry = value["plan"]["entries"]
+        .as_array()
+        .expect("entries should be an array")
+        .iter()
+        .find(|entry| entry["artifact_class"] == "deps_output")
+        .expect("persisted deps output entry");
+
+    assert_eq!(deps_entry["snapshot"]["path_kind"], "file");
+    assert!(deps_entry["snapshot"].get("content_fingerprint").is_none());
     Ok(())
 }
 

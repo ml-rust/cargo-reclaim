@@ -423,7 +423,7 @@ fn parse_plan_command(
         follow_symlinks: scanner_options.follow_symlinks,
         skipped_paths: scanner_options.skipped_paths.clone(),
         deep_target_scan: false,
-        deep_directory_measurement: false,
+        deep_directory_measurement: true,
     };
 
     finish_plan_command(FinishPlanCommand {

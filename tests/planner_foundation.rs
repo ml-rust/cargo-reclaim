@@ -57,6 +57,133 @@ fn strong_incremental_balanced_policy_yields_delete() -> Result<(), Box<dyn Erro
 }
 
 #[test]
+fn stale_deps_balanced_policy_yields_delete() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate(
+        candidate(
+            "target/debug/deps/sample-0123456789abcdef",
+            100,
+            ArtifactClass::StaleDeps,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Balanced,
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    assert!(!entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn stale_deps_conservative_policy_preserves() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate(
+        candidate(
+            "target/debug/deps/sample-0123456789abcdef",
+            100,
+            ArtifactClass::StaleDeps,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Conservative,
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    Ok(())
+}
+
+#[test]
+fn stale_incremental_balanced_policy_yields_delete() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate(
+        candidate(
+            "target/debug/incremental/sample-1abc/s-old",
+            100,
+            ArtifactClass::StaleIncremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Balanced,
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    assert!(!entry.requires_confirmation);
+    Ok(())
+}
+
+#[test]
+fn stale_incremental_conservative_policy_preserves() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate(
+        candidate(
+            "target/debug/incremental/sample-1abc/s-old",
+            100,
+            ArtifactClass::StaleIncremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Conservative,
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    Ok(())
+}
+
+#[test]
+fn deps_output_requires_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate(
+        candidate(
+            "target/debug/deps/sample-0123456789abcdef",
+            100,
+            ArtifactClass::DepsOutput,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        )?,
+        PolicyKind::Balanced,
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    assert!(entry.policy_reason.contains("keep window"));
+    Ok(())
+}
+
+#[test]
+fn deps_output_inside_recent_write_keep_window_skips_active() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/deps/sample-0123456789abcdef",
+            100,
+            ArtifactClass::DepsOutput,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            95,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    Ok(())
+}
+
+#[test]
+fn deps_output_older_than_recent_write_keep_window_yields_delete() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/deps/sample-0123456789abcdef",
+            100,
+            ArtifactClass::DepsOutput,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            70,
+        )?,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
 fn recent_write_keep_window_skips_active_delete_candidate() -> Result<(), Box<dyn Error>> {
     let entry = plan_candidate_with_options(
         candidate_with_modified(

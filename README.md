@@ -12,7 +12,7 @@ Use `cargo clean` when you are inside one project and want to delete that projec
 
 - It finds Cargo target directories across project trees and reports their measured size largest-first.
 - It lets you clean selected target directories interactively instead of manually finding and typing paths.
-- It can trim partial artifacts such as incremental/build/doc outputs without always deleting a whole `target` directory.
+- It can trim partial artifacts such as incremental, build-script, fingerprint, temporary, stale hashed `deps` variants, old hashed `deps` outputs, and stale incremental session or unit variants without always deleting a whole `target` directory.
 - It protects delayed or automated cleanup with dry-run plans, persisted plans, and fresh revalidation before deletion.
 - It understands Cargo config target dirs, shared target dirs, ignore/skip rules, policy modes, recent-write preservation, and active process checks.
 - It can run as a resident scheduler service, so projects stay below a size ceiling without a manual cleanup habit.
@@ -28,7 +28,7 @@ cargo install cargo-reclaim
 cargo install --path .
 ```
 
-The default mode is conservative: `scan` and `plan` are dry-run only, `apply` validates a saved plan before execution, and `--json` is available for stable machine-readable output. The CLI does not expose a GUI and it does not pretend to modify Cargo state unless a command explicitly says it will.
+The default policy is `balanced`, but the default workflow is dry-run-first: `scan` and `plan` only report, `apply` validates a saved plan before execution, and `--yes` is required before deletion. `--json` is available for stable machine-readable output. The CLI does not expose a GUI and it does not pretend to modify Cargo state unless a command explicitly says it will.
 
 ## Safety Model
 
@@ -79,7 +79,7 @@ cargo-reclaim targets clean --interactive --yes ~/Projects
 # Delete one known target directory without typing it into a saved plan.
 cargo-reclaim targets clean --target ~/Projects/old-crate/target --yes
 
-# Trim incremental artifacts from an active project, preserving recent writes.
+# Trim stale incremental and deps artifacts from an active project without deleting the whole target.
 cargo-reclaim plan ~/Projects/my-crate --policy balanced --whole-target off --keep-recent-writes 4h --save-plan /tmp/my-crate-reclaim.json
 cargo-reclaim apply --plan /tmp/my-crate-reclaim.json
 cargo-reclaim apply --plan /tmp/my-crate-reclaim.json --yes
@@ -115,6 +115,12 @@ cargo-reclaim cargo-home apply --plan /tmp/cargo-home-reclaim.json --yes
 5. Add `--yes` only when you want the validated delete actions to run.
 
 This revalidation step is the core safety boundary: the tool is designed to refuse stale assumptions rather than delete artifacts from an old snapshot.
+
+Balanced partial cleanup includes stale hashed files under `target/*/deps` when they can be distinguished from the newest hash variant for the same artifact family. If `.fingerprint` metadata still exists, stale deps matching uses it as an anchor and respects kept rustc/toolchain hashes; if the fingerprint directory has already been removed, duplicate hashed deps files can still be treated as orphaned stale variants. The `deps` directory itself remains preserved.
+
+Balanced partial cleanup can also trim direct hashed files under `target/*/deps`, including test binaries, `.rlib`, `.rmeta`, dep-info, and object-style outputs, but only when a recent-write keep window is configured. Without `--keep-recent-writes` or an equivalent scheduler config value, these entries are reported as preserved `deps_output` instead of being deleted automatically.
+
+Balanced partial cleanup also includes stale rustc incremental cache entries under `target/*/incremental`. It keeps the newest session per compile unit, keeps the newest unit variant per compile-unit family, requires rustc incremental marker files before treating a session as stale, and preserves the `incremental` parent directory itself when stale child entries are planned.
 
 ## Cargo Home Commands
 
@@ -174,6 +180,18 @@ cargo-reclaim cargo-config apply --preview path/to/preview.json --yes
 ```
 
 `cargo-config recommend` reports read-only Cargo build output configuration guidance. `cargo-config preview` builds a dry-run write plan for Cargo config files and does not modify files. `cargo-config apply` applies a saved preview only with `--preview <path> --yes`; it does not accept `--project`.
+
+## Policy Modes
+
+| Policy         | Default? | Deletes automatically in a plan?                                                                                                                                                                                                                                                                                                  | Typical use                                                                       |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `observe`      | No       | Nothing. All cleanup-capable entries are preserved for reporting.                                                                                                                                                                                                                                                                 | Inventory, dashboards, CI/reporting, or first run on an unknown machine.          |
+| `conservative` | No       | Narrow low-risk classes: `incremental` and temporary artifacts.                                                                                                                                                                                                                                                                   | Active projects where you want minimal rebuild impact.                            |
+| `balanced`     | Yes      | Default removable classes: `incremental`, build-script caches, fingerprints, temporary artifacts, stale fingerprint-group intermediates, stale hashed `deps` variants, old hashed `deps` outputs when a recent-write keep window is configured, stale incremental sessions or unit variants, dep-info files, and object metadata. | Normal workstation cleanup and scheduled partial trimming.                        |
+| `aggressive`   | No       | Same default removable classes as `balanced`; whole-target deletion is still separate and requires `--whole-target delete` or confirmed selected target cleanup.                                                                                                                                                                  | One-off deep cleanup when rebuild cost is acceptable.                             |
+| `custom`       | No       | Currently follows the default removable class set used by `balanced`.                                                                                                                                                                                                                                                             | Config-driven future policy tuning while preserving the same safety checks today. |
+
+Protected by default in every non-whole-target policy: whole target directories, docs, packages, timings, final executables, final libraries, final `.rlib` files, final `.wasm` files, and unknown artifacts. Weak name-only target evidence requires confirmation instead of automatic deletion.
 
 ## Common Options
 

@@ -415,6 +415,9 @@ fn requires_content_fingerprint(entry: &PlanEntry) -> bool {
         entry.action,
         PlanAction::Delete | PlanAction::RequiresConfirmation
     ) && entry.artifact_class != ArtifactClass::WholeTarget
+        && entry.artifact_class != ArtifactClass::StaleDeps
+        && entry.artifact_class != ArtifactClass::StaleIncremental
+        && entry.artifact_class != ArtifactClass::DepsOutput
         && entry.snapshot.path_kind == PathKind::File
 }
 

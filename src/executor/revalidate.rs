@@ -80,6 +80,9 @@ fn revalidate_entry_snapshot(entry: &PersistedPlanEntry) -> Result<(), String> {
 
     if entry.artifact_class == "whole_target" {
         revalidate_whole_target(entry)?;
+    } else if entry.artifact_class == "stale_deps" || entry.artifact_class == "deps_output" {
+        // Stale deps and deps outputs can include multi-GB binaries. Snapshot kind, size, and mtime revalidation keeps
+        // apply fast enough for routine cleanup while still rejecting changed files.
     } else {
         revalidate_content_fingerprint(&entry.snapshot)?;
     }

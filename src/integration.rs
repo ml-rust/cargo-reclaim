@@ -4,8 +4,12 @@ use std::time::SystemTime;
 
 use crate::active_process::{ActiveObservationProvider, ActiveObservationScope};
 use crate::error::{ReclaimError, ReclaimResult};
+use crate::inventory::snapshot_path;
 use crate::inventory::{InventoryOptions, planner_candidates_from_target_root_with_context};
-use crate::inventory::{append_fingerprint_group_candidates, snapshot_path};
+use crate::inventory::{
+    append_fingerprint_group_candidates, append_stale_deps_candidates,
+    append_stale_incremental_candidates,
+};
 use crate::model::{ArtifactClass, Plan, PlanInput, PlanSkip, PlanSkipReason};
 use crate::planner::{
     ActiveObservation, PlannerCandidate, PlannerOptions, TargetContext, WholeTargetMode,
@@ -326,6 +330,37 @@ fn build_plan_from_scan_items_with_active_observation_impl(
                 &target_context,
                 &inventory_options,
                 &planner_options.keep_rustc_hashes,
+                &mut target_candidates,
+            ) {
+                Ok(()) => {}
+                Err(error) => {
+                    if push_vanished_inventory_skip(&error, &mut skipped_paths)? {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+            match append_stale_deps_candidates(
+                &target_candidate.path,
+                &evidence,
+                &target_context,
+                &inventory_options,
+                &planner_options.keep_rustc_hashes,
+                &mut target_candidates,
+            ) {
+                Ok(()) => {}
+                Err(error) => {
+                    if push_vanished_inventory_skip(&error, &mut skipped_paths)? {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+            match append_stale_incremental_candidates(
+                &target_candidate.path,
+                &evidence,
+                &target_context,
+                &inventory_options,
                 &mut target_candidates,
             ) {
                 Ok(()) => {}

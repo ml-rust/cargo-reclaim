@@ -266,7 +266,7 @@ fn inventory_options_from_config(config: &ReclaimConfig) -> InventoryOptions {
         follow_symlinks: config.scanner.follow_symlinks.unwrap_or(false),
         skipped_paths: config.skipped_paths.clone(),
         deep_target_scan: false,
-        deep_directory_measurement: false,
+        deep_directory_measurement: true,
     }
 }
 

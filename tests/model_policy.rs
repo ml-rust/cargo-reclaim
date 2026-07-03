@@ -44,6 +44,23 @@ fn user_facing_outputs_are_protected_by_default() {
 }
 
 #[test]
+fn stale_cache_classes_are_balanced_removable_but_not_conservative() -> Result<(), Box<dyn Error>> {
+    let action = PlanAction::Delete;
+    let evidence = TargetEvidence::strong_marker("CACHEDIR.TAG")?;
+
+    for artifact_class in [
+        ArtifactClass::StaleDeps,
+        ArtifactClass::StaleIncremental,
+        ArtifactClass::DepsOutput,
+    ] {
+        assert!(PolicyKind::is_default_removable_class(artifact_class));
+        assert!(PolicyKind::Balanced.allows_delete(&action, artifact_class, &evidence));
+        assert!(!PolicyKind::Conservative.allows_delete(&action, artifact_class, &evidence));
+    }
+    Ok(())
+}
+
+#[test]
 fn observe_policy_never_allows_delete() -> Result<(), Box<dyn Error>> {
     let action = PlanAction::Delete;
     let evidence = TargetEvidence::strong_marker("CACHEDIR.TAG")?;
