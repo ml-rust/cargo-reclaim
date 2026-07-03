@@ -1,5 +1,7 @@
 use std::ffi::OsString;
+use std::fs;
 use std::io::Write;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -8,8 +10,8 @@ use cargo_reclaim::{
     BackgroundServicePaths, BackgroundServiceState, BackgroundServiceStatus,
     DEFAULT_SCHEDULER_INSTANCE_NAME, ReclaimConfig, SchedulerPlatform, default_instance_log_dir,
     default_instance_state_dir, default_log_dir, default_state_dir, load_config_from_path,
-    read_background_run_log, read_background_service_state, refresh_background_service_state,
-    run_background_service, scheduler_instance_name_from_config,
+    read_background_service_state, refresh_background_service_state, run_background_service,
+    scheduler_instance_name_from_config,
 };
 
 use super::super::{CliError, OutputFormat, inline_config_path, next_path, next_value};
@@ -283,6 +285,13 @@ fn write_status_terminal(
     }
     if let Some(summary) = run_summary {
         writeln!(output, "run log records: {}", summary.record_count)?;
+        if summary.corrupt_record_count > 0 {
+            writeln!(
+                output,
+                "corrupt run log records: {}",
+                summary.corrupt_record_count
+            )?;
+        }
         writeln!(output, "started cycles: {}", summary.started_count)?;
         writeln!(
             output,
@@ -330,6 +339,7 @@ fn write_status_json(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RunSummary {
     record_count: usize,
+    corrupt_record_count: usize,
     started_count: usize,
     apply_completed_count: usize,
     failed_count: usize,
@@ -341,6 +351,7 @@ struct RunSummary {
 #[derive(serde::Serialize)]
 struct JsonRunSummary {
     record_count: usize,
+    corrupt_record_count: usize,
     started_count: usize,
     apply_completed_count: usize,
     failed_count: usize,
@@ -353,6 +364,7 @@ impl From<&RunSummary> for JsonRunSummary {
     fn from(summary: &RunSummary) -> Self {
         Self {
             record_count: summary.record_count,
+            corrupt_record_count: summary.corrupt_record_count,
             started_count: summary.started_count,
             apply_completed_count: summary.apply_completed_count,
             failed_count: summary.failed_count,
@@ -368,12 +380,39 @@ fn read_run_summary(path: &std::path::Path) -> Result<Option<RunSummary>, CliErr
         return Ok(None);
     }
 
-    Ok(Some(summarize_run_log(&read_background_run_log(path)?)))
+    Ok(Some(read_run_summary_lossy(path)?))
+}
+
+fn read_run_summary_lossy(path: &std::path::Path) -> Result<RunSummary, CliError> {
+    let file = fs::File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut records = Vec::new();
+    let mut corrupt_record_count = 0;
+
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<BackgroundRunLogRecord>(&line) {
+            Ok(record)
+                if record.schema_version == cargo_reclaim::BACKGROUND_RUN_LOG_SCHEMA_VERSION =>
+            {
+                records.push(record);
+            }
+            Ok(_) | Err(_) => corrupt_record_count += 1,
+        }
+    }
+
+    let mut summary = summarize_run_log(&records);
+    summary.corrupt_record_count = corrupt_record_count;
+    Ok(summary)
 }
 
 fn summarize_run_log(records: &[BackgroundRunLogRecord]) -> RunSummary {
     let mut summary = RunSummary {
         record_count: records.len(),
+        corrupt_record_count: 0,
         started_count: 0,
         apply_completed_count: 0,
         failed_count: 0,

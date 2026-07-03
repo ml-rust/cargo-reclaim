@@ -77,6 +77,7 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
     fs::write(
         temp.path().join("logs/runs.jsonl"),
         r#"{"schema_version":1,"run_id":"run-1","recorded_at":{"unix_seconds":20,"nanoseconds":0},"event":"started","trigger":null,"selected_policy":"conservative","plan":null,"skipped_projects":[],"apply":null,"recommendations":[],"problems":[]}
+not-json
 {"schema_version":1,"run_id":"run-1","recorded_at":{"unix_seconds":21,"nanoseconds":0},"event":"apply_completed","trigger":null,"selected_policy":"conservative","plan":null,"skipped_projects":[],"apply":{"plan_id":"sha256:test","dry_run":false,"totals":{"entry_count":2,"delete_candidate_count":1,"would_delete_count":0,"skipped_count":1,"stale_skip_count":0,"applied_count":1,"failed_count":0,"would_delete_bytes":0,"applied_bytes":1234},"notable_entries":[]},"recommendations":[],"problems":[]}
 "#,
     )?;
@@ -93,6 +94,7 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(document["pid"], pid);
     assert_eq!(document["last_run_id"], "scheduler-status-test");
     assert_eq!(document["run_log"]["record_count"], 2);
+    assert_eq!(document["run_log"]["corrupt_record_count"], 1);
     assert_eq!(document["run_log"]["started_count"], 1);
     assert_eq!(document["run_log"]["apply_completed_count"], 1);
     assert_eq!(document["run_log"]["failed_count"], 0);
@@ -109,6 +111,7 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
     assert!(stdout.contains(&format!("pid: {pid}")));
     assert!(stdout.contains("last run: scheduler-status-test"));
     assert!(stdout.contains("run log records: 2"));
+    assert!(stdout.contains("corrupt run log records: 1"));
     assert!(stdout.contains("apply completed cycles: 1"));
     assert!(stdout.contains("applied bytes: 1234"));
     assert!(stdout.contains("last event: apply_completed"));
