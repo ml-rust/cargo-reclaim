@@ -6,12 +6,12 @@ mod plan;
 
 pub use generate::generate_scheduler_artifacts;
 pub use model::{
-    GeneratedArtifact, GeneratedArtifactKind, Schedule, SchedulerCommandOutput, SchedulerError,
-    SchedulerExecutionReport, SchedulerExecutionStatus, SchedulerExecutionStep,
-    SchedulerExecutionTotals, SchedulerMode, SchedulerOperation, SchedulerOperationPlan,
-    SchedulerPlanStep, SchedulerPlatform, SchedulerReport, SchedulerRequest, artifact_kind_label,
-    execution_status_label, mode_label, operation_label, platform_label, policy_label,
-    scheduler_instance_name_from_config,
+    DEFAULT_SCHEDULER_INSTANCE_NAME, GeneratedArtifact, GeneratedArtifactKind, Schedule,
+    SchedulerCommandOutput, SchedulerError, SchedulerExecutionReport, SchedulerExecutionStatus,
+    SchedulerExecutionStep, SchedulerExecutionTotals, SchedulerMode, SchedulerOperation,
+    SchedulerOperationPlan, SchedulerPlanStep, SchedulerPlatform, SchedulerReport,
+    SchedulerRequest, artifact_kind_label, execution_status_label, mode_label, operation_label,
+    platform_label, policy_label, scheduler_instance_name_from_config,
 };
 pub use operation_executor::{
     RealSchedulerOperationBackend, RemoveFileOutcome, SchedulerOperationBackend,

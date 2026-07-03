@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::model::{SchedulerPlatform, SchedulerRequest};
+use super::model::{DEFAULT_SCHEDULER_INSTANCE_NAME, SchedulerPlatform, SchedulerRequest};
 
 pub(crate) struct SchedulerPaths {
     pub(crate) instance_name: String,
@@ -16,19 +16,35 @@ pub(crate) struct SchedulerPaths {
 
 impl SchedulerPaths {
     pub(crate) fn new(request: &SchedulerRequest) -> Self {
+        let is_default_instance = request.instance_name == DEFAULT_SCHEDULER_INSTANCE_NAME;
         let state_dir = request.state_dir.clone().unwrap_or_else(|| {
-            default_instance_state_dir(request.platform, &request.instance_name)
+            if is_default_instance {
+                default_state_dir(request.platform)
+            } else {
+                default_instance_state_dir(request.platform, &request.instance_name)
+            }
         });
-        let log_dir = request
-            .log_dir
-            .clone()
-            .unwrap_or_else(|| default_instance_log_dir(request.platform, &request.instance_name));
+        let log_dir = request.log_dir.clone().unwrap_or_else(|| {
+            if is_default_instance {
+                default_log_dir(request.platform)
+            } else {
+                default_instance_log_dir(request.platform, &request.instance_name)
+            }
+        });
         let runner_name = match request.platform {
             SchedulerPlatform::SystemdUser | SchedulerPlatform::Launchd => {
-                format!("scheduler-runner-{}.sh", request.instance_name)
+                if is_default_instance {
+                    "scheduler-runner.sh".to_string()
+                } else {
+                    format!("scheduler-runner-{}.sh", request.instance_name)
+                }
             }
             SchedulerPlatform::TaskScheduler => {
-                format!("scheduler-runner-{}.ps1", request.instance_name)
+                if is_default_instance {
+                    "scheduler-runner.ps1".to_string()
+                } else {
+                    format!("scheduler-runner-{}.ps1", request.instance_name)
+                }
             }
         };
         let runner_path = match request.platform {
@@ -38,10 +54,26 @@ impl SchedulerPaths {
         };
         Self {
             instance_name: request.instance_name.clone(),
-            systemd_service_name: format!("cargo-reclaim-{}.service", request.instance_name),
-            systemd_timer_name: format!("cargo-reclaim-{}.timer", request.instance_name),
-            launchd_label: format!("com.cargo-reclaim.{}", request.instance_name),
-            task_name: format!(r"\cargo-reclaim\{}", request.instance_name),
+            systemd_service_name: instance_file_name(
+                is_default_instance,
+                "cargo-reclaim.service",
+                &format!("cargo-reclaim-{}.service", request.instance_name),
+            ),
+            systemd_timer_name: instance_file_name(
+                is_default_instance,
+                "cargo-reclaim.timer",
+                &format!("cargo-reclaim-{}.timer", request.instance_name),
+            ),
+            launchd_label: instance_file_name(
+                is_default_instance,
+                "com.cargo-reclaim",
+                &format!("com.cargo-reclaim.{}", request.instance_name),
+            ),
+            task_name: instance_file_name(
+                is_default_instance,
+                r"\cargo-reclaim",
+                &format!(r"\cargo-reclaim\{}", request.instance_name),
+            ),
             log_path: log_dir.join("scheduler.log"),
             state_dir,
             log_dir,
@@ -50,8 +82,12 @@ impl SchedulerPaths {
     }
 
     pub(crate) fn task_scheduler_xml_path(&self) -> PathBuf {
-        self.state_dir
-            .join(format!("cargo-reclaim-{}.xml", self.instance_name))
+        if self.instance_name == DEFAULT_SCHEDULER_INSTANCE_NAME {
+            self.state_dir.join("cargo-reclaim.xml")
+        } else {
+            self.state_dir
+                .join(format!("cargo-reclaim-{}.xml", self.instance_name))
+        }
     }
 
     pub(crate) fn systemd_service_path(&self) -> PathBuf {
@@ -83,6 +119,14 @@ impl SchedulerPaths {
             .unwrap_or_else(|| {
                 PathBuf::from("Library/LaunchAgents").join(format!("{}.plist", self.launchd_label))
             })
+    }
+}
+
+fn instance_file_name(is_default_instance: bool, default_name: &str, named: &str) -> String {
+    if is_default_instance {
+        default_name.to_string()
+    } else {
+        named.to_string()
     }
 }
 

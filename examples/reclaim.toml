@@ -24,7 +24,6 @@ keep_installed_toolchains = false
 keep_toolchains = []
 
 [scheduler]
-name = "workstation"
 at = "04:15"
 mode = "observe"
 policy = "conservative"

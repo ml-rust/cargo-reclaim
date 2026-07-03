@@ -5,9 +5,10 @@ use std::process::ExitCode;
 
 use cargo_reclaim::{
     BackgroundServiceOptions, BackgroundServicePaths, BackgroundServiceState,
-    BackgroundServiceStatus, ReclaimConfig, SchedulerPlatform, default_instance_log_dir,
-    default_instance_state_dir, load_config_from_path, read_background_service_state,
-    refresh_background_service_state, run_background_service, scheduler_instance_name_from_config,
+    BackgroundServiceStatus, DEFAULT_SCHEDULER_INSTANCE_NAME, ReclaimConfig, SchedulerPlatform,
+    default_instance_log_dir, default_instance_state_dir, default_log_dir, default_state_dir,
+    load_config_from_path, read_background_service_state, refresh_background_service_state,
+    run_background_service, scheduler_instance_name_from_config,
 };
 
 use super::super::{CliError, OutputFormat, inline_config_path, next_path, next_value};
@@ -223,13 +224,33 @@ fn service_paths(
     let instance_name =
         scheduler_instance_name_from_config(config.scheduler.name.as_deref(), config_path)?;
     Ok(BackgroundServicePaths::new(
-        config.scheduler.state_dir.clone().unwrap_or_else(|| {
-            default_instance_state_dir(SchedulerPlatform::SystemdUser, &instance_name)
-        }),
-        config.scheduler.log_dir.clone().unwrap_or_else(|| {
-            default_instance_log_dir(SchedulerPlatform::SystemdUser, &instance_name)
-        }),
+        config
+            .scheduler
+            .state_dir
+            .clone()
+            .unwrap_or_else(|| default_service_state_dir(&instance_name)),
+        config
+            .scheduler
+            .log_dir
+            .clone()
+            .unwrap_or_else(|| default_service_log_dir(&instance_name)),
     ))
+}
+
+fn default_service_state_dir(instance_name: &str) -> PathBuf {
+    if instance_name == DEFAULT_SCHEDULER_INSTANCE_NAME {
+        default_state_dir(SchedulerPlatform::SystemdUser)
+    } else {
+        default_instance_state_dir(SchedulerPlatform::SystemdUser, instance_name)
+    }
+}
+
+fn default_service_log_dir(instance_name: &str) -> PathBuf {
+    if instance_name == DEFAULT_SCHEDULER_INSTANCE_NAME {
+        default_log_dir(SchedulerPlatform::SystemdUser)
+    } else {
+        default_instance_log_dir(SchedulerPlatform::SystemdUser, instance_name)
+    }
 }
 
 fn write_status_terminal(
@@ -314,7 +335,7 @@ mod tests {
     use super::service_paths;
 
     #[test]
-    fn service_paths_use_instance_scoped_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    fn service_paths_use_generic_defaults_without_name() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config("version = 1\n")?;
         let paths = service_paths(Path::new("/tmp/projects/nodedb.toml"), &config)?;
 
@@ -323,14 +344,14 @@ mod tests {
                 .state_dir
                 .display()
                 .to_string()
-                .contains("cargo-reclaim/nodedb-")
+                .ends_with("cargo-reclaim")
         );
         assert!(
             paths
                 .log_dir
                 .display()
                 .to_string()
-                .contains("cargo-reclaim/logs/nodedb-")
+                .ends_with("cargo-reclaim/logs")
         );
         Ok(())
     }

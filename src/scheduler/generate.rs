@@ -122,8 +122,12 @@ fn task_scheduler_artifacts(
         GeneratedArtifact {
             kind: GeneratedArtifactKind::TaskSchedulerXml,
             intended_install_path: PathBuf::from(format!(
-                r"Task Scheduler Library\cargo-reclaim-{}.xml",
-                paths.instance_name
+                r"Task Scheduler Library\{}",
+                paths
+                    .task_scheduler_xml_path()
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("cargo-reclaim.xml")
             )),
             contents: format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n<Task version=\"1.4\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n  <Triggers>\n    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>\n  </Triggers>\n  <Settings>\n    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n    <RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>3</Count>\n    </RestartOnFailure>\n  </Settings>\n  <Actions Context=\"Author\">\n    <Exec>\n      <Command>powershell.exe</Command>\n      <Arguments>{}</Arguments>\n    </Exec>\n  </Actions>\n</Task>\n",

@@ -109,14 +109,15 @@ pub use scanner::{
 };
 pub use scheduler::RealSchedulerOperationBackend;
 pub use scheduler::{
-    GeneratedArtifact, GeneratedArtifactKind, RemoveFileOutcome, Schedule, SchedulerCommandOutput,
-    SchedulerError, SchedulerExecutionReport, SchedulerExecutionStatus, SchedulerExecutionStep,
-    SchedulerExecutionTotals, SchedulerMode, SchedulerOperation, SchedulerOperationBackend,
-    SchedulerOperationPlan, SchedulerPlanStep, SchedulerPlatform, SchedulerReport,
-    SchedulerRequest, artifact_kind_label, default_instance_log_dir, default_instance_state_dir,
-    default_log_dir, default_state_dir, execute_scheduler_operation, execution_status_label,
-    generate_scheduler_artifacts, mode_label, operation_label, plan_scheduler_install,
-    plan_scheduler_uninstall, platform_label, policy_label, scheduler_instance_name_from_config,
+    DEFAULT_SCHEDULER_INSTANCE_NAME, GeneratedArtifact, GeneratedArtifactKind, RemoveFileOutcome,
+    Schedule, SchedulerCommandOutput, SchedulerError, SchedulerExecutionReport,
+    SchedulerExecutionStatus, SchedulerExecutionStep, SchedulerExecutionTotals, SchedulerMode,
+    SchedulerOperation, SchedulerOperationBackend, SchedulerOperationPlan, SchedulerPlanStep,
+    SchedulerPlatform, SchedulerReport, SchedulerRequest, artifact_kind_label,
+    default_instance_log_dir, default_instance_state_dir, default_log_dir, default_state_dir,
+    execute_scheduler_operation, execution_status_label, generate_scheduler_artifacts, mode_label,
+    operation_label, plan_scheduler_install, plan_scheduler_uninstall, platform_label,
+    policy_label, scheduler_instance_name_from_config,
 };
 pub use toolchain_hash::{
     ToolchainHashError, ToolchainHashResolver, ToolchainHashResult,

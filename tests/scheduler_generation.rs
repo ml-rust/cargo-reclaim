@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use cargo_reclaim::{
-    GeneratedArtifactKind, PolicyKind, Schedule, SchedulerError, SchedulerMode, SchedulerOperation,
-    SchedulerPlanStep, SchedulerPlatform, SchedulerRequest, generate_scheduler_artifacts,
-    plan_scheduler_install, plan_scheduler_uninstall, scheduler_instance_name_from_config,
+    DEFAULT_SCHEDULER_INSTANCE_NAME, GeneratedArtifactKind, PolicyKind, Schedule, SchedulerError,
+    SchedulerMode, SchedulerOperation, SchedulerPlanStep, SchedulerPlatform, SchedulerRequest,
+    generate_scheduler_artifacts, plan_scheduler_install, plan_scheduler_uninstall,
+    scheduler_instance_name_from_config,
 };
 
 fn request(platform: SchedulerPlatform) -> SchedulerRequest {
@@ -23,18 +24,12 @@ fn request(platform: SchedulerPlatform) -> SchedulerRequest {
 }
 
 #[test]
-fn derives_safe_instance_name_from_config_path() -> Result<(), Box<dyn std::error::Error>> {
+fn default_instance_name_is_generic() -> Result<(), Box<dyn std::error::Error>> {
     let first = scheduler_instance_name_from_config(None, &PathBuf::from("/tmp/a/reclaim.toml"))?;
     let second = scheduler_instance_name_from_config(None, &PathBuf::from("/tmp/b/reclaim.toml"))?;
 
-    assert!(first.starts_with("reclaim-"));
-    assert!(
-        first
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric()
-                || matches!(character, '-' | '_' | '.'))
-    );
-    assert_ne!(first, second);
+    assert_eq!(first, DEFAULT_SCHEDULER_INSTANCE_NAME);
+    assert_eq!(second, DEFAULT_SCHEDULER_INSTANCE_NAME);
     Ok(())
 }
 
@@ -66,6 +61,47 @@ fn scheduler_request_rejects_unsafe_instance_name() {
         generate_scheduler_artifacts(request).unwrap_err(),
         SchedulerError::InvalidInstanceName("bad/name".to_string())
     );
+}
+
+#[test]
+fn default_instance_uses_generic_artifact_names() -> Result<(), Box<dyn std::error::Error>> {
+    let mut request = request(SchedulerPlatform::SystemdUser);
+    request.instance_name = DEFAULT_SCHEDULER_INSTANCE_NAME.to_string();
+    request.state_dir = None;
+    request.log_dir = None;
+
+    let plan = plan_scheduler_install(request)?;
+
+    assert!(has_command(
+        &plan.steps,
+        &[
+            "systemctl",
+            "--user",
+            "enable",
+            "--now",
+            "cargo-reclaim.service",
+            "cargo-reclaim.timer"
+        ]
+    ));
+    assert!(plan.artifacts.iter().any(|artifact| {
+        artifact
+            .intended_install_path
+            .display()
+            .to_string()
+            .ends_with("scheduler-runner.sh")
+    }));
+    assert!(has_write_step(
+        &plan.steps,
+        GeneratedArtifactKind::SystemdService
+    ));
+    assert!(plan.artifacts.iter().any(|artifact| {
+        artifact
+            .intended_install_path
+            .display()
+            .to_string()
+            .ends_with("cargo-reclaim.service")
+    }));
+    Ok(())
 }
 
 #[test]
