@@ -1,0 +1,159 @@
+# Tag gate for a releasable build. Pushing a v* tag runs the full CI suite and
+# builds release binaries once. The manual Release workflow then consumes this
+# run's binary artifacts by run ID, so release-only failures can be fixed and
+# rerun without repeating tests and builds.
+
+name: Release Prepare
+run-name: Release Prepare ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-prepare-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate-version:
+    name: Validate version tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      changelog_version: ${{ steps.version.outputs.changelog_version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Validate tag against package version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG#v}"
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+            | jq -r '.packages[] | select(.name == "cargo-reclaim") | .version')
+
+          echo "Tag version:        $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+
+          if [[ ! "$TAG_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[a-zA-Z]+\.[0-9]+)?$ ]]; then
+            echo "::error::Invalid tag '$TAG'. Expected vX.Y.Z or vX.Y.Z-label.N"
+            exit 1
+          fi
+          TAG_BASE="${BASH_REMATCH[1]}"
+          CARGO_BASE=$(echo "$CARGO_VERSION" | grep -oP '^\d+\.\d+\.\d+')
+          if [[ "$TAG_BASE" != "$CARGO_BASE" ]]; then
+            echo "::error::Tag base '$TAG_BASE' != Cargo.toml version '$CARGO_BASE'"
+            exit 1
+          fi
+
+          if [[ "$TAG_VERSION" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "changelog_version=$TAG_BASE" >> "$GITHUB_OUTPUT"
+      - name: Require matching changelog section
+        run: |
+          VERSION="${{ steps.version.outputs.changelog_version }}"
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "::error::CHANGELOG.md is required for release tags"
+            exit 1
+          fi
+
+          awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+
+          if [[ ! -s /tmp/release-notes.md ]]; then
+            echo "::error::CHANGELOG.md must contain a non-empty section for [$VERSION]"
+            exit 1
+          fi
+
+  ci:
+    name: CI gate
+    needs: validate-version
+    uses: ./.github/workflows/test.yml
+
+  build-binaries:
+    name: Build (${{ matrix.label }})
+    needs: [validate-version, ci]
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+          - runs-on: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
+            cross: true
+          - runs-on: macos-15
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - runs-on: macos-15
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ matrix.target }}
+      - name: Stamp version
+        shell: bash
+        run: |
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          perl -i -pe "if (!\$done && /^version = \"/) { s/^version = \".*\"/version = \"$VERSION\"/; \$done=1 }" Cargo.toml
+      - name: Build cargo-reclaim binary
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          chmod +x cargo-reclaim
+          tar czf cargo-reclaim-${{ needs.validate-version.outputs.version }}-${{ matrix.label }}.tar.gz cargo-reclaim
+          ls -lh cargo-reclaim-*.tar.gz
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          $version = "${{ needs.validate-version.outputs.version }}"
+          $label = "${{ matrix.label }}"
+          Compress-Archive -Path cargo-reclaim.exe -DestinationPath "cargo-reclaim-$version-$label.zip"
+          ls cargo-reclaim-*.zip
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.label }}
+          path: |
+            target/${{ matrix.target }}/release/cargo-reclaim-*.tar.gz
+            target/${{ matrix.target }}/release/cargo-reclaim-*.zip
+          retention-days: 14
