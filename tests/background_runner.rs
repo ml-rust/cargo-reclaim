@@ -81,8 +81,8 @@ fn triggered_plan_only_builds_and_logs_plan_without_apply() -> Result<(), Box<dy
     );
     assert_eq!(records[2].skipped_projects.len(), 1);
     assert_eq!(
-        records[2].skipped_projects[0].path,
-        temp.path.join("project/.git").display().to_string()
+        PathBuf::from(&records[2].skipped_projects[0].path),
+        temp.path.join("project/.git")
     );
     assert_eq!(records[2].skipped_projects[0].reason, "default_ignored_dir");
     assert_eq!(records[2].skipped_projects[0].message, None);

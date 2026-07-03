@@ -17,28 +17,74 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: Lint, format, docs & package
+  format:
+    name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: lint
+          prefix-key: format
       - name: Check formatting
         run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: clippy
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: docs
       - name: Build docs
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps
+
+  doctests:
+    name: Doctests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: doctests
       - name: Doctests
         run: cargo test --workspace --doc
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: package
       - name: Package check
         run: cargo package --locked
 
@@ -57,4 +103,4 @@ jobs:
         with:
           prefix-key: test
       - name: Run tests
-        run: cargo test --workspace -- --test-threads=1
+        run: cargo test --workspace --no-fail-fast -- --test-threads=1
