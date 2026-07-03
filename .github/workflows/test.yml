@@ -1,0 +1,60 @@
+# Reusable test suite. Called by ci.yml (PR gate) and release.yml (pre-publish
+# gate) so both run the exact same checks.
+#
+# The OS matrix is load-bearing: cargo-reclaim has platform-specific active
+# process detection and scheduler artifact generation, so Linux, macOS, and
+# Windows must all compile and pass the public test suite.
+
+name: Test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint, format, docs & package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: lint
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Build docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+      - name: Doctests
+        run: cargo test --workspace --doc
+      - name: Package check
+        run: cargo package --locked
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: test
+      - name: Run tests
+        run: cargo test --workspace -- --test-threads=1

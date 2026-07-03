@@ -33,6 +33,9 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
   <a href="https://docs.rs/cargo-reclaim">
     <img src="https://img.shields.io/docsrs/cargo-reclaim" alt="docs.rs">
   </a>
+  <a href="https://github.com/ml-rust/cargo-reclaim/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/ml-rust/cargo-reclaim/ci.yml?branch=main&label=ci" alt="CI">
+  </a>
   <a href="LICENSE-MIT">
     <img src="https://img.shields.io/crates/l/cargo-reclaim" alt="License">
   </a>
