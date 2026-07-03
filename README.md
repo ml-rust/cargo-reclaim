@@ -4,6 +4,23 @@ cargo-reclaim is a trust-first Rust artifact cleanup tool for Cargo projects and
 
 Supported Rust: `cargo-reclaim` targets Rust 1.85+ for edition 2024 support.
 
+## Why Not `cargo clean`?
+
+Use `cargo clean` when you are inside one project and want to delete that project’s build output now. `cargo-reclaim` is for Rust development machines where disk usage builds up across many projects, shared target directories, incremental artifacts, Cargo home caches, and long-running active work.
+
+`cargo-reclaim` adds the missing operating layer around cleanup:
+
+- It finds Cargo target directories across project trees and reports their measured size largest-first.
+- It lets you clean selected target directories interactively instead of manually finding and typing paths.
+- It can trim partial artifacts such as incremental/build/doc outputs without always deleting a whole `target` directory.
+- It protects delayed or automated cleanup with dry-run plans, persisted plans, and fresh revalidation before deletion.
+- It understands Cargo config target dirs, shared target dirs, ignore/skip rules, policy modes, recent-write preservation, and active process checks.
+- It can run as a resident scheduler service, so projects stay below a size ceiling without a manual cleanup habit.
+- It emits JSON for scripts, dashboards, TUI frontends, and other automation.
+- It covers Cargo home cache cleanup through the same review/apply safety model.
+
+In short: `cargo clean` is a manual per-project reset; `cargo-reclaim` is discovery, selection, partial trimming, background cleanup, and safety checks for a whole Rust workstation.
+
 ## Install
 
 ```sh
