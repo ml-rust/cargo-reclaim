@@ -11,6 +11,7 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
 <p>
   <a href="https://docs.rs/cargo-reclaim"><strong>Docs</strong></a>
   <a href="https://crates.io/crates/cargo-reclaim"><strong>Crate</strong></a>
+  <a href="#quickstart"><strong>Quickstart</strong></a>
   <a href="#main-commands"><strong>Commands</strong></a>
   <a href="#real-usage-recipes"><strong>Recipes</strong></a>
   <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
@@ -29,11 +30,8 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
   <a href="https://docs.rs/cargo-reclaim">
     <img src="https://img.shields.io/docsrs/cargo-reclaim" alt="docs.rs">
   </a>
-  <a href="https://github.com/ml-rust/cargo-reclaim/actions/workflows/ci.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/ml-rust/cargo-reclaim/ci.yml?branch=main&label=ci" alt="CI">
-  </a>
   <a href="LICENSE-MIT">
-    <img src="https://img.shields.io/crates/l/cargo-reclaim" alt="License">
+    <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue" alt="License: MIT OR Apache-2.0">
   </a>
   <a href="https://github.com/ml-rust/cargo-reclaim/stargazers">
     <img src="https://img.shields.io/github/stars/ml-rust/cargo-reclaim?style=social" alt="GitHub stars">
@@ -43,6 +41,42 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
 </div>
 
 cargo-reclaim is a smarter, background-friendly companion to `cargo clean`. It is built for machines where disk usage grows across many Rust projects, shared target directories, incremental artifacts, Cargo home caches, and long-running active development.
+
+## Quickstart
+
+Install from crates.io:
+
+```sh
+cargo install cargo-reclaim
+```
+
+From a checkout:
+
+```sh
+cargo install --path .
+```
+
+Find Cargo target directories and their sizes:
+
+```sh
+cargo-reclaim targets ~/Projects
+```
+
+Trim stale artifacts from an active project without deleting the whole `target` directory:
+
+```sh
+cargo-reclaim plan ~/Projects/my-crate --policy balanced --whole-target off --keep-recent-writes 4h --save-plan /tmp/reclaim-plan.json
+cargo-reclaim apply --plan /tmp/reclaim-plan.json --yes
+```
+
+Install a resident scheduler after previewing the generated service files:
+
+```sh
+cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
+cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
+```
+
+Supported Rust: `cargo-reclaim` targets Rust 1.88+.
 
 ## Why cargo-reclaim
 
@@ -94,20 +128,6 @@ Use `cargo clean` when you are inside one project and want to delete that projec
 - Reports Cargo home cache usage.
 - Builds saved cleanup plans for Cargo home data.
 - Applies only saved Cargo home plans, with the same validation boundary as target cleanup.
-
-## Install
-
-```sh
-cargo install cargo-reclaim
-```
-
-From a checkout:
-
-```sh
-cargo install --path .
-```
-
-Supported Rust: `cargo-reclaim` targets Rust 1.88+.
 
 ## Main Commands
 
