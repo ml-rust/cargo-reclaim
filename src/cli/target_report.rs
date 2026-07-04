@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use cargo_reclaim::{
     InventoryOptions, PathKind, ReclaimError, ScanItem, ScanSkipReason, ScannerOptions,
-    TargetCandidate, TargetCandidateKind, TargetEvidence, scan_roots, snapshot_path,
+    TargetCandidate, TargetCandidateKind, TargetEvidence, scan_roots, snapshot_path_parallel,
 };
+use rayon::prelude::*;
 use serde_json::json;
 
 use super::CliError;
@@ -71,9 +72,8 @@ pub(super) struct TargetListProblem {
 pub(super) fn build_targets_report(command: &TargetsDiscovery) -> Result<TargetsReport, CliError> {
     let items = scan_roots(command.roots.iter().cloned(), &command.scanner_options)?;
     let mut seen_targets = HashSet::new();
-    let mut targets = Vec::new();
+    let mut candidates = Vec::new();
     let mut skipped_paths = Vec::new();
-    let mut problems = Vec::new();
 
     for item in items {
         match item {
@@ -87,10 +87,7 @@ pub(super) fn build_targets_report(command: &TargetsDiscovery) -> Result<Targets
                 if !seen_targets.insert(normalize_for_dedupe(&candidate.path)) {
                     continue;
                 }
-                match target_entry(candidate, &command.inventory_options) {
-                    Ok(entry) => targets.push(entry),
-                    Err(problem) => problems.push(problem),
-                }
+                candidates.push(candidate);
             }
             ScanItem::Skipped(skip) => skipped_paths.push(TargetListSkip {
                 message: skip_message(&skip.reason),
@@ -98,6 +95,19 @@ pub(super) fn build_targets_report(command: &TargetsDiscovery) -> Result<Targets
                 reason: skip.reason,
             }),
             ScanItem::CargoProject(_) => {}
+        }
+    }
+
+    let measured_targets: Vec<_> = candidates
+        .into_par_iter()
+        .map(|candidate| target_entry(candidate, &command.inventory_options))
+        .collect();
+    let mut targets = Vec::new();
+    let mut problems = Vec::new();
+    for measured in measured_targets {
+        match measured {
+            Ok(entry) => targets.push(entry),
+            Err(problem) => problems.push(problem),
         }
     }
 
@@ -128,11 +138,12 @@ fn target_entry(
     candidate: TargetCandidate,
     inventory_options: &InventoryOptions,
 ) -> Result<TargetListEntry, TargetListProblem> {
-    let snapshot =
-        snapshot_path(&candidate.path, inventory_options).map_err(|error| TargetListProblem {
+    let snapshot = snapshot_path_parallel(&candidate.path, inventory_options).map_err(|error| {
+        TargetListProblem {
             path: candidate.path.clone(),
             message: inventory_problem_message(error),
-        })?;
+        }
+    })?;
 
     let evidence = candidate.evidence.ok_or_else(|| TargetListProblem {
         path: candidate.path.clone(),

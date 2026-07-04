@@ -2,6 +2,9 @@ use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use rayon::prelude::*;
 
 use crate::error::{ReclaimError, ReclaimResult};
 use crate::model::{PathKind, PathSnapshot};
@@ -19,6 +22,26 @@ pub fn snapshot_path(
 
     let mut visited_dirs = HashSet::new();
     let measured = measure_path(path, options, &mut visited_dirs, true)?;
+
+    PathSnapshot::with_details(
+        path.to_path_buf(),
+        measured.size_bytes,
+        measured.path_kind,
+        measured.modified,
+    )
+}
+
+pub fn snapshot_path_parallel(
+    path: impl AsRef<Path>,
+    options: &InventoryOptions,
+) -> ReclaimResult<PathSnapshot> {
+    let path = path.as_ref();
+    if path.as_os_str().is_empty() {
+        return Err(ReclaimError::EmptyPath);
+    }
+
+    let visited_dirs = Arc::new(Mutex::new(HashSet::new()));
+    let measured = measure_path_parallel(path, options, &visited_dirs, true)?;
 
     PathSnapshot::with_details(
         path.to_path_buf(),
@@ -226,4 +249,168 @@ fn inventory_read_error(path: &Path, error: io::Error) -> ReclaimError {
             message: error.to_string(),
         }
     }
+}
+
+type SharedVisitedDirs = Arc<Mutex<HashSet<PathBuf>>>;
+
+fn measure_path_parallel(
+    path: &Path,
+    options: &InventoryOptions,
+    visited_dirs: &SharedVisitedDirs,
+    deep_directory_measurement: bool,
+) -> ReclaimResult<MeasuredPath> {
+    measure_path_parallel_with_symlink_policy(
+        path,
+        options,
+        visited_dirs,
+        deep_directory_measurement,
+        true,
+    )
+}
+
+fn measure_path_parallel_with_symlink_policy(
+    path: &Path,
+    options: &InventoryOptions,
+    visited_dirs: &SharedVisitedDirs,
+    deep_directory_measurement: bool,
+    reject_unfollowed_symlink: bool,
+) -> ReclaimResult<MeasuredPath> {
+    let metadata = symlink_metadata(path)?;
+
+    if metadata.file_type().is_symlink() {
+        if !options.follow_symlinks {
+            if reject_unfollowed_symlink {
+                return Err(ReclaimError::InventorySymlinkNotFollowed {
+                    path: path.to_path_buf(),
+                });
+            }
+            return Ok(MeasuredPath {
+                size_bytes: metadata.len(),
+                path_kind: PathKind::Symlink,
+                modified: metadata.modified().ok(),
+            });
+        }
+
+        return measure_followed_path_parallel(
+            path,
+            options,
+            visited_dirs,
+            deep_directory_measurement,
+        );
+    }
+
+    measure_from_metadata_parallel(
+        path,
+        metadata,
+        options,
+        visited_dirs,
+        deep_directory_measurement,
+    )
+}
+
+fn measure_followed_path_parallel(
+    path: &Path,
+    options: &InventoryOptions,
+    visited_dirs: &SharedVisitedDirs,
+    deep_directory_measurement: bool,
+) -> ReclaimResult<MeasuredPath> {
+    let metadata = fs::metadata(path).map_err(|error| inventory_read_error(path, error))?;
+    measure_from_metadata_parallel(
+        path,
+        metadata,
+        options,
+        visited_dirs,
+        deep_directory_measurement,
+    )
+}
+
+fn measure_from_metadata_parallel(
+    path: &Path,
+    metadata: Metadata,
+    options: &InventoryOptions,
+    visited_dirs: &SharedVisitedDirs,
+    deep_directory_measurement: bool,
+) -> ReclaimResult<MeasuredPath> {
+    let modified = metadata.modified().ok();
+
+    if metadata.is_file() {
+        return Ok(MeasuredPath {
+            size_bytes: metadata.len(),
+            path_kind: PathKind::File,
+            modified,
+        });
+    }
+
+    if metadata.is_dir() {
+        let size_bytes = if deep_directory_measurement {
+            measure_directory_parallel(path, options, visited_dirs)?
+        } else {
+            metadata.len()
+        };
+        return Ok(MeasuredPath {
+            size_bytes,
+            path_kind: PathKind::Directory,
+            modified,
+        });
+    }
+
+    Ok(MeasuredPath {
+        size_bytes: metadata.len(),
+        path_kind: PathKind::Unknown,
+        modified,
+    })
+}
+
+fn measure_directory_parallel(
+    path: &Path,
+    options: &InventoryOptions,
+    visited_dirs: &SharedVisitedDirs,
+) -> ReclaimResult<u64> {
+    let canonical_path =
+        fs::canonicalize(path).map_err(|error| inventory_read_error(path, error))?;
+    {
+        let mut visited_dirs = lock_visited_dirs(path, visited_dirs)?;
+        if !visited_dirs.insert(canonical_path) {
+            return Ok(0);
+        }
+    }
+
+    let mut child_paths = Vec::new();
+    for entry in fs::read_dir(path).map_err(|error| inventory_read_error(path, error))? {
+        let entry = entry.map_err(|error| inventory_read_error(path, error))?;
+        let child_path = entry.path();
+        if is_configured_skipped(&child_path, options) {
+            continue;
+        }
+        child_paths.push(child_path);
+    }
+
+    child_paths
+        .into_par_iter()
+        .try_fold(
+            || 0_u64,
+            |size_bytes, child_path| {
+                let measured = measure_path_parallel_with_symlink_policy(
+                    &child_path,
+                    options,
+                    visited_dirs,
+                    true,
+                    false,
+                )?;
+                Ok(size_bytes.saturating_add(measured.size_bytes))
+            },
+        )
+        .try_reduce(|| 0_u64, |left, right| Ok(left.saturating_add(right)))
+}
+
+fn lock_visited_dirs<'a>(
+    path: &Path,
+    visited_dirs: &'a SharedVisitedDirs,
+) -> ReclaimResult<MutexGuard<'a, HashSet<PathBuf>>> {
+    visited_dirs
+        .lock()
+        .map_err(|error| ReclaimError::InventoryRead {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })
 }

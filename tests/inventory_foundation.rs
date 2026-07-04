@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
     ArtifactClass, InventoryOptions, PathKind, ReclaimError, TargetEvidence,
-    planner_candidate_from_target_relative_path, snapshot_path, snapshot_target_relative_path,
+    planner_candidate_from_target_relative_path, snapshot_path, snapshot_path_parallel,
+    snapshot_target_relative_path,
 };
 
 #[test]
@@ -66,6 +67,48 @@ fn root_snapshot_measures_target_directory_without_relative_child() -> Result<()
 }
 
 #[test]
+fn parallel_root_snapshot_measures_nested_directory_exactly() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("inventory_parallel_root_snapshot")?;
+    let target = temp.path().join("target");
+    fs::create_dir_all(target.join("debug/deps/nested"))?;
+    fs::create_dir_all(target.join("release"))?;
+    fs::write(target.join("debug/deps/lib.rlib"), b"abcd")?;
+    fs::write(target.join("debug/deps/nested/unit.o"), b"abcdef")?;
+    fs::write(target.join("release/app"), b"abcdefgh")?;
+
+    let snapshot = snapshot_path_parallel(&target, &InventoryOptions::default())?;
+
+    assert_eq!(snapshot.path, target);
+    assert_eq!(snapshot.size_bytes, 18);
+    assert_eq!(snapshot.path_kind, PathKind::Directory);
+    Ok(())
+}
+
+#[test]
+fn parallel_root_snapshot_excludes_configured_skipped_paths() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("inventory_parallel_skips")?;
+    let target = temp.path().join("target");
+    let skipped = target.join("debug/incremental");
+    fs::create_dir_all(&skipped)?;
+    fs::create_dir_all(target.join("debug/deps"))?;
+    fs::write(target.join("debug/deps/lib.rlib"), b"abcd")?;
+    fs::write(skipped.join("cache.bin"), b"not counted")?;
+
+    let snapshot = snapshot_path_parallel(
+        &target,
+        &InventoryOptions {
+            skipped_paths: vec![skipped],
+            ..InventoryOptions::default()
+        },
+    )?;
+
+    assert_eq!(snapshot.path, target);
+    assert_eq!(snapshot.size_bytes, 4);
+    assert_eq!(snapshot.path_kind, PathKind::Directory);
+    Ok(())
+}
+
+#[test]
 #[cfg(unix)]
 fn root_snapshot_counts_child_symlink_without_following_it() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::symlink;
@@ -83,6 +126,28 @@ fn root_snapshot_counts_child_symlink_without_following_it() -> Result<(), Box<d
     assert!(snapshot.size_bytes > 0);
     assert!(snapshot.size_bytes < 4096);
     assert_eq!(snapshot.path_kind, PathKind::Directory);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn parallel_root_snapshot_counts_child_symlink_like_serial_snapshot() -> Result<(), Box<dyn Error>>
+{
+    use std::os::unix::fs::symlink;
+
+    let temp = TestTemp::new("inventory_parallel_root_child_symlink")?;
+    let target = temp.path().join("target");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&target)?;
+    fs::write(&outside, b"outside")?;
+    symlink(&outside, target.join("linked"))?;
+
+    let serial = snapshot_path(&target, &InventoryOptions::default())?;
+    let parallel = snapshot_path_parallel(&target, &InventoryOptions::default())?;
+
+    assert_eq!(parallel.path, serial.path);
+    assert_eq!(parallel.size_bytes, serial.size_bytes);
+    assert_eq!(parallel.path_kind, serial.path_kind);
     Ok(())
 }
 

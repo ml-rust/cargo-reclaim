@@ -52,6 +52,30 @@ fn list_reports_discovered_targets_sorted_by_size() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn list_reports_same_size_targets_sorted_by_path_with_exact_total() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_list_same_size")?;
+    let alpha = write_project(temp.path(), "alpha", b"abc")?;
+    let beta = write_project(temp.path(), "beta", b"abc")?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
+
+    assert_eq!(document["command"], "targets");
+    assert_eq!(document["totals"]["target_count"], 2);
+    assert_eq!(document["totals"]["total_size_bytes"], 6);
+    assert_eq!(
+        document["targets"][0]["path"],
+        alpha.join("target").display().to_string()
+    );
+    assert_eq!(document["targets"][0]["size_bytes"], 3);
+    assert_eq!(
+        document["targets"][1]["path"],
+        beta.join("target").display().to_string()
+    );
+    assert_eq!(document["targets"][1]["size_bytes"], 3);
+    Ok(())
+}
+
+#[test]
 fn targets_list_excludes_non_cargo_cache_dirs() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_targets_exclude_cache")?;
     let project = write_project(temp.path(), "project", b"abc")?;
