@@ -169,6 +169,49 @@ fn scanned_project_target_adds_hash_grouped_intermediates() -> Result<(), Box<dy
 }
 
 #[test]
+fn hash_grouped_intermediates_do_not_expand_existing_removable_roots() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("integration_hash_group_pruned_roots")?;
+    write_manifest(temp.path())?;
+    let hash = "0123456789abcdef";
+    let target = temp.path().join("target");
+    let build_root = target.join(format!("debug/build/sample-{hash}"));
+    fs::create_dir_all(target.join(format!("debug/.fingerprint/sample-{hash}")))?;
+    fs::create_dir_all(build_root.join("out"))?;
+    fs::write(
+        target.join(format!("debug/.fingerprint/sample-{hash}/fingerprint.json")),
+        br#"{"rustc":1}"#,
+    )?;
+    fs::write(target.join(format!("debug/sample-{hash}.json")), b"profile")?;
+    fs::write(
+        build_root.join(format!("out/generated-{hash}.json")),
+        b"nested",
+    )?;
+
+    let plan = build_plan_from_roots(
+        [temp.path()],
+        PolicyKind::Balanced,
+        &ScannerOptions::default(),
+        &InventoryOptions::default(),
+    )?;
+
+    let profile = entry_for(&plan, target.join(format!("debug/sample-{hash}.json")))?;
+    assert_eq!(
+        profile.artifact_class,
+        ArtifactClass::FingerprintGroupIntermediate
+    );
+    assert_eq!(profile.action, PlanAction::Delete);
+
+    let build_entry = entry_for(&plan, &build_root)?;
+    assert_eq!(build_entry.artifact_class, ArtifactClass::BuildScripts);
+    assert_eq!(build_entry.action, PlanAction::Delete);
+    assert!(!plan.entries.iter().any(|entry| {
+        entry.snapshot.path != build_root && entry.snapshot.path.starts_with(&build_root)
+    }));
+    Ok(())
+}
+
+#[test]
 fn keep_rustc_hash_preserves_matching_hash_grouped_intermediates() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("integration_keep_rustc_hash")?;
     write_manifest(temp.path())?;
@@ -987,7 +1030,7 @@ fn deps_outputs_are_reclaimable_only_with_recent_write_keep_window() -> Result<(
         &InventoryOptions::default(),
     )?;
     for path in [&deps_binary, &deps_rlib] {
-        let entry = entry_for(&without_window, path.to_path_buf())?;
+        let entry = entry_for(&without_window, path)?;
         assert_eq!(entry.artifact_class, ArtifactClass::DepsOutput);
         assert_eq!(entry.action, PlanAction::Preserve);
     }
@@ -1004,7 +1047,7 @@ fn deps_outputs_are_reclaimable_only_with_recent_write_keep_window() -> Result<(
         SystemTime::now() + std::time::Duration::from_secs(10),
     )?;
     for path in [&deps_binary, &deps_rlib] {
-        let entry = entry_for(&with_window, path.to_path_buf())?;
+        let entry = entry_for(&with_window, path)?;
         assert_eq!(entry.artifact_class, ArtifactClass::DepsOutput);
         assert_eq!(entry.action, PlanAction::Delete);
     }
@@ -1223,8 +1266,9 @@ fn target_content_symlinks_are_not_planned_by_default() -> Result<(), Box<dyn Er
 
 fn entry_for(
     plan: &cargo_reclaim::Plan,
-    path: PathBuf,
+    path: impl AsRef<Path>,
 ) -> Result<&cargo_reclaim::PlanEntry, Box<dyn Error>> {
+    let path = path.as_ref();
     plan.entries
         .iter()
         .find(|entry| entry.snapshot.path == path)

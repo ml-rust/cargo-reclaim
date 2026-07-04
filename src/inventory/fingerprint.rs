@@ -26,11 +26,7 @@ pub(crate) fn append_fingerprint_group_candidates(
         return Ok(());
     }
 
-    let existing_delete_roots = candidates
-        .iter()
-        .filter(|candidate| PolicyKind::is_default_removable_class(candidate.artifact_class))
-        .map(|candidate| candidate.snapshot.path.clone())
-        .collect::<Vec<_>>();
+    let existing_delete_roots = ExistingDeleteRoots::from_candidates(target_root, candidates);
     let mut existing_paths = candidates
         .iter()
         .map(|candidate| candidate.snapshot.path.clone())
@@ -47,10 +43,17 @@ pub(crate) fn append_fingerprint_group_candidates(
         &mut matched_paths,
     )?;
 
+    let matched_full_paths = matched_paths
+        .iter()
+        .map(|child_path| target_root.join(child_path))
+        .collect::<HashSet<_>>();
+    candidates.retain(|candidate| !matched_full_paths.contains(&candidate.snapshot.path));
+    existing_paths.retain(|path| !matched_full_paths.contains(path));
+
     for child_path in matched_paths {
         let full_path = target_root.join(&child_path);
         if existing_paths.contains(&full_path) {
-            candidates.retain(|candidate| candidate.snapshot.path != full_path);
+            continue;
         }
 
         let snapshot = snapshot_target_relative_path(target_root, &child_path, options)?;
@@ -65,6 +68,27 @@ pub(crate) fn append_fingerprint_group_candidates(
     }
 
     Ok(())
+}
+
+struct ExistingDeleteRoots {
+    relative_roots: HashSet<PathBuf>,
+}
+
+impl ExistingDeleteRoots {
+    fn from_candidates(target_root: &Path, candidates: &[PlannerCandidate]) -> Self {
+        let relative_roots = candidates
+            .iter()
+            .filter(|candidate| PolicyKind::is_default_removable_class(candidate.artifact_class))
+            .filter_map(|candidate| candidate.snapshot.path.strip_prefix(target_root).ok())
+            .map(Path::to_path_buf)
+            .collect();
+
+        Self { relative_roots }
+    }
+
+    fn contains(&self, child_path: &Path) -> bool {
+        self.relative_roots.contains(child_path)
+    }
 }
 
 fn collect_fingerprint_hashes(
@@ -151,14 +175,12 @@ fn collect_hash_matched_paths(
     child_path: PathBuf,
     hashes: &HashSet<String>,
     options: &InventoryOptions,
-    existing_delete_roots: &[PathBuf],
+    existing_delete_roots: &ExistingDeleteRoots,
     visited_dirs: &mut HashSet<PathBuf>,
     matched_paths: &mut Vec<PathBuf>,
 ) -> ReclaimResult<()> {
     let full_path = target_root.join(&child_path);
-    if is_configured_skipped(&full_path, options)
-        || is_under_existing_delete_root(&full_path, existing_delete_roots)
-    {
+    if is_configured_skipped(&full_path, options) || existing_delete_roots.contains(&child_path) {
         return Ok(());
     }
 
@@ -375,12 +397,6 @@ fn is_protected_file_name(file_name: Option<&OsStr>) -> bool {
         extension,
         "a" | "dll" | "dylib" | "exe" | "lib" | "rlib" | "rmeta" | "so" | "wasm"
     )
-}
-
-fn is_under_existing_delete_root(path: &Path, existing_delete_roots: &[PathBuf]) -> bool {
-    existing_delete_roots
-        .iter()
-        .any(|root| path == root || path.starts_with(root))
 }
 
 fn sorted_children(path: &Path) -> ReclaimResult<Vec<PathBuf>> {
