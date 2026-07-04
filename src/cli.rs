@@ -1,7 +1,7 @@
 use std::env;
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use cargo_reclaim::{
@@ -13,6 +13,7 @@ use cargo_reclaim::{
 mod apply;
 mod cargo_config;
 mod cargo_home;
+mod cleanup;
 mod edit_plan;
 mod error_output;
 mod output;
@@ -24,6 +25,7 @@ mod targets;
 use apply::{ApplyCommand, parse_apply_command, run_apply};
 use cargo_config::{CargoConfigCommand, parse_cargo_config_command, run_cargo_config_command};
 use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_command};
+use cleanup::{CleanupCommand, parse_cleanup_command, run_cleanup_command};
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
 use error_output::write_error_json;
 use output::write_help;
@@ -81,6 +83,10 @@ fn run_with_args(
         Command::CargoConfig(command) => run_cargo_config_command(&command, stdout),
         Command::CargoHome(command) => run_cargo_home_command(&command, stdout),
         Command::Targets(command) => run_targets_command(&command, stdout),
+        Command::Cleanup(command) => {
+            let provider = platform_active_observation_provider();
+            run_cleanup_command(&command, stdout, &provider)
+        }
     }
 }
 
@@ -95,6 +101,7 @@ enum Command {
     CargoConfig(CargoConfigCommand),
     CargoHome(CargoHomeCommand),
     Targets(TargetsCommand),
+    Cleanup(CleanupCommand),
 }
 
 #[derive(Debug)]
@@ -139,9 +146,13 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         command = next_command;
     }
 
-    match command.to_string_lossy().as_ref() {
+    let Some(command_text) = command.to_str() else {
+        return parse_cleanup_command(std::iter::once(command).chain(args)).map(Command::Cleanup);
+    };
+    match command_text {
         "-h" | "--help" | "help" => Ok(Command::Help),
         "-V" | "--version" => Ok(Command::Version),
+        "cleanup" => parse_cleanup_command(args).map(Command::Cleanup),
         "scan" => parse_plan_command(PlanMode::Scan, args),
         "plan" => parse_plan_command(PlanMode::Plan, args),
         "apply" => parse_apply_command(args).map(Command::Apply),
@@ -151,8 +162,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "cargo-home" => parse_cargo_home_command(args).map(Command::CargoHome),
         "list" => parse_list_command(args),
         "targets" | "target" => parse_targets_command(args).map(Command::Targets),
+        command if command.starts_with('-') => {
+            parse_cleanup_command(std::iter::once(OsString::from(command)).chain(args))
+                .map(Command::Cleanup)
+        }
+        command if is_path_like_root(command) => {
+            parse_cleanup_command(std::iter::once(OsString::from(command)).chain(args))
+                .map(Command::Cleanup)
+        }
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `list`, `targets`, or `help`"
+            "unknown command `{command}`; expected `cleanup`, `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `list`, `targets`, or `help`"
         ))),
     }
 }
@@ -161,6 +180,16 @@ fn parse_list_command(args: impl IntoIterator<Item = OsString>) -> Result<Comman
     // Reuse the shared targets parser, but pin it to list mode so `clean` stays a positional path.
     let args = std::iter::once(OsString::from("list")).chain(args);
     parse_targets_command(args).map(Command::Targets)
+}
+
+fn is_path_like_root(value: &str) -> bool {
+    value == "."
+        || value == ".."
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.contains('/')
+        || value.contains('\\')
+        || Path::new(value).exists()
 }
 
 fn parse_plan_command(

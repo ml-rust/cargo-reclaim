@@ -1,0 +1,636 @@
+use std::collections::HashSet;
+use std::ffi::OsString;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::{Duration, SystemTime};
+
+use cargo_reclaim::{
+    ActiveObservationProvider, ApplyReport, ArtifactClass,
+    BuildPlanFromScanItemsWithProviderRequest, InventoryOptions, Plan, PlanAction, PlanCommandKind,
+    PlanEntry, PlanInput, PlanInvocation, PlannerOptions, PolicyKind, SavePlanOptions, ScanItem,
+    ScannerOptions, TargetCandidate, TargetCandidateKind, TargetEvidence, WholeTargetMode,
+    build_plan_from_roots_with_active_observation_provider,
+    build_plan_from_scan_items_with_active_observation_provider, execute_persisted_plan_apply,
+    load_config_from_path, persist_plan, resolve_command_toolchain_hash_options, scan_roots,
+    snapshot_path, validate_persisted_plan_for_apply,
+};
+
+use super::apply::write_apply_report_with_command;
+use super::persistence::{parse_days, parse_duration, parse_size};
+use super::{
+    CliError, OutputFormat, inline_config_path, inline_ignore_path, inline_skip_path, next_path,
+    next_value, parse_policy, parse_toolchain_name, parse_u64,
+};
+
+const CLEANUP_PLAN_EXPIRY: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug)]
+pub(super) struct CleanupCommand {
+    roots: Vec<PathBuf>,
+    selected_targets: Vec<PathBuf>,
+    all: bool,
+    delete_target: bool,
+    execute: bool,
+    output_format: OutputFormat,
+    policy: PolicyKind,
+    scanner_options: ScannerOptions,
+    inventory_options: InventoryOptions,
+    planner_options: PlannerOptions,
+    config_path: Option<PathBuf>,
+    config_version: Option<u16>,
+}
+
+pub(super) fn parse_cleanup_command(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<CleanupCommand, CliError> {
+    let mut roots = Vec::new();
+    let mut selected_targets = Vec::new();
+    let mut all = false;
+    let mut delete_target = false;
+    let mut execute = false;
+    let mut validation_alias = false;
+    let mut output_format = OutputFormat::Terminal;
+    let mut policy = None;
+    let mut config_path = None;
+    let mut scanner_options = ScannerOptions::default();
+    let mut planner_options = PlannerOptions {
+        whole_target_mode: WholeTargetMode::Off,
+        ..PlannerOptions::default()
+    };
+    let mut cli_follow_symlinks = false;
+    let mut cli_allow_name_only_targets = false;
+    let mut cli_cross_filesystems = false;
+    let mut cli_recent_write_keep_window = false;
+    let mut cli_keep_size = false;
+    let mut cli_keep_rustc_hashes = false;
+    let mut cli_keep_installed_toolchains = false;
+    let mut cli_keep_toolchains = false;
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        if let Some(ignore_path) = inline_ignore_path(&arg)? {
+            scanner_options.ignored_paths.push(ignore_path);
+            continue;
+        }
+        if let Some(skip_path) = inline_skip_path(&arg)? {
+            scanner_options.skipped_paths.push(skip_path);
+            continue;
+        }
+        if let Some(path) = inline_config_path(&arg)? {
+            config_path = Some(path);
+            continue;
+        }
+
+        let Some(arg_text) = arg.as_os_str().to_str() else {
+            roots.push(PathBuf::from(arg));
+            continue;
+        };
+
+        match arg_text {
+            "-h" | "--help" => return Err(CliError::Help(cleanup_usage())),
+            "--" => {
+                roots.extend(args.map(PathBuf::from));
+                break;
+            }
+            "--all" => all = true,
+            "--target" => selected_targets.push(next_path(&mut args, "--target")?),
+            value if value.starts_with("--target=") => {
+                let target = &value["--target=".len()..];
+                if target.is_empty() {
+                    return Err(CliError::Usage("--target requires a value".to_string()));
+                }
+                selected_targets.push(PathBuf::from(target));
+            }
+            "--delete-target" => delete_target = true,
+            "--yes" => execute = true,
+            "--dry-run" | "--validate" => validation_alias = true,
+            "--json" => output_format = OutputFormat::Json,
+            "--policy" => {
+                policy = Some(parse_policy(&next_value(&mut args, "--policy")?)?);
+            }
+            value if value.starts_with("--policy=") => {
+                policy = Some(parse_policy(&value["--policy=".len()..])?);
+            }
+            "--config" => config_path = Some(next_path(&mut args, "--config")?),
+            "--ignore" => scanner_options
+                .ignored_paths
+                .push(next_path(&mut args, "--ignore")?),
+            "--skip" => scanner_options
+                .skipped_paths
+                .push(next_path(&mut args, "--skip")?),
+            "--allow-name-only-targets" => {
+                scanner_options.allow_name_only_targets = true;
+                cli_allow_name_only_targets = true;
+            }
+            "--follow-symlinks" => {
+                scanner_options.follow_symlinks = true;
+                cli_follow_symlinks = true;
+            }
+            "--cross-filesystems" => {
+                scanner_options.cross_filesystems = true;
+                cli_cross_filesystems = true;
+            }
+            "--keep-recent-writes" => {
+                planner_options.recent_write_keep_window = Some(parse_duration(&next_value(
+                    &mut args,
+                    "--keep-recent-writes",
+                )?)?);
+                cli_recent_write_keep_window = true;
+            }
+            value if value.starts_with("--keep-recent-writes=") => {
+                planner_options.recent_write_keep_window =
+                    Some(parse_duration(&value["--keep-recent-writes=".len()..])?);
+                cli_recent_write_keep_window = true;
+            }
+            "--keep-days" => {
+                planner_options.recent_write_keep_window =
+                    Some(parse_days(&next_value(&mut args, "--keep-days")?)?);
+                cli_recent_write_keep_window = true;
+            }
+            value if value.starts_with("--keep-days=") => {
+                planner_options.recent_write_keep_window =
+                    Some(parse_days(&value["--keep-days=".len()..])?);
+                cli_recent_write_keep_window = true;
+            }
+            "--keep-size" => {
+                planner_options.keep_size_bytes =
+                    Some(parse_size(&next_value(&mut args, "--keep-size")?)?);
+                cli_keep_size = true;
+            }
+            value if value.starts_with("--keep-size=") => {
+                planner_options.keep_size_bytes = Some(parse_size(&value["--keep-size=".len()..])?);
+                cli_keep_size = true;
+            }
+            "--keep-rustc-hash" => {
+                planner_options
+                    .keep_rustc_hashes
+                    .push(parse_u64(&next_value(&mut args, "--keep-rustc-hash")?)?);
+                cli_keep_rustc_hashes = true;
+            }
+            value if value.starts_with("--keep-rustc-hash=") => {
+                planner_options
+                    .keep_rustc_hashes
+                    .push(parse_u64(&value["--keep-rustc-hash=".len()..])?);
+                cli_keep_rustc_hashes = true;
+            }
+            "--keep-installed-toolchains" => {
+                planner_options.keep_installed_toolchains = true;
+                cli_keep_installed_toolchains = true;
+            }
+            "--keep-toolchain" => {
+                planner_options.keep_toolchains.push(parse_toolchain_name(
+                    next_value(&mut args, "--keep-toolchain")?,
+                    "--keep-toolchain",
+                )?);
+                cli_keep_toolchains = true;
+            }
+            value if value.starts_with("--keep-toolchain=") => {
+                planner_options.keep_toolchains.push(parse_toolchain_name(
+                    value["--keep-toolchain=".len()..].to_string(),
+                    "--keep-toolchain",
+                )?);
+                cli_keep_toolchains = true;
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown cleanup option `{value}`")));
+            }
+            _ => roots.push(PathBuf::from(arg)),
+        }
+    }
+
+    if execute && validation_alias {
+        return Err(CliError::Usage(
+            "--dry-run/--validate conflicts with --yes".to_string(),
+        ));
+    }
+    if all && !selected_targets.is_empty() {
+        return Err(CliError::Usage(
+            "--all conflicts with --target; choose one cleanup selector".to_string(),
+        ));
+    }
+    if !all && selected_targets.is_empty() {
+        return Err(CliError::Usage(
+            "cleanup requires a selector: pass --all, --target <path>, or run the interactive terminal flow once available".to_string(),
+        ));
+    }
+
+    let config = config_path
+        .as_ref()
+        .map(load_config_from_path)
+        .transpose()?;
+    let config_version = config.as_ref().map(|config| config.version);
+
+    if roots.is_empty() {
+        if let Some(config_roots) = config
+            .as_ref()
+            .filter(|config| !config.roots.is_empty())
+            .map(|config| config.roots.clone())
+        {
+            roots = config_roots;
+        } else if all {
+            roots.push(PathBuf::from("."));
+        }
+    }
+
+    let policy = match policy {
+        Some(policy) => policy,
+        None => config
+            .as_ref()
+            .and_then(|config| config.policy.as_deref())
+            .map(parse_policy)
+            .transpose()?
+            .unwrap_or(PolicyKind::Balanced),
+    };
+
+    if let Some(config) = config {
+        let config_keep_rustc_hashes = config.keep_rustc_hashes;
+        let config_keep_installed_toolchains = config.keep_installed_toolchains;
+        let config_keep_toolchains = config.keep_toolchains;
+        let mut ignored_paths = config.ignored_paths;
+        ignored_paths.extend(scanner_options.ignored_paths);
+        scanner_options.ignored_paths = ignored_paths;
+        let mut skipped_paths = config.skipped_paths;
+        skipped_paths.extend(scanner_options.skipped_paths);
+        scanner_options.skipped_paths = skipped_paths;
+
+        if !cli_follow_symlinks && let Some(follow_symlinks) = config.scanner.follow_symlinks {
+            scanner_options.follow_symlinks = follow_symlinks;
+        }
+        if !cli_allow_name_only_targets
+            && let Some(allow_name_only_targets) = config.scanner.allow_name_only_targets
+        {
+            scanner_options.allow_name_only_targets = allow_name_only_targets;
+        }
+        if !cli_cross_filesystems && let Some(cross_filesystems) = config.scanner.cross_filesystems
+        {
+            scanner_options.cross_filesystems = cross_filesystems;
+        }
+        if !cli_recent_write_keep_window {
+            planner_options.recent_write_keep_window = config.recent_write_keep_window;
+        }
+        if !cli_keep_size {
+            planner_options.keep_size_bytes = config.keep_size_bytes;
+        }
+        planner_options.target_size_goal_bytes = config.policy_thresholds.target_size_goal_bytes;
+        planner_options.target_free_disk_bytes = config.background.target_free_disk_bytes;
+        if !cli_keep_rustc_hashes {
+            planner_options.keep_rustc_hashes = config_keep_rustc_hashes;
+        }
+        if !cli_keep_installed_toolchains {
+            planner_options.keep_installed_toolchains = config_keep_installed_toolchains;
+        }
+        if !cli_keep_toolchains {
+            planner_options.keep_toolchains = config_keep_toolchains;
+        }
+    }
+    planner_options.whole_target_mode = WholeTargetMode::Off;
+
+    let inventory_options = InventoryOptions {
+        follow_symlinks: scanner_options.follow_symlinks,
+        skipped_paths: scanner_options.skipped_paths.clone(),
+        deep_target_scan: false,
+        deep_directory_measurement: true,
+    };
+
+    Ok(CleanupCommand {
+        roots,
+        selected_targets,
+        all,
+        delete_target,
+        execute,
+        output_format,
+        policy,
+        scanner_options,
+        inventory_options,
+        planner_options,
+        config_path,
+        config_version,
+    })
+}
+
+pub(super) fn run_cleanup_command(
+    command: &CleanupCommand,
+    output: &mut impl Write,
+    active_observation_provider: &impl ActiveObservationProvider,
+) -> Result<ExitCode, CliError> {
+    let report = if command.delete_target {
+        run_whole_target_cleanup(command)?
+    } else {
+        run_smart_trim_cleanup(command, active_observation_provider)?
+    };
+    let exit_code = if report.totals.failed_count == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
+    write_apply_report_with_command(output, &report, command.output_format, "cleanup")?;
+    Ok(exit_code)
+}
+
+fn run_smart_trim_cleanup(
+    command: &CleanupCommand,
+    active_observation_provider: &impl ActiveObservationProvider,
+) -> Result<ApplyReport, CliError> {
+    let mut planner_options = command.planner_options.clone();
+    planner_options.whole_target_mode = WholeTargetMode::Off;
+    resolve_command_toolchain_hash_options(&mut planner_options)?;
+    let plan_roots = smart_trim_plan_roots(command);
+    let scanner_options = if command.selected_targets.is_empty() {
+        command.scanner_options.clone()
+    } else {
+        explicit_target_scanner_options(command)
+    };
+    let now = SystemTime::now();
+    let mut plan = if command.selected_targets.is_empty() {
+        build_plan_from_roots_with_active_observation_provider(
+            plan_roots.clone(),
+            command.policy,
+            &scanner_options,
+            &command.inventory_options,
+            &planner_options,
+            active_observation_provider,
+            now,
+        )?
+    } else {
+        let items = explicit_target_scan_items(plan_roots.clone(), &scanner_options, command)?;
+        build_plan_from_scan_items_with_active_observation_provider(
+            BuildPlanFromScanItemsWithProviderRequest {
+                input: PlanInput::new(plan_roots)?,
+                policy: command.policy,
+                items,
+                scanner_options: &scanner_options,
+                inventory_options: &command.inventory_options,
+                planner_options: &planner_options,
+                active_observation_provider,
+                now,
+            },
+        )?
+    };
+    if !command.selected_targets.is_empty() {
+        plan = filter_plan_to_selected_targets(plan, &command.selected_targets);
+    }
+    apply_persisted_plan(
+        command,
+        &plan,
+        command.policy,
+        &scanner_options,
+        &planner_options,
+        now,
+    )
+}
+
+fn smart_trim_plan_roots(command: &CleanupCommand) -> Vec<PathBuf> {
+    if command.selected_targets.is_empty() {
+        return command.roots.clone();
+    }
+
+    let mut roots = command.roots.clone();
+    roots.extend(command.selected_targets.iter().cloned());
+    roots
+}
+
+fn run_whole_target_cleanup(command: &CleanupCommand) -> Result<ApplyReport, CliError> {
+    let now = SystemTime::now();
+    let scanner_options = if command.selected_targets.is_empty() {
+        command.scanner_options.clone()
+    } else {
+        explicit_target_scanner_options(command)
+    };
+    let selected = discover_selected_whole_targets(command, &scanner_options)?;
+    let plan = selected_targets_plan(command.roots.clone(), selected, &command.inventory_options)?;
+    let planner_options = PlannerOptions {
+        whole_target_mode: WholeTargetMode::DeleteConfirmed,
+        ..PlannerOptions::default()
+    };
+    apply_persisted_plan(
+        command,
+        &plan,
+        PolicyKind::Aggressive,
+        &scanner_options,
+        &planner_options,
+        now,
+    )
+}
+
+fn explicit_target_scanner_options(command: &CleanupCommand) -> ScannerOptions {
+    let mut scanner_options = command.scanner_options.clone();
+    scanner_options.allow_name_only_targets = true;
+    scanner_options
+}
+
+fn explicit_target_scan_items(
+    roots: Vec<PathBuf>,
+    scanner_options: &ScannerOptions,
+    command: &CleanupCommand,
+) -> Result<Vec<ScanItem>, CliError> {
+    let selected = command
+        .selected_targets
+        .iter()
+        .map(|path| normalize_for_dedupe(path))
+        .collect::<HashSet<_>>();
+    let mut items = scan_roots(roots, scanner_options)?;
+    for item in &mut items {
+        let ScanItem::TargetCandidate(candidate) = item else {
+            continue;
+        };
+        if candidate.kind == TargetCandidateKind::CargoTargetDir
+            && selected.contains(&normalize_for_dedupe(&candidate.path))
+            && candidate
+                .evidence
+                .as_ref()
+                .is_some_and(TargetEvidence::is_weak_name_only)
+        {
+            candidate.evidence = Some(TargetEvidence::configured_path("explicit --target")?);
+        }
+    }
+    Ok(items)
+}
+
+fn filter_plan_to_selected_targets(plan: Plan, selected_targets: &[PathBuf]) -> Plan {
+    let selected_targets = selected_targets
+        .iter()
+        .map(|path| normalize_for_dedupe(path))
+        .collect::<Vec<_>>();
+    let entries = plan
+        .entries
+        .into_iter()
+        .filter(|entry| is_under_selected_target(&entry.snapshot.path, &selected_targets))
+        .collect::<Vec<_>>();
+    let skipped_paths = plan
+        .skipped_paths
+        .into_iter()
+        .filter(|skip| is_under_selected_target(&skip.path, &selected_targets))
+        .collect::<Vec<_>>();
+
+    Plan::with_skipped_paths(plan.input, entries, skipped_paths)
+}
+
+fn is_under_selected_target(path: &Path, selected_targets: &[PathBuf]) -> bool {
+    let path = normalize_for_dedupe(path);
+    selected_targets
+        .iter()
+        .any(|target| path == *target || path.starts_with(target))
+}
+
+fn apply_persisted_plan(
+    command: &CleanupCommand,
+    plan: &Plan,
+    policy: PolicyKind,
+    scanner_options: &ScannerOptions,
+    planner_options: &PlannerOptions,
+    now: SystemTime,
+) -> Result<ApplyReport, CliError> {
+    let mut invocation = PlanInvocation::new(
+        PlanCommandKind::Plan,
+        policy,
+        scanner_options,
+        &command.inventory_options,
+        planner_options,
+    );
+    if let (Some(config_path), Some(config_version)) =
+        (&command.config_path, command.config_version)
+    {
+        invocation = invocation.with_config(config_path, config_version);
+    }
+    let document = persist_plan(
+        plan,
+        SavePlanOptions {
+            created_at: now,
+            expires_at: now
+                .checked_add(CLEANUP_PLAN_EXPIRY)
+                .ok_or_else(|| CliError::Usage("cleanup plan expiry overflowed".to_string()))?,
+            interactive_selection_modified: false,
+            invocation,
+        },
+    )?;
+
+    if command.execute {
+        Ok(execute_persisted_plan_apply(&document, now)?)
+    } else {
+        Ok(validate_persisted_plan_for_apply(&document, now)?)
+    }
+}
+
+#[derive(Clone)]
+struct WholeTargetSelection {
+    path: PathBuf,
+    evidence: TargetEvidence,
+}
+
+fn discover_selected_whole_targets(
+    command: &CleanupCommand,
+    scanner_options: &ScannerOptions,
+) -> Result<Vec<WholeTargetSelection>, CliError> {
+    let discovery_roots = whole_target_discovery_roots(command);
+    let items = scan_roots(discovery_roots, scanner_options)?;
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    for item in items {
+        let ScanItem::TargetCandidate(candidate) = item else {
+            continue;
+        };
+        if candidate.kind != TargetCandidateKind::CargoTargetDir
+            || !is_cleanable_cargo_target(&candidate)
+        {
+            continue;
+        }
+        if seen.insert(normalize_for_dedupe(&candidate.path)) {
+            let evidence = candidate.evidence.ok_or_else(|| {
+                CliError::Usage(format!(
+                    "target `{}` was discovered without target evidence",
+                    candidate.path.display()
+                ))
+            })?;
+            targets.push(WholeTargetSelection {
+                path: candidate.path,
+                evidence,
+            });
+        }
+    }
+
+    if command.all {
+        if targets.is_empty() {
+            return Err(CliError::Usage(
+                "cleanup found no target directories to delete".to_string(),
+            ));
+        }
+        return Ok(targets);
+    }
+
+    let mut selected = Vec::new();
+    for selected_path in &command.selected_targets {
+        let selected_key = normalize_for_dedupe(selected_path);
+        let Some(target) = targets
+            .iter()
+            .find(|target| normalize_for_dedupe(&target.path) == selected_key)
+        else {
+            return Err(CliError::Usage(format!(
+                "selected target `{}` was not discovered; pass a root that contains it or the target path itself",
+                selected_path.display()
+            )));
+        };
+        if !selected
+            .iter()
+            .any(|entry: &WholeTargetSelection| normalize_for_dedupe(&entry.path) == selected_key)
+        {
+            selected.push(target.clone());
+        }
+    }
+    Ok(selected)
+}
+
+fn whole_target_discovery_roots(command: &CleanupCommand) -> Vec<PathBuf> {
+    let mut roots = command.roots.clone();
+    roots.extend(command.selected_targets.iter().cloned());
+    if roots.is_empty() {
+        roots.push(PathBuf::from("."));
+    }
+    roots
+}
+
+fn selected_targets_plan(
+    roots: Vec<PathBuf>,
+    selected: Vec<WholeTargetSelection>,
+    inventory_options: &InventoryOptions,
+) -> Result<Plan, CliError> {
+    let mut entries = Vec::new();
+    let mut input_roots = roots;
+    for target in selected {
+        if input_roots.is_empty() {
+            input_roots.push(target.path.clone());
+        }
+        let entry = PlanEntry::new(
+            snapshot_path(&target.path, inventory_options)?,
+            ArtifactClass::WholeTarget,
+            target.evidence,
+            PlanAction::Delete,
+            "selected whole-target cleanup",
+            false,
+        )?;
+        entries.push(entry);
+    }
+    Ok(Plan::new(PlanInput::new(input_roots)?, entries))
+}
+
+fn is_cleanable_cargo_target(candidate: &TargetCandidate) -> bool {
+    match candidate.evidence.as_ref() {
+        Some(TargetEvidence::ConfiguredPath { .. })
+        | Some(TargetEvidence::ProjectContext { .. }) => true,
+        Some(TargetEvidence::StrongMarker { .. }) | Some(TargetEvidence::WeakNameOnly { .. }) => {
+            candidate
+                .path
+                .file_name()
+                .is_some_and(|name| name == "target")
+        }
+        None => false,
+    }
+}
+
+fn normalize_for_dedupe(path: &Path) -> PathBuf {
+    path.components().collect()
+}
+
+fn cleanup_usage() -> String {
+    "usage: cargo-reclaim cleanup (--all|--target <path>) [--delete-target] [--yes] [OPTIONS] [ROOT ...]".to_string()
+}

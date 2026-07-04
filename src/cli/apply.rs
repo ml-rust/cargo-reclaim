@@ -104,21 +104,30 @@ fn validate_plan_path(path: PathBuf) -> Result<PathBuf, CliError> {
     Ok(path)
 }
 
-fn write_apply_report(
+pub(super) fn write_apply_report(
     output: &mut impl Write,
     report: &ApplyReport,
     format: OutputFormat,
 ) -> Result<(), CliError> {
+    write_apply_report_with_command(output, report, format, "apply")
+}
+
+pub(super) fn write_apply_report_with_command(
+    output: &mut impl Write,
+    report: &ApplyReport,
+    format: OutputFormat,
+    command_label: &str,
+) -> Result<(), CliError> {
     if format == OutputFormat::Json {
-        write_apply_json_report(output, report)?;
+        write_apply_json_report(output, report, command_label)?;
         return Ok(());
     }
 
     if report.dry_run {
-        writeln!(output, "cargo-reclaim apply validation")?;
+        writeln!(output, "cargo-reclaim {command_label} validation")?;
         writeln!(output, "validation only; no files were deleted or modified")?;
     } else {
-        writeln!(output, "cargo-reclaim apply execution")?;
+        writeln!(output, "cargo-reclaim {command_label} execution")?;
         writeln!(
             output,
             "execution mode; only freshly revalidated delete entries were removed"
@@ -157,7 +166,11 @@ fn write_apply_report(
     Ok(())
 }
 
-fn write_apply_json_report(output: &mut impl Write, report: &ApplyReport) -> Result<(), CliError> {
+fn write_apply_json_report(
+    output: &mut impl Write,
+    report: &ApplyReport,
+    command_label: &str,
+) -> Result<(), CliError> {
     let entries = report
         .entries
         .iter()
@@ -173,7 +186,7 @@ fn write_apply_json_report(output: &mut impl Write, report: &ApplyReport) -> Res
         })
         .collect::<Vec<_>>();
     let document = serde_json::json!({
-        "command": "apply",
+        "command": command_label,
         "dry_run": report.dry_run,
         "plan_id": report.plan_id.as_str(),
         "totals": {
@@ -194,7 +207,7 @@ fn write_apply_json_report(output: &mut impl Write, report: &ApplyReport) -> Res
     Ok(())
 }
 
-fn apply_status_label(status: ApplyEntryStatus) -> &'static str {
+pub(super) fn apply_status_label(status: ApplyEntryStatus) -> &'static str {
     match status {
         ApplyEntryStatus::WouldDelete => "would_delete",
         ApplyEntryStatus::Deleted => "deleted",

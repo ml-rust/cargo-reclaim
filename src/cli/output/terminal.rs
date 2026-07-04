@@ -10,10 +10,14 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "cargo-reclaim")?;
     writeln!(
         output,
-        "Usage: cargo-reclaim <scan|plan|apply|edit-plan|scheduler|cargo-config|cargo-home|list|targets> [OPTIONS]"
+        "Usage: cargo-reclaim [ROOT ...] --all [OPTIONS]\n       cargo-reclaim <cleanup|scan|plan|apply|edit-plan|scheduler|cargo-config|cargo-home|list|targets> [OPTIONS]"
     )?;
     writeln!(output)?;
     writeln!(output, "Commands:")?;
+    writeln!(
+        output,
+        "  cleanup  Validate or execute smart trim; use --delete-target for whole target deletion"
+    )?;
     writeln!(output, "  scan    Build a read-only dry-run plan for roots")?;
     writeln!(output, "  plan    Build a read-only dry-run plan for roots")?;
     writeln!(output, "  apply   Validate or execute a persisted plan")?;
