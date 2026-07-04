@@ -165,11 +165,15 @@ not-json
     assert!(stdout.contains("corrupt run log records: 1"));
     assert!(stdout.contains("apply completed cycles: 1"));
     assert!(stdout.contains("failed cycles: 1"));
-    assert!(stdout.contains("applied bytes: 1234"));
+    assert!(stdout.contains("applied bytes: 1234 (1.21 KiB)"));
     assert!(stdout.contains("last event: failed"));
     assert!(stdout.contains("recent runs:"));
-    assert!(stdout.contains("run-1: last_event=apply_completed applied_bytes=1234 failed=false"));
-    assert!(stdout.contains("run-2: last_event=failed applied_bytes=0 failed=true"));
+    assert!(
+        stdout.contains(
+            "run-1: last_event=apply_completed applied_bytes=1234 (1.21 KiB) failed=false"
+        )
+    );
+    assert!(stdout.contains("run-2: last_event=failed applied_bytes=0 (0 B) failed=true"));
     Ok(())
 }
 

@@ -14,6 +14,7 @@ use cargo_reclaim::{
     scheduler_instance_name_from_config,
 };
 
+use super::super::target_report::human_bytes;
 use super::super::{CliError, OutputFormat, inline_config_path, next_path, next_value};
 use super::scheduler_subcommand_usage;
 
@@ -310,7 +311,12 @@ fn write_status_terminal(
             summary.apply_completed_count
         )?;
         writeln!(output, "failed cycles: {}", summary.failed_count)?;
-        writeln!(output, "applied bytes: {}", summary.applied_bytes)?;
+        writeln!(
+            output,
+            "applied bytes: {} ({})",
+            summary.applied_bytes,
+            human_bytes(summary.applied_bytes)
+        )?;
         if let Some(run_id) = &summary.last_event_run_id {
             writeln!(output, "last event run: {run_id}")?;
         }
@@ -322,10 +328,11 @@ fn write_status_terminal(
             for run in &summary.recent_runs {
                 writeln!(
                     output,
-                    "  {}: last_event={} applied_bytes={} failed={}",
+                    "  {}: last_event={} applied_bytes={} ({}) failed={}",
                     run.run_id,
                     run_event_kind_label(run.last_event_kind),
                     run.applied_bytes,
+                    human_bytes(run.applied_bytes),
                     run.failed
                 )?;
             }
