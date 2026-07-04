@@ -167,12 +167,16 @@ fn run_service(
 ) -> Result<ExitCode, CliError> {
     let config = load_config_from_path(&command.config_path)?;
     let config_path = canonical_config_path(command.config_path.clone());
-    let options = service_options(&config_path, &config, command.max_cycles)?;
+    let paths = service_paths(&config_path, &config)?;
+    let options = service_options(&config_path, paths.clone(), command.max_cycles);
     let summary = run_background_service(options, &config)?;
     match command.output_format {
         OutputFormat::Terminal => {
             writeln!(output, "cargo-reclaim scheduler service")?;
             writeln!(output, "status: {}", status_label(summary.state.status))?;
+            writeln!(output, "state file: {}", paths.state_path.display())?;
+            writeln!(output, "log dir: {}", paths.log_dir.display())?;
+            writeln!(output, "run log: {}", paths.runs_log_path.display())?;
             writeln!(output, "cycles: {}", summary.cycles_completed)?;
             if let Some(run_id) = &summary.state.last_run_id {
                 writeln!(output, "last run: {run_id}")?;
@@ -183,6 +187,7 @@ fn run_service(
             "scheduler-service-run",
             &summary.state,
             Some(summary.cycles_completed),
+            Some(&paths),
             None,
         )?,
     }
@@ -199,14 +204,17 @@ fn run_status(
     let state = read_background_service_state(&paths.state_path)?
         .map(refresh_background_service_state)
         .unwrap_or_else(BackgroundServiceState::missing);
-    let run_summary = read_run_summary(&paths.log_dir.join("runs.jsonl"))?;
+    let run_summary = read_run_summary(&paths.runs_log_path)?;
     match command.output_format {
-        OutputFormat::Terminal => write_status_terminal(output, &state, run_summary.as_ref())?,
+        OutputFormat::Terminal => {
+            write_status_terminal(output, &paths, &state, run_summary.as_ref())?
+        }
         OutputFormat::Json => write_status_json(
             output,
             "scheduler-service-status",
             &state,
             None,
+            Some(&paths),
             run_summary.as_ref(),
         )?,
     }
@@ -215,17 +223,16 @@ fn run_status(
 
 fn service_options(
     config_path: &std::path::Path,
-    config: &ReclaimConfig,
+    paths: BackgroundServicePaths,
     max_cycles: Option<usize>,
-) -> Result<BackgroundServiceOptions, CliError> {
-    let paths = service_paths(config_path, config)?;
-    Ok(BackgroundServiceOptions {
+) -> BackgroundServiceOptions {
+    BackgroundServiceOptions {
         config_path: config_path.to_path_buf(),
         state_dir: paths.state_dir,
         log_dir: paths.log_dir,
         mode: None,
         max_cycles,
-    })
+    }
 }
 
 fn service_paths(
@@ -266,6 +273,7 @@ fn default_service_log_dir(instance_name: &str) -> PathBuf {
 
 fn write_status_terminal(
     output: &mut impl Write,
+    paths: &BackgroundServicePaths,
     state: &BackgroundServiceState,
     run_summary: Option<&RunSummary>,
 ) -> Result<(), CliError> {
@@ -274,6 +282,9 @@ fn write_status_terminal(
         "cargo-reclaim scheduler service: {}",
         status_label(state.status)
     )?;
+    writeln!(output, "state file: {}", paths.state_path.display())?;
+    writeln!(output, "log dir: {}", paths.log_dir.display())?;
+    writeln!(output, "run log: {}", paths.runs_log_path.display())?;
     if let Some(pid) = state.pid {
         writeln!(output, "pid: {pid}")?;
     }
@@ -306,6 +317,19 @@ fn write_status_terminal(
         if let Some(kind) = summary.last_event_kind {
             writeln!(output, "last event: {}", run_event_kind_label(kind))?;
         }
+        if !summary.recent_runs.is_empty() {
+            writeln!(output, "recent runs:")?;
+            for run in &summary.recent_runs {
+                writeln!(
+                    output,
+                    "  {}: last_event={} applied_bytes={} failed={}",
+                    run.run_id,
+                    run_event_kind_label(run.last_event_kind),
+                    run.applied_bytes,
+                    run.failed
+                )?;
+            }
+        }
     }
     Ok(())
 }
@@ -315,6 +339,7 @@ fn write_status_json(
     command: &'static str,
     state: &BackgroundServiceState,
     cycles_completed: Option<usize>,
+    paths: Option<&BackgroundServicePaths>,
     run_summary: Option<&RunSummary>,
 ) -> Result<(), CliError> {
     let document = serde_json::json!({
@@ -329,11 +354,31 @@ fn write_status_json(
         "consecutive_failures": state.consecutive_failures,
         "last_problem": state.last_problem,
         "cycles_completed": cycles_completed,
+        "paths": paths.map(JsonServicePaths::from),
         "run_log": run_summary.map(JsonRunSummary::from),
     });
     serde_json::to_writer(&mut *output, &document)?;
     writeln!(output)?;
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct JsonServicePaths {
+    state_dir: String,
+    state_path: String,
+    log_dir: String,
+    run_log_path: String,
+}
+
+impl From<&BackgroundServicePaths> for JsonServicePaths {
+    fn from(paths: &BackgroundServicePaths) -> Self {
+        Self {
+            state_dir: paths.state_dir.display().to_string(),
+            state_path: paths.state_path.display().to_string(),
+            log_dir: paths.log_dir.display().to_string(),
+            run_log_path: paths.runs_log_path.display().to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +391,15 @@ struct RunSummary {
     applied_bytes: u64,
     last_event_run_id: Option<String>,
     last_event_kind: Option<BackgroundRunEventKind>,
+    recent_runs: Vec<RecentRunSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecentRunSummary {
+    run_id: String,
+    last_event_kind: BackgroundRunEventKind,
+    applied_bytes: u64,
+    failed: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -358,6 +412,7 @@ struct JsonRunSummary {
     applied_bytes: u64,
     last_event_run_id: Option<String>,
     last_event: Option<&'static str>,
+    recent_runs: Vec<JsonRecentRunSummary>,
 }
 
 impl From<&RunSummary> for JsonRunSummary {
@@ -371,6 +426,30 @@ impl From<&RunSummary> for JsonRunSummary {
             applied_bytes: summary.applied_bytes,
             last_event_run_id: summary.last_event_run_id.clone(),
             last_event: summary.last_event_kind.map(run_event_kind_label),
+            recent_runs: summary
+                .recent_runs
+                .iter()
+                .map(JsonRecentRunSummary::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct JsonRecentRunSummary {
+    run_id: String,
+    last_event: &'static str,
+    applied_bytes: u64,
+    failed: bool,
+}
+
+impl From<&RecentRunSummary> for JsonRecentRunSummary {
+    fn from(summary: &RecentRunSummary) -> Self {
+        Self {
+            run_id: summary.run_id.clone(),
+            last_event: run_event_kind_label(summary.last_event_kind),
+            applied_bytes: summary.applied_bytes,
+            failed: summary.failed,
         }
     }
 }
@@ -419,20 +498,45 @@ fn summarize_run_log(records: &[BackgroundRunLogRecord]) -> RunSummary {
         applied_bytes: 0,
         last_event_run_id: None,
         last_event_kind: None,
+        recent_runs: Vec::new(),
     };
+    let mut run_summaries = Vec::<RecentRunSummary>::new();
 
     for record in records {
+        let run_index = match run_summaries
+            .iter()
+            .position(|summary| summary.run_id == record.run_id)
+        {
+            Some(index) => index,
+            None => {
+                run_summaries.push(RecentRunSummary {
+                    run_id: record.run_id.clone(),
+                    last_event_kind: record.kind,
+                    applied_bytes: 0,
+                    failed: false,
+                });
+                run_summaries.len() - 1
+            }
+        };
+        let run_summary = &mut run_summaries[run_index];
+        run_summary.last_event_kind = record.kind;
         match record.kind {
             BackgroundRunEventKind::Started => summary.started_count += 1,
             BackgroundRunEventKind::ApplyCompleted => {
                 summary.apply_completed_count += 1;
                 if let Some(apply) = &record.apply {
+                    run_summary.applied_bytes = run_summary
+                        .applied_bytes
+                        .saturating_add(apply.totals.applied_bytes);
                     summary.applied_bytes = summary
                         .applied_bytes
                         .saturating_add(apply.totals.applied_bytes);
                 }
             }
-            BackgroundRunEventKind::Failed => summary.failed_count += 1,
+            BackgroundRunEventKind::Failed => {
+                summary.failed_count += 1;
+                run_summary.failed = true;
+            }
             BackgroundRunEventKind::Triggered
             | BackgroundRunEventKind::PlanBuilt
             | BackgroundRunEventKind::Skipped => {}
@@ -440,6 +544,8 @@ fn summarize_run_log(records: &[BackgroundRunLogRecord]) -> RunSummary {
         summary.last_event_run_id = Some(record.run_id.clone());
         summary.last_event_kind = Some(record.kind);
     }
+    let recent_start = run_summaries.len().saturating_sub(5);
+    summary.recent_runs = run_summaries.split_off(recent_start);
 
     summary
 }

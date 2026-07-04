@@ -66,7 +66,7 @@ cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo
 cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
 ```
 
-Resident scheduler logs are written to the configured `log_dir`.
+`scheduler service status` prints the resolved state file, log directory, run log path, lifetime totals, and recent run summaries. The resident scheduler writes JSONL run records to `runs.jsonl` under the resolved `log_dir`.
 
 Supported Rust: `cargo-reclaim` targets Rust 1.88+.
 
@@ -187,6 +187,9 @@ cargo-reclaim scheduler service run --config ~/.config/cargo-reclaim/reclaim.tom
 cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml
 cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
 
+# Inspect the raw scheduler run log printed by service status.
+tail -n 20 ~/.local/state/cargo-reclaim/logs/runs.jsonl
+
 # Preview platform service artifacts before installing them.
 cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
 cargo-reclaim scheduler preview --platform launchd --config ~/.config/cargo-reclaim/reclaim.toml
@@ -265,7 +268,7 @@ target_free_disk = "200 GiB"
 
 - Linux uses `procfs` for active-process detection when `/proc` is readable; macOS and Windows use a native process-table provider through `sysinfo`.
 - Scheduler preview, install, and uninstall support `systemd-user` on Linux, `launchd` on macOS, and `task-scheduler` on Windows.
-- The scheduler service persists state and run logs. `scheduler service status` may return `unknown` until the service has written state, keeps `running` when PID liveness cannot be inspected, and reports `stale` when a saved running PID is definitely dead.
+- The scheduler service persists state and run logs. `scheduler service status` prints the resolved `service-state.json` and `runs.jsonl` paths, may return `unknown` until the service has written state, keeps `running` when PID liveness cannot be inspected, and reports `stale` when a saved running PID is definitely dead.
 - Cargo config resolution treats `build-dir = "{workspace-root}/{workspace-path-hash}"` as unsupported, so that template is reported instead of being used as a write target.
 
 ## Common Options

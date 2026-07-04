@@ -33,6 +33,17 @@ fn service_run_json_creates_state_log_and_plan() -> Result<(), Box<dyn Error>> {
     assert_eq!(document["command"], "scheduler-service-run");
     assert_eq!(document["status"], "stopped");
     assert_eq!(document["cycles_completed"], 1);
+    assert_eq!(
+        document["paths"]["state_path"],
+        temp.path()
+            .join("state/service-state.json")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        document["paths"]["run_log_path"],
+        temp.path().join("logs/runs.jsonl").display().to_string()
+    );
     assert!(temp.path().join("state/service-state.json").is_file());
     assert!(temp.path().join("logs/runs.jsonl").is_file());
     assert!(fs::read_dir(temp.path().join("state/plans"))?.count() >= 1);
@@ -79,6 +90,8 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
         r#"{"schema_version":1,"run_id":"run-1","recorded_at":{"unix_seconds":20,"nanoseconds":0},"event":"started","trigger":null,"selected_policy":"conservative","plan":null,"skipped_projects":[],"apply":null,"recommendations":[],"problems":[]}
 not-json
 {"schema_version":1,"run_id":"run-1","recorded_at":{"unix_seconds":21,"nanoseconds":0},"event":"apply_completed","trigger":null,"selected_policy":"conservative","plan":null,"skipped_projects":[],"apply":{"plan_id":"sha256:test","dry_run":false,"totals":{"entry_count":2,"delete_candidate_count":1,"would_delete_count":0,"skipped_count":1,"stale_skip_count":0,"applied_count":1,"failed_count":0,"would_delete_bytes":0,"applied_bytes":1234},"notable_entries":[]},"recommendations":[],"problems":[]}
+{"schema_version":1,"run_id":"run-2","recorded_at":{"unix_seconds":22,"nanoseconds":0},"event":"started","trigger":null,"selected_policy":"balanced","plan":null,"skipped_projects":[],"apply":null,"recommendations":[],"problems":[]}
+{"schema_version":1,"run_id":"run-2","recorded_at":{"unix_seconds":23,"nanoseconds":0},"event":"failed","trigger":null,"selected_policy":"balanced","plan":null,"skipped_projects":[],"apply":null,"recommendations":[],"problems":["simulated failure"]}
 "#,
     )?;
 
@@ -93,13 +106,42 @@ not-json
     assert_eq!(document["status"], "running");
     assert_eq!(document["pid"], pid);
     assert_eq!(document["last_run_id"], "scheduler-status-test");
-    assert_eq!(document["run_log"]["record_count"], 2);
+    assert_eq!(
+        document["paths"]["state_path"],
+        temp.path()
+            .join("state/service-state.json")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        document["paths"]["log_dir"],
+        temp.path().join("logs").display().to_string()
+    );
+    assert_eq!(
+        document["paths"]["run_log_path"],
+        temp.path().join("logs/runs.jsonl").display().to_string()
+    );
+    assert_eq!(document["run_log"]["record_count"], 4);
     assert_eq!(document["run_log"]["corrupt_record_count"], 1);
-    assert_eq!(document["run_log"]["started_count"], 1);
+    assert_eq!(document["run_log"]["started_count"], 2);
     assert_eq!(document["run_log"]["apply_completed_count"], 1);
-    assert_eq!(document["run_log"]["failed_count"], 0);
+    assert_eq!(document["run_log"]["failed_count"], 1);
     assert_eq!(document["run_log"]["applied_bytes"], 1234);
-    assert_eq!(document["run_log"]["last_event"], "apply_completed");
+    assert_eq!(document["run_log"]["last_event"], "failed");
+    assert_eq!(document["run_log"]["recent_runs"][0]["run_id"], "run-1");
+    assert_eq!(
+        document["run_log"]["recent_runs"][0]["last_event"],
+        "apply_completed"
+    );
+    assert_eq!(document["run_log"]["recent_runs"][0]["applied_bytes"], 1234);
+    assert_eq!(document["run_log"]["recent_runs"][0]["failed"], false);
+    assert_eq!(document["run_log"]["recent_runs"][1]["run_id"], "run-2");
+    assert_eq!(
+        document["run_log"]["recent_runs"][1]["last_event"],
+        "failed"
+    );
+    assert_eq!(document["run_log"]["recent_runs"][1]["applied_bytes"], 0);
+    assert_eq!(document["run_log"]["recent_runs"][1]["failed"], true);
 
     let terminal = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
         .args(["scheduler", "service", "status", "--config"])
@@ -108,13 +150,26 @@ not-json
     assert!(terminal.status.success());
     let stdout = String::from_utf8(terminal.stdout)?;
     assert!(stdout.contains("cargo-reclaim scheduler service: running"));
+    assert!(stdout.contains(&format!(
+        "state file: {}",
+        temp.path().join("state/service-state.json").display()
+    )));
+    assert!(stdout.contains(&format!("log dir: {}", temp.path().join("logs").display())));
+    assert!(stdout.contains(&format!(
+        "run log: {}",
+        temp.path().join("logs/runs.jsonl").display()
+    )));
     assert!(stdout.contains(&format!("pid: {pid}")));
     assert!(stdout.contains("last run: scheduler-status-test"));
-    assert!(stdout.contains("run log records: 2"));
+    assert!(stdout.contains("run log records: 4"));
     assert!(stdout.contains("corrupt run log records: 1"));
     assert!(stdout.contains("apply completed cycles: 1"));
+    assert!(stdout.contains("failed cycles: 1"));
     assert!(stdout.contains("applied bytes: 1234"));
-    assert!(stdout.contains("last event: apply_completed"));
+    assert!(stdout.contains("last event: failed"));
+    assert!(stdout.contains("recent runs:"));
+    assert!(stdout.contains("run-1: last_event=apply_completed applied_bytes=1234 failed=false"));
+    assert!(stdout.contains("run-2: last_event=failed applied_bytes=0 failed=true"));
     Ok(())
 }
 
