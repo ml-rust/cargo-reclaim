@@ -228,8 +228,48 @@ fn yes_without_selector_returns_usage_error_without_deleting() -> Result<(), Box
 
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("pass --all, --target <path>"));
+    assert!(stderr.contains("pass --all or --target <path>"));
     assert!(artifact.is_file());
+    Ok(())
+}
+
+#[test]
+fn non_tty_no_selector_returns_usage_error_without_reading_stdin() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cleanup_no_selector_non_tty")?;
+    let project = write_project(temp.path(), "project")?;
+    let artifact = project.join("target/debug/incremental/unit/cache.bin");
+
+    let output = common::cargo_reclaim_command(temp.path())
+        .args(["cleanup"])
+        .arg(&project)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)?.contains("interactive terminal"));
+    assert!(artifact.is_file());
+    Ok(())
+}
+
+#[test]
+fn json_no_selector_emits_structured_usage_error() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cleanup_no_selector_json")?;
+    let project = write_project(temp.path(), "project")?;
+
+    let output = common::cargo_reclaim_command(temp.path())
+        .args(["cleanup", "--json"])
+        .arg(&project)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stdout)?.is_empty());
+    let error: Value = serde_json::from_slice(&output.stderr)?;
+    assert_eq!(error["error"]["kind"], "usage");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("interactive terminal")
+    );
     Ok(())
 }
 

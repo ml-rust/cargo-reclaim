@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
@@ -9,7 +9,7 @@ use cargo_reclaim::{
     ActiveObservationProvider, ApplyReport, ArtifactClass,
     BuildPlanFromScanItemsWithProviderRequest, InventoryOptions, Plan, PlanAction, PlanCommandKind,
     PlanEntry, PlanInput, PlanInvocation, PlannerOptions, PolicyKind, SavePlanOptions, ScanItem,
-    ScannerOptions, TargetCandidate, TargetCandidateKind, TargetEvidence, WholeTargetMode,
+    ScannerOptions, TargetCandidateKind, TargetEvidence, WholeTargetMode,
     build_plan_from_roots_with_active_observation_provider,
     build_plan_from_scan_items_with_active_observation_provider, execute_persisted_plan_apply,
     load_config_from_path, persist_plan, resolve_command_toolchain_hash_options, scan_roots,
@@ -17,7 +17,12 @@ use cargo_reclaim::{
 };
 
 use super::apply::write_apply_report_with_command;
+use super::cleanup_assistant::{CleanupAssistantAction, CleanupAssistantMode};
+use super::cleanup_terminal::run_cleanup_terminal_assistant;
 use super::persistence::{parse_days, parse_duration, parse_size};
+use super::target_report::{
+    TargetsDiscovery, build_targets_report, is_cleanable_cargo_target, normalize_for_dedupe,
+};
 use super::{
     CliError, OutputFormat, inline_config_path, inline_ignore_path, inline_skip_path, next_path,
     next_value, parse_policy, parse_toolchain_name, parse_u64,
@@ -25,13 +30,16 @@ use super::{
 
 const CLEANUP_PLAN_EXPIRY: Duration = Duration::from_secs(5 * 60);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct CleanupCommand {
     roots: Vec<PathBuf>,
     selected_targets: Vec<PathBuf>,
     all: bool,
     delete_target: bool,
     execute: bool,
+    validate_only: bool,
+    prompt_selector: bool,
+    interactive_selection_modified: bool,
     output_format: OutputFormat,
     policy: PolicyKind,
     scanner_options: ScannerOptions,
@@ -209,11 +217,7 @@ pub(super) fn parse_cleanup_command(
             "--all conflicts with --target; choose one cleanup selector".to_string(),
         ));
     }
-    if !all && selected_targets.is_empty() {
-        return Err(CliError::Usage(
-            "cleanup requires a selector: pass --all, --target <path>, or run the interactive terminal flow once available".to_string(),
-        ));
-    }
+    let prompt_selector = !all && selected_targets.is_empty();
 
     let config = config_path
         .as_ref()
@@ -228,7 +232,7 @@ pub(super) fn parse_cleanup_command(
             .map(|config| config.roots.clone())
         {
             roots = config_roots;
-        } else if all {
+        } else if all || prompt_selector {
             roots.push(PathBuf::from("."));
         }
     }
@@ -299,6 +303,9 @@ pub(super) fn parse_cleanup_command(
         all,
         delete_target,
         execute,
+        validate_only: validation_alias,
+        prompt_selector,
+        interactive_selection_modified: false,
         output_format,
         policy,
         scanner_options,
@@ -314,18 +321,92 @@ pub(super) fn run_cleanup_command(
     output: &mut impl Write,
     active_observation_provider: &impl ActiveObservationProvider,
 ) -> Result<ExitCode, CliError> {
-    let report = if command.delete_target {
-        run_whole_target_cleanup(command)?
+    let command = resolve_cleanup_assistant(command)?;
+    if command.cancelled {
+        writeln!(output, "cargo-reclaim cleanup cancelled")?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let report = if command.command.delete_target {
+        run_whole_target_cleanup(&command.command)?
     } else {
-        run_smart_trim_cleanup(command, active_observation_provider)?
+        run_smart_trim_cleanup(&command.command, active_observation_provider)?
     };
     let exit_code = if report.totals.failed_count == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
     };
-    write_apply_report_with_command(output, &report, command.output_format, "cleanup")?;
+    write_apply_report_with_command(output, &report, command.command.output_format, "cleanup")?;
     Ok(exit_code)
+}
+
+struct ResolvedCleanupCommand {
+    command: CleanupCommand,
+    cancelled: bool,
+}
+
+fn resolve_cleanup_assistant(command: &CleanupCommand) -> Result<ResolvedCleanupCommand, CliError> {
+    if !command.prompt_selector {
+        return Ok(ResolvedCleanupCommand {
+            command: command.clone(),
+            cancelled: false,
+        });
+    }
+    if command.output_format != OutputFormat::Terminal || !cleanup_assistant_tty_available() {
+        return Err(no_cleanup_selector_error());
+    }
+
+    let report = build_targets_report(&TargetsDiscovery::new(
+        command.roots.clone(),
+        command.scanner_options.clone(),
+        command.inventory_options.clone(),
+        command.config_path.clone(),
+        command.config_version,
+    ))?;
+    if report.targets.is_empty() {
+        return Err(CliError::Usage(
+            "cleanup found no target directories to select".to_string(),
+        ));
+    }
+    let forced_mode = command
+        .delete_target
+        .then_some(CleanupAssistantMode::DeleteTarget);
+    let forced_action = if command.execute {
+        Some(CleanupAssistantAction::Execute)
+    } else if command.validate_only {
+        Some(CleanupAssistantAction::ValidateOnly)
+    } else {
+        None
+    };
+    let selection = run_cleanup_terminal_assistant(&report, forced_mode, forced_action)?;
+    if selection.action == CleanupAssistantAction::Cancel {
+        return Ok(ResolvedCleanupCommand {
+            command: command.clone(),
+            cancelled: true,
+        });
+    }
+
+    let mut resolved = command.clone();
+    resolved.prompt_selector = false;
+    resolved.selected_targets = selection.targets;
+    resolved.delete_target = selection.mode == CleanupAssistantMode::DeleteTarget;
+    resolved.execute = selection.action == CleanupAssistantAction::Execute;
+    resolved.interactive_selection_modified = true;
+    Ok(ResolvedCleanupCommand {
+        command: resolved,
+        cancelled: false,
+    })
+}
+
+fn cleanup_assistant_tty_available() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
+}
+
+fn no_cleanup_selector_error() -> CliError {
+    CliError::Usage(
+        "cleanup requires a selector: pass --all or --target <path>, or run no-selector cleanup from an interactive terminal".to_string(),
+    )
 }
 
 fn run_smart_trim_cleanup(
@@ -500,7 +581,7 @@ fn apply_persisted_plan(
             expires_at: now
                 .checked_add(CLEANUP_PLAN_EXPIRY)
                 .ok_or_else(|| CliError::Usage("cleanup plan expiry overflowed".to_string()))?,
-            interactive_selection_modified: false,
+            interactive_selection_modified: command.interactive_selection_modified,
             invocation,
         },
     )?;
@@ -613,24 +694,6 @@ fn selected_targets_plan(
     Ok(Plan::new(PlanInput::new(input_roots)?, entries))
 }
 
-fn is_cleanable_cargo_target(candidate: &TargetCandidate) -> bool {
-    match candidate.evidence.as_ref() {
-        Some(TargetEvidence::ConfiguredPath { .. })
-        | Some(TargetEvidence::ProjectContext { .. }) => true,
-        Some(TargetEvidence::StrongMarker { .. }) | Some(TargetEvidence::WeakNameOnly { .. }) => {
-            candidate
-                .path
-                .file_name()
-                .is_some_and(|name| name == "target")
-        }
-        None => false,
-    }
-}
-
-fn normalize_for_dedupe(path: &Path) -> PathBuf {
-    path.components().collect()
-}
-
 fn cleanup_usage() -> String {
-    "usage: cargo-reclaim cleanup (--all|--target <path>) [--delete-target] [--yes] [OPTIONS] [ROOT ...]".to_string()
+    "usage: cargo-reclaim cleanup [--all|--target <path>] [--delete-target] [--yes] [OPTIONS] [ROOT ...]".to_string()
 }

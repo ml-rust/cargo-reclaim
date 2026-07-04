@@ -14,12 +14,15 @@ mod apply;
 mod cargo_config;
 mod cargo_home;
 mod cleanup;
+mod cleanup_assistant;
+mod cleanup_terminal;
 mod edit_plan;
 mod error_output;
 mod output;
 mod persistence;
 mod plan;
 mod scheduler;
+mod target_report;
 mod targets;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};

@@ -28,3 +28,4 @@ sysinfo = { version = "0.37.2", default-features = false, features = ["system"] 
 toml = "0.9"
 toml_edit = "0.25"
 rustc-stable-hash = "0.1.2"
+crossterm = "0.29"

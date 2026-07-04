@@ -1,20 +1,22 @@
-use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use cargo_reclaim::{
-    ApplyEntryStatus, ApplyReport, ArtifactClass, InventoryOptions, PathKind, Plan, PlanAction,
-    PlanCommandKind, PlanEntry, PlanInput, PlanInvocation, PlannerOptions, PolicyKind,
-    ReclaimError, SavePlanOptions, ScanItem, ScanSkipReason, ScannerOptions, TargetCandidate,
-    TargetCandidateKind, TargetEvidence, WholeTargetMode, execute_persisted_plan_apply,
-    load_config_from_path, persist_plan, scan_roots, snapshot_path,
-    validate_persisted_plan_for_apply,
+    ApplyReport, ArtifactClass, InventoryOptions, Plan, PlanAction, PlanCommandKind, PlanEntry,
+    PlanInput, PlanInvocation, PlannerOptions, PolicyKind, SavePlanOptions, ScannerOptions,
+    WholeTargetMode, execute_persisted_plan_apply, load_config_from_path, persist_plan,
+    snapshot_path, validate_persisted_plan_for_apply,
 };
 use serde_json::json;
 
+use super::apply::apply_status_label;
+use super::target_report::{
+    TargetListEntry, TargetsDiscovery, TargetsReport, build_targets_report, evidence_label,
+    human_bytes, normalize_for_dedupe, problem_json, skip_json, target_json,
+};
 use super::{
     CliError, OutputFormat, inline_config_path, inline_ignore_path, inline_skip_path, next_path,
 };
@@ -48,6 +50,18 @@ struct TargetsDiscoveryCommand {
     inventory_options: InventoryOptions,
     config_path: Option<PathBuf>,
     config_version: Option<u16>,
+}
+
+impl TargetsDiscoveryCommand {
+    fn report_discovery(&self) -> TargetsDiscovery {
+        TargetsDiscovery::new(
+            self.roots.clone(),
+            self.scanner_options.clone(),
+            self.inventory_options.clone(),
+            self.config_path.clone(),
+            self.config_version,
+        )
+    }
 }
 
 #[derive(Default)]
@@ -253,14 +267,14 @@ pub(in crate::cli) fn run_targets_command(
 ) -> Result<ExitCode, CliError> {
     match command {
         TargetsCommand::List(command) => {
-            let report = build_targets_report(&command.discovery)?;
+            let report = build_targets_report(&command.discovery.report_discovery())?;
             match command.discovery.output_format {
                 OutputFormat::Terminal => write_targets_terminal(output, &report)?,
                 OutputFormat::Json => write_targets_json(output, &report)?,
             }
         }
         TargetsCommand::Clean(command) => {
-            let report = build_targets_report(&command.discovery)?;
+            let report = build_targets_report(&command.discovery.report_discovery())?;
             let selected = select_targets(command, &report)?;
             let apply_report = run_selected_target_cleanup(command, &report, selected)?;
             match command.discovery.output_format {
@@ -274,128 +288,6 @@ pub(in crate::cli) fn run_targets_command(
         }
     }
     Ok(ExitCode::SUCCESS)
-}
-
-struct TargetsReport {
-    roots: Vec<PathBuf>,
-    config_path: Option<PathBuf>,
-    config_version: Option<u16>,
-    total_size_bytes: u64,
-    targets: Vec<TargetListEntry>,
-    skipped_paths: Vec<TargetListSkip>,
-    problems: Vec<TargetListProblem>,
-}
-
-#[derive(Clone)]
-struct TargetListEntry {
-    path: PathBuf,
-    size_bytes: u64,
-    path_kind: PathKind,
-    evidence: TargetEvidence,
-}
-
-struct TargetListSkip {
-    path: PathBuf,
-    reason: ScanSkipReason,
-    message: Option<String>,
-}
-
-struct TargetListProblem {
-    path: PathBuf,
-    message: String,
-}
-
-fn build_targets_report(command: &TargetsDiscoveryCommand) -> Result<TargetsReport, CliError> {
-    let items = scan_roots(command.roots.iter().cloned(), &command.scanner_options)?;
-    let mut seen_targets = HashSet::new();
-    let mut targets = Vec::new();
-    let mut skipped_paths = Vec::new();
-    let mut problems = Vec::new();
-
-    for item in items {
-        match item {
-            ScanItem::TargetCandidate(candidate) => {
-                if candidate.kind != TargetCandidateKind::CargoTargetDir {
-                    continue;
-                }
-                if !is_cleanable_cargo_target(&candidate) {
-                    continue;
-                }
-                if !seen_targets.insert(normalize_for_dedupe(&candidate.path)) {
-                    continue;
-                }
-                match target_entry(candidate, &command.inventory_options) {
-                    Ok(entry) => targets.push(entry),
-                    Err(problem) => problems.push(problem),
-                }
-            }
-            ScanItem::Skipped(skip) => skipped_paths.push(TargetListSkip {
-                message: skip_message(&skip.reason),
-                path: skip.path,
-                reason: skip.reason,
-            }),
-            ScanItem::CargoProject(_) => {}
-        }
-    }
-
-    targets.sort_by(|left, right| {
-        right
-            .size_bytes
-            .cmp(&left.size_bytes)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    skipped_paths.sort_by(|left, right| left.path.cmp(&right.path));
-    problems.sort_by(|left, right| left.path.cmp(&right.path));
-    let total_size_bytes = targets.iter().fold(0_u64, |total, target| {
-        total.saturating_add(target.size_bytes)
-    });
-
-    Ok(TargetsReport {
-        roots: command.roots.clone(),
-        config_path: command.config_path.clone(),
-        config_version: command.config_version,
-        total_size_bytes,
-        targets,
-        skipped_paths,
-        problems,
-    })
-}
-
-fn target_entry(
-    candidate: TargetCandidate,
-    inventory_options: &InventoryOptions,
-) -> Result<TargetListEntry, TargetListProblem> {
-    let snapshot =
-        snapshot_path(&candidate.path, inventory_options).map_err(|error| TargetListProblem {
-            path: candidate.path.clone(),
-            message: inventory_problem_message(error),
-        })?;
-
-    let evidence = candidate.evidence.ok_or_else(|| TargetListProblem {
-        path: candidate.path.clone(),
-        message: "target candidate has no evidence".to_string(),
-    })?;
-
-    Ok(TargetListEntry {
-        path: snapshot.path,
-        size_bytes: snapshot.size_bytes,
-        path_kind: snapshot.path_kind,
-        evidence,
-    })
-}
-
-fn is_cleanable_cargo_target(candidate: &TargetCandidate) -> bool {
-    match candidate.evidence.as_ref() {
-        Some(TargetEvidence::ConfiguredPath { .. })
-        | Some(TargetEvidence::ProjectContext { .. }) => true,
-        Some(TargetEvidence::StrongMarker { .. }) | Some(TargetEvidence::WeakNameOnly { .. }) => {
-            candidate
-                .path
-                .file_name()
-                .is_some_and(|name| name == "target")
-        }
-        None => false,
-    }
 }
 
 fn select_targets(
@@ -709,133 +601,6 @@ fn write_targets_clean_json(
     )?;
     writeln!(output)?;
     Ok(())
-}
-
-fn target_json(target: &TargetListEntry) -> serde_json::Value {
-    json!({
-        "path": target.path,
-        "size_bytes": target.size_bytes,
-        "size": human_bytes(target.size_bytes),
-        "path_kind": path_kind_label(target.path_kind),
-        "evidence": evidence_json(&target.evidence),
-    })
-}
-
-fn skip_json(skip: &TargetListSkip) -> serde_json::Value {
-    json!({
-        "path": skip.path,
-        "reason": skip_reason_label(&skip.reason),
-        "message": skip.message,
-    })
-}
-
-fn problem_json(problem: &TargetListProblem) -> serde_json::Value {
-    json!({
-        "path": problem.path,
-        "message": problem.message,
-    })
-}
-
-fn evidence_json(evidence: &TargetEvidence) -> serde_json::Value {
-    match evidence {
-        TargetEvidence::StrongMarker { marker } => json!({
-            "kind": "strong_marker",
-            "marker": marker,
-        }),
-        TargetEvidence::ConfiguredPath { source } => json!({
-            "kind": "configured_path",
-            "source": source,
-        }),
-        TargetEvidence::ProjectContext { project_manifest } => json!({
-            "kind": "project_context",
-            "project_manifest": project_manifest,
-        }),
-        TargetEvidence::WeakNameOnly { matched_name } => json!({
-            "kind": "weak_name_only",
-            "matched_name": matched_name,
-        }),
-    }
-}
-
-fn evidence_label(evidence: &TargetEvidence) -> &'static str {
-    match evidence {
-        TargetEvidence::StrongMarker { .. } => "strong_marker",
-        TargetEvidence::ConfiguredPath { .. } => "configured_path",
-        TargetEvidence::ProjectContext { .. } => "project_context",
-        TargetEvidence::WeakNameOnly { .. } => "weak_name_only",
-    }
-}
-
-fn path_kind_label(path_kind: PathKind) -> &'static str {
-    match path_kind {
-        PathKind::File => "file",
-        PathKind::Directory => "directory",
-        PathKind::Symlink => "symlink",
-        PathKind::Unknown => "unknown",
-    }
-}
-
-fn skip_reason_label(reason: &ScanSkipReason) -> &'static str {
-    match reason {
-        ScanSkipReason::DefaultIgnoredDir => "default_ignored_dir",
-        ScanSkipReason::ConfiguredIgnoredPath => "configured_ignored_path",
-        ScanSkipReason::SymlinkNotFollowed => "symlink_not_followed",
-        ScanSkipReason::CrossFilesystem => "cross_filesystem",
-        ScanSkipReason::WeakNameOnlySuppressed => "weak_name_only_suppressed",
-        ScanSkipReason::AlreadyVisited => "already_visited",
-        ScanSkipReason::CargoConfigUnsupported { .. } => "cargo_config_unsupported",
-        ScanSkipReason::CargoConfigProblem { .. } => "cargo_config_problem",
-        ScanSkipReason::ReadError { .. } => "read_error",
-    }
-}
-
-fn skip_message(reason: &ScanSkipReason) -> Option<String> {
-    match reason {
-        ScanSkipReason::CargoConfigUnsupported { message }
-        | ScanSkipReason::CargoConfigProblem { message }
-        | ScanSkipReason::ReadError { message } => Some(message.clone()),
-        _ => None,
-    }
-}
-
-fn inventory_problem_message(error: ReclaimError) -> String {
-    match error {
-        ReclaimError::MissingInventoryPath { path } => {
-            format!("target vanished during inventory: {}", path.display())
-        }
-        error => error.to_string(),
-    }
-}
-
-fn normalize_for_dedupe(path: &Path) -> PathBuf {
-    path.components().collect()
-}
-
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut unit_index = 0;
-    let mut value = bytes as f64;
-    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit_index += 1;
-    }
-    if unit_index == 0 {
-        format!("{bytes} B")
-    } else if value >= 10.0 {
-        format!("{value:.1} {}", UNITS[unit_index])
-    } else {
-        format!("{value:.2} {}", UNITS[unit_index])
-    }
-}
-
-fn apply_status_label(status: ApplyEntryStatus) -> &'static str {
-    match status {
-        ApplyEntryStatus::WouldDelete => "would_delete",
-        ApplyEntryStatus::Deleted => "deleted",
-        ApplyEntryStatus::NotPlannedForDeletion => "not_planned_for_deletion",
-        ApplyEntryStatus::SkipStalePlan => "skip_stale_plan",
-        ApplyEntryStatus::DeleteFailed => "delete_failed",
-    }
 }
 
 fn targets_usage() -> String {
