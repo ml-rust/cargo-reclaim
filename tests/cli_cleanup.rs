@@ -251,6 +251,28 @@ fn non_tty_no_selector_returns_usage_error_without_reading_stdin() -> Result<(),
 }
 
 #[test]
+fn non_tty_selector_bypasses_terminal_assistant() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_cleanup_selector_non_tty")?;
+    let project = write_project(temp.path(), "project")?;
+    let target = project.join("target");
+    let artifact = target.join("debug/incremental/unit/cache.bin");
+
+    let output = common::cargo_reclaim_command(temp.path())
+        .args(["cleanup", "--target"])
+        .arg(&target)
+        .arg(&project)
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("cargo-reclaim cleanup validation"));
+    assert!(stdout.contains("validation only"));
+    assert!(artifact.is_file());
+    Ok(())
+}
+
+#[test]
 fn json_no_selector_emits_structured_usage_error() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_cleanup_no_selector_json")?;
     let project = write_project(temp.path(), "project")?;
