@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.1.1] - 2026-07-04
+
+### Fixed
+
+- Support Cargo subcommand invocation through `cargo reclaim ...` by accepting Cargo's leading `reclaim` shim argument before normal command parsing.
+
+---
+
 ## [0.1.0] - 2026-07-03
 
 > First release of cargo-reclaim: safe Cargo artifact cleanup for real Rust workstations.
@@ -59,4 +67,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+[0.1.1]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.0
