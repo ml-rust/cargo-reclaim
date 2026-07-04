@@ -129,9 +129,15 @@ fn args_request_json(args: &[OsString]) -> bool {
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliError> {
     let mut args = args.into_iter();
-    let Some(command) = args.next() else {
+    let Some(mut command) = args.next() else {
         return Ok(Command::Help);
     };
+    if command == "reclaim" {
+        let Some(next_command) = args.next() else {
+            return Ok(Command::Help);
+        };
+        command = next_command;
+    }
 
     match command.to_string_lossy().as_ref() {
         "-h" | "--help" | "help" => Ok(Command::Help),
@@ -819,6 +825,23 @@ mod tests {
             let command = parse_args([flag].map(OsString::from))?;
             assert!(matches!(command, Command::Version));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_cargo_subcommand_prefix() -> Result<(), CliError> {
+        let Command::Targets(targets::TargetsCommand::List(_)) =
+            parse_args(["reclaim", "targets", "workspace"].map(OsString::from))?
+        else {
+            panic!("expected targets list command");
+        };
+
+        let command = parse_args(["reclaim", "--version"].map(OsString::from))?;
+        assert!(matches!(command, Command::Version));
+
+        let command = parse_args(["reclaim"].map(OsString::from))?;
+        assert!(matches!(command, Command::Help));
 
         Ok(())
     }
