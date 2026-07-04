@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+mod common;
 
 use serde_json::Value;
 
@@ -18,7 +19,7 @@ fn plan_command_prints_dry_run_summary_and_entries() -> Result<(), Box<dyn Error
     )?;
     fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg(temp.path())
         .output()?;
@@ -48,7 +49,7 @@ fn plan_command_prints_skipped_scan_paths_when_present() -> Result<(), Box<dyn E
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg(temp.path())
         .output()?;
@@ -72,7 +73,7 @@ fn scan_command_supports_observe_policy() -> Result<(), Box<dyn Error>> {
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["scan", "--policy", "observe"])
         .arg(temp.path())
         .output()?;
@@ -96,7 +97,7 @@ fn plan_keep_recent_writes_reports_skip_active() -> Result<(), Box<dyn Error>> {
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--keep-recent-writes", "1d"])
         .arg(temp.path())
         .output()?;
@@ -114,7 +115,7 @@ fn apply_flag_is_rejected_without_deleting_anything() -> Result<(), Box<dyn Erro
     let temp = TestTemp::new("cli_reject_apply")?;
     write_manifest(temp.path())?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--apply")
         .arg(temp.path())
@@ -128,8 +129,9 @@ fn apply_flag_is_rejected_without_deleting_anything() -> Result<(), Box<dyn Erro
 
 #[test]
 fn usage_errors_return_usage_exit_code() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_plan_usage_errors")?;
     for args in [vec!["apply"], vec!["plan", "--unknown"], vec!["wat"]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        let output = common::cargo_reclaim_command(temp.path())
             .args(args)
             .output()?;
 
@@ -151,7 +153,7 @@ fn plan_json_outputs_single_dry_run_document() -> Result<(), Box<dyn Error>> {
     )?;
     fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json"])
         .arg(temp.path())
         .output()?;
@@ -203,7 +205,7 @@ fn plan_json_outputs_skipped_scan_path_diagnostics() -> Result<(), Box<dyn Error
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json"])
         .arg(temp.path())
         .output()?;
@@ -237,7 +239,7 @@ fn plan_json_whole_target_confirm_emits_single_confirmation_entry() -> Result<()
     )?;
     fs::write(temp.path().join("target/doc/index.html"), b"docs")?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--whole-target=confirm"])
         .arg(temp.path())
         .output()?;
@@ -266,7 +268,7 @@ fn plan_json_whole_target_delete_emits_single_delete_entry() -> Result<(), Box<d
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args([
             "plan",
             "--json",
@@ -298,7 +300,7 @@ fn whole_target_delete_requires_aggressive_policy() -> Result<(), Box<dyn Error>
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--whole-target", "delete"])
         .arg(temp.path())
         .output()?;
@@ -330,7 +332,7 @@ whole_target = "delete"
 "#,
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--config"])
         .arg(&config_path)
         .output()?;
@@ -364,7 +366,7 @@ allow_unattended_whole_target_delete = true
 "#,
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--config"])
         .arg(&config_path)
         .output()?;
@@ -389,7 +391,7 @@ fn plan_json_reports_recent_write_skip_active() -> Result<(), Box<dyn Error>> {
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--keep-recent-writes=1d"])
         .arg(temp.path())
         .output()?;
@@ -412,7 +414,7 @@ fn scan_json_preserves_command_and_observe_policy() -> Result<(), Box<dyn Error>
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["scan", "--json", "--policy", "observe"])
         .arg(temp.path())
         .output()?;
@@ -435,7 +437,7 @@ fn json_reports_weak_name_only_confirmation_shape() -> Result<(), Box<dyn Error>
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--allow-name-only-targets"])
         .arg(temp.path())
         .output()?;
@@ -461,7 +463,7 @@ fn plan_save_plan_writes_persisted_document() -> Result<(), Box<dyn Error>> {
     )?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -514,7 +516,7 @@ fn save_plan_records_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
     )?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -543,7 +545,7 @@ fn save_plan_records_keep_days_and_keep_size() -> Result<(), Box<dyn Error>> {
     )?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -599,7 +601,7 @@ mode = "observe"
     )?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--config")
         .arg(&config_path)
@@ -620,7 +622,8 @@ mode = "observe"
 
 #[test]
 fn json_usage_errors_write_structured_stderr() -> Result<(), Box<dyn Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let temp = TestTemp::new("cli_plan_json_usage_errors")?;
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--unknown", "--json"])
         .output()?;
 
@@ -650,7 +653,7 @@ fn json_output_can_be_combined_with_save_plan() -> Result<(), Box<dyn Error>> {
     )?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--json", "--save-plan"])
         .arg(&plan_path)
         .arg(temp.path())
@@ -685,14 +688,14 @@ fn save_plan_flags_are_restricted_to_explicit_plan_saves() -> Result<(), Box<dyn
             "0s",
         ],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        let output = common::cargo_reclaim_command(temp.path())
             .args(args)
             .arg(temp.path())
             .output()?;
         assert_eq!(output.status.code(), Some(2));
     }
 
-    let missing_path = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let missing_path = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--save-plan"])
         .output()?;
     assert_eq!(missing_path.status.code(), Some(2));
@@ -709,7 +712,7 @@ fn apply_validates_explicit_plan_without_deleting_files() -> Result<(), Box<dyn 
     fs::write(&artifact, b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -717,7 +720,7 @@ fn apply_validates_explicit_plan_without_deleting_files() -> Result<(), Box<dyn 
         .output()?;
     assert!(plan_output.status.success());
 
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .output()?;
@@ -741,7 +744,7 @@ fn apply_json_reports_validation_without_deleting_files() -> Result<(), Box<dyn 
     fs::write(&artifact, b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -749,7 +752,7 @@ fn apply_json_reports_validation_without_deleting_files() -> Result<(), Box<dyn 
         .output()?;
     assert!(plan_output.status.success());
 
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .arg("--json")
@@ -775,7 +778,7 @@ fn apply_yes_executes_revalidated_plan() -> Result<(), Box<dyn Error>> {
     fs::write(&artifact, b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -783,7 +786,7 @@ fn apply_yes_executes_revalidated_plan() -> Result<(), Box<dyn Error>> {
         .output()?;
     assert!(plan_output.status.success());
 
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .arg("--yes")
@@ -808,7 +811,7 @@ fn apply_yes_json_reports_execution() -> Result<(), Box<dyn Error>> {
     fs::write(&artifact, b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -816,7 +819,7 @@ fn apply_yes_json_reports_execution() -> Result<(), Box<dyn Error>> {
         .output()?;
     assert!(plan_output.status.success());
 
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .args(["--yes", "--json"])
@@ -844,7 +847,7 @@ fn apply_reports_stale_skip_after_target_changes() -> Result<(), Box<dyn Error>>
     fs::write(&artifact, b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -853,7 +856,7 @@ fn apply_reports_stale_skip_after_target_changes() -> Result<(), Box<dyn Error>>
     assert!(plan_output.status.success());
     fs::write(&artifact, b"changed")?;
 
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .output()?;
@@ -874,7 +877,7 @@ fn apply_yes_reports_stale_skip_without_deleting_changed_path() -> Result<(), Bo
     fs::write(&artifact, b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -883,7 +886,7 @@ fn apply_yes_reports_stale_skip_without_deleting_changed_path() -> Result<(), Bo
     assert!(plan_output.status.success());
     fs::write(&artifact, b"changed")?;
 
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .arg("--yes")
@@ -909,7 +912,7 @@ fn apply_yes_exits_nonzero_when_delete_fails() -> Result<(), Box<dyn Error>> {
     fs::write(artifact_dir.join("session/cache.bin"), b"abc")?;
     let plan_path = temp.path().join("saved-plan.json");
 
-    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let plan_output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--save-plan")
         .arg(&plan_path)
@@ -918,7 +921,7 @@ fn apply_yes_exits_nonzero_when_delete_fails() -> Result<(), Box<dyn Error>> {
     assert!(plan_output.status.success());
 
     fs::set_permissions(&artifact_dir, fs::Permissions::from_mode(0o555))?;
-    let apply_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let apply_output = common::cargo_reclaim_command(temp.path())
         .args(["apply", "--plan"])
         .arg(&plan_path)
         .arg("--yes")
@@ -935,13 +938,14 @@ fn apply_yes_exits_nonzero_when_delete_fails() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn apply_requires_explicit_plan_path_and_rejects_last_alias() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_apply_requires_plan_path")?;
     for args in [
         vec!["apply"],
         vec!["apply", "--json"],
         vec!["apply", "last"],
         vec!["apply", "--plan", "last"],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        let output = common::cargo_reclaim_command(temp.path())
             .args(args)
             .output()?;
         assert_eq!(output.status.code(), Some(2));
@@ -960,7 +964,7 @@ fn ignore_option_suppresses_target_entries_end_to_end() -> Result<(), Box<dyn Er
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .arg("plan")
         .arg("--ignore")
         .arg(temp.path().join("target"))
@@ -984,7 +988,7 @@ fn allow_name_only_targets_surfaces_confirmation_entries_end_to_end() -> Result<
         b"abc",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--allow-name-only-targets"])
         .arg(temp.path())
         .output()?;
@@ -1009,7 +1013,7 @@ fn follow_symlinks_option_includes_symlinked_project_end_to_end() -> Result<(), 
     let linked = temp.path().join("linked");
     symlink(&real, &linked)?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+    let output = common::cargo_reclaim_command(temp.path())
         .args(["plan", "--follow-symlinks"])
         .arg(&linked)
         .output()?;
