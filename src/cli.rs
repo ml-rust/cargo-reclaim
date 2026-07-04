@@ -149,11 +149,18 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "scheduler" => parse_scheduler_command(args).map(Command::SchedulerPreview),
         "cargo-config" => parse_cargo_config_command(args).map(Command::CargoConfig),
         "cargo-home" => parse_cargo_home_command(args).map(Command::CargoHome),
+        "list" => parse_list_command(args),
         "targets" | "target" => parse_targets_command(args).map(Command::Targets),
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `targets`, or `help`"
+            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `list`, `targets`, or `help`"
         ))),
     }
+}
+
+fn parse_list_command(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliError> {
+    // Reuse the shared targets parser, but pin it to list mode so `clean` stays a positional path.
+    let args = std::iter::once(OsString::from("list")).chain(args);
+    parse_targets_command(args).map(Command::Targets)
 }
 
 fn parse_plan_command(
@@ -835,6 +842,12 @@ mod tests {
             parse_args(["reclaim", "targets", "workspace"].map(OsString::from))?
         else {
             panic!("expected targets list command");
+        };
+
+        let Command::Targets(targets::TargetsCommand::List(_)) =
+            parse_args(["reclaim", "list", "workspace"].map(OsString::from))?
+        else {
+            panic!("expected list command");
         };
 
         let command = parse_args(["reclaim", "--version"].map(OsString::from))?;

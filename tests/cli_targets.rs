@@ -13,14 +13,29 @@ fn targets_list_reports_discovered_targets_sorted_by_size() -> Result<(), Box<dy
     let small = write_project(temp.path(), "small", b"abc")?;
     let large = write_project(temp.path(), "large", b"abcdef")?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
-        .args(["targets", "--json"])
-        .arg(temp.path())
-        .output()?;
+    let document = run_json_command(["targets", "--json"], temp.path())?;
+    assert_eq!(document["command"], "targets");
+    assert_eq!(document["totals"]["target_count"], 2);
+    assert_eq!(
+        document["targets"][0]["path"],
+        large.join("target").display().to_string()
+    );
+    assert_eq!(document["targets"][0]["size_bytes"], 6);
+    assert_eq!(
+        document["targets"][1]["path"],
+        small.join("target").display().to_string()
+    );
+    assert_eq!(document["targets"][1]["size_bytes"], 3);
+    Ok(())
+}
 
-    assert!(output.status.success());
-    assert!(String::from_utf8(output.stderr)?.is_empty());
-    let document: Value = serde_json::from_slice(&output.stdout)?;
+#[test]
+fn list_reports_discovered_targets_sorted_by_size() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_list_list")?;
+    let small = write_project(temp.path(), "small", b"abc")?;
+    let large = write_project(temp.path(), "large", b"abcdef")?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
     assert_eq!(document["command"], "targets");
     assert_eq!(document["totals"]["target_count"], 2);
     assert_eq!(
@@ -47,18 +62,33 @@ fn targets_list_excludes_non_cargo_cache_dirs() -> Result<(), Box<dyn Error>> {
         "Signature: 8a477f597d28d172789f06886806bc55\n",
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
-        .args(["targets", "--json"])
-        .arg(temp.path())
-        .output()?;
-
-    assert!(output.status.success());
-    let document: Value = serde_json::from_slice(&output.stdout)?;
+    let document = run_json_command(["targets", "--json"], temp.path())?;
     assert_eq!(document["totals"]["target_count"], 1);
     assert_eq!(
         document["targets"][0]["path"],
         project.join("target").display().to_string()
     );
+    Ok(())
+}
+
+#[test]
+fn list_clean_does_not_delete_targets() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_list_clean_guard")?;
+    let project = write_project(temp.path(), "project", b"abcdef")?;
+    let target = project.join("target");
+    fs::create_dir(temp.path().join("clean"))?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .current_dir(temp.path())
+        .args(["list", "clean", "--json"])
+        .arg(temp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(target.exists());
+    let document: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(document["command"], "targets");
+    assert_eq!(document["totals"]["target_count"], 1);
     Ok(())
 }
 
@@ -140,6 +170,17 @@ fn write_project(
     )?;
     fs::write(project.join("target/cache.bin"), target_contents)?;
     Ok(project)
+}
+
+fn run_json_command(args: [&str; 2], root: &Path) -> Result<Value, Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(args)
+        .arg(root)
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.is_empty());
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 struct TestTemp {
