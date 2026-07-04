@@ -21,6 +21,7 @@ pub(super) struct CleanupAssistantSelection {
     pub(super) targets: Vec<PathBuf>,
     pub(super) mode: CleanupAssistantMode,
     pub(super) action: CleanupAssistantAction,
+    pub(super) target_selection_modified: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,10 +33,34 @@ pub(super) enum CleanupAssistantPage {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct CleanupAssistantStartOptions {
+    pub(super) selected: Vec<bool>,
+    pub(super) first_page: CleanupAssistantPage,
+    pub(super) minimum_page: CleanupAssistantPage,
+    pub(super) forced_mode: Option<CleanupAssistantMode>,
+    pub(super) forced_action: Option<CleanupAssistantAction>,
+}
+
+impl CleanupAssistantStartOptions {
+    #[cfg(test)]
+    pub(super) fn target_selection(target_count: usize) -> Self {
+        Self {
+            selected: vec![false; target_count],
+            first_page: CleanupAssistantPage::Targets,
+            minimum_page: CleanupAssistantPage::Targets,
+            forced_mode: None,
+            forced_action: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct CleanupAssistantState {
     page: CleanupAssistantPage,
+    minimum_page: CleanupAssistantPage,
     cursor: usize,
     selected: Vec<bool>,
+    target_selection_modified: bool,
     mode: CleanupAssistantMode,
     action: CleanupAssistantAction,
     forced_mode: Option<CleanupAssistantMode>,
@@ -43,24 +68,54 @@ pub(super) struct CleanupAssistantState {
 }
 
 impl CleanupAssistantState {
+    #[cfg(test)]
     pub(super) fn new(
         target_count: usize,
         forced_mode: Option<CleanupAssistantMode>,
         forced_action: Option<CleanupAssistantAction>,
     ) -> Result<Self, CliError> {
+        let mut options = CleanupAssistantStartOptions::target_selection(target_count);
+        options.forced_mode = forced_mode;
+        options.forced_action = forced_action;
+        Self::with_start_options(options)
+    }
+
+    pub(super) fn with_start_options(
+        options: CleanupAssistantStartOptions,
+    ) -> Result<Self, CliError> {
+        let target_count = options.selected.len();
         if target_count == 0 {
             return Err(CliError::Usage(
                 "cleanup found no target directories to select".to_string(),
             ));
         }
+        let cursor = match options.first_page {
+            CleanupAssistantPage::Targets | CleanupAssistantPage::Done => 0,
+            CleanupAssistantPage::Mode => mode_cursor(
+                options
+                    .forced_mode
+                    .unwrap_or(CleanupAssistantMode::SmartTrim),
+            ),
+            CleanupAssistantPage::Action => action_cursor(
+                options
+                    .forced_action
+                    .unwrap_or(CleanupAssistantAction::ValidateOnly),
+            ),
+        };
         Ok(Self {
-            page: CleanupAssistantPage::Targets,
-            cursor: 0,
-            selected: vec![false; target_count],
-            mode: forced_mode.unwrap_or(CleanupAssistantMode::SmartTrim),
-            action: forced_action.unwrap_or(CleanupAssistantAction::ValidateOnly),
-            forced_mode,
-            forced_action,
+            page: options.first_page,
+            minimum_page: options.minimum_page,
+            cursor,
+            selected: options.selected,
+            target_selection_modified: false,
+            mode: options
+                .forced_mode
+                .unwrap_or(CleanupAssistantMode::SmartTrim),
+            action: options
+                .forced_action
+                .unwrap_or(CleanupAssistantAction::ValidateOnly),
+            forced_mode: options.forced_mode,
+            forced_action: options.forced_action,
         })
     }
 
@@ -103,18 +158,21 @@ impl CleanupAssistantState {
         }
         if let Some(selected) = self.selected.get_mut(self.cursor) {
             *selected = !*selected;
+            self.target_selection_modified = true;
         }
     }
 
     pub(super) fn select_all_targets(&mut self) {
         if self.page == CleanupAssistantPage::Targets {
             self.selected.fill(true);
+            self.target_selection_modified = true;
         }
     }
 
     pub(super) fn select_no_targets(&mut self) {
         if self.page == CleanupAssistantPage::Targets {
             self.selected.fill(false);
+            self.target_selection_modified = true;
         }
     }
 
@@ -178,28 +236,22 @@ impl CleanupAssistantState {
         match self.page {
             CleanupAssistantPage::Targets => {}
             CleanupAssistantPage::Mode => {
-                self.page = CleanupAssistantPage::Targets;
-                self.cursor = 0;
+                self.set_page_if_allowed(CleanupAssistantPage::Targets);
             }
             CleanupAssistantPage::Action => {
                 if self.forced_mode.is_some() {
-                    self.page = CleanupAssistantPage::Targets;
-                    self.cursor = 0;
+                    self.set_page_if_allowed(CleanupAssistantPage::Targets);
                 } else {
-                    self.page = CleanupAssistantPage::Mode;
-                    self.cursor = mode_cursor(self.mode);
+                    self.set_page_if_allowed(CleanupAssistantPage::Mode);
                 }
             }
             CleanupAssistantPage::Done => {
                 if self.forced_action.is_some() && self.forced_mode.is_some() {
-                    self.page = CleanupAssistantPage::Targets;
-                    self.cursor = 0;
+                    self.set_page_if_allowed(CleanupAssistantPage::Targets);
                 } else if self.forced_action.is_some() {
-                    self.page = CleanupAssistantPage::Mode;
-                    self.cursor = mode_cursor(self.mode);
+                    self.set_page_if_allowed(CleanupAssistantPage::Mode);
                 } else {
-                    self.page = CleanupAssistantPage::Action;
-                    self.cursor = action_cursor(self.action);
+                    self.set_page_if_allowed(CleanupAssistantPage::Action);
                 }
             }
         }
@@ -222,6 +274,7 @@ impl CleanupAssistantState {
             targets,
             mode: self.mode,
             action: self.action,
+            target_selection_modified: self.target_selection_modified,
         }
     }
 
@@ -232,6 +285,27 @@ impl CleanupAssistantState {
             CleanupAssistantPage::Action => 3,
             CleanupAssistantPage::Done => 1,
         }
+    }
+
+    fn set_page_if_allowed(&mut self, page: CleanupAssistantPage) {
+        if page_rank(page) < page_rank(self.minimum_page) {
+            return;
+        }
+        self.page = page;
+        self.cursor = match page {
+            CleanupAssistantPage::Targets | CleanupAssistantPage::Done => 0,
+            CleanupAssistantPage::Mode => mode_cursor(self.mode),
+            CleanupAssistantPage::Action => action_cursor(self.action),
+        };
+    }
+}
+
+fn page_rank(page: CleanupAssistantPage) -> usize {
+    match page {
+        CleanupAssistantPage::Targets => 0,
+        CleanupAssistantPage::Mode => 1,
+        CleanupAssistantPage::Action => 2,
+        CleanupAssistantPage::Done => 3,
     }
 }
 
@@ -359,6 +433,39 @@ mod tests {
 
         assert_eq!(state.page(), CleanupAssistantPage::Done);
         assert_eq!(state.action(), CleanupAssistantAction::Execute);
+        Ok(())
+    }
+
+    #[test]
+    fn started_at_mode_cannot_back_into_target_page() -> Result<(), CliError> {
+        let mut state = CleanupAssistantState::with_start_options(CleanupAssistantStartOptions {
+            selected: vec![true],
+            first_page: CleanupAssistantPage::Mode,
+            minimum_page: CleanupAssistantPage::Mode,
+            forced_mode: None,
+            forced_action: None,
+        })?;
+
+        state.previous_page();
+
+        assert_eq!(state.page(), CleanupAssistantPage::Mode);
+        Ok(())
+    }
+
+    #[test]
+    fn started_at_action_cannot_back_into_mode_or_target_pages() -> Result<(), CliError> {
+        let mut state = CleanupAssistantState::with_start_options(CleanupAssistantStartOptions {
+            selected: vec![true],
+            first_page: CleanupAssistantPage::Action,
+            minimum_page: CleanupAssistantPage::Action,
+            forced_mode: Some(CleanupAssistantMode::DeleteTarget),
+            forced_action: None,
+        })?;
+
+        state.previous_page();
+
+        assert_eq!(state.page(), CleanupAssistantPage::Action);
+        assert_eq!(state.mode(), CleanupAssistantMode::DeleteTarget);
         Ok(())
     }
 }

@@ -10,7 +10,7 @@ use crossterm::terminal::{
 use super::CliError;
 use super::cleanup_assistant::{
     CleanupAssistantAction, CleanupAssistantMode, CleanupAssistantPage, CleanupAssistantSelection,
-    CleanupAssistantState,
+    CleanupAssistantStartOptions, CleanupAssistantState,
 };
 use super::target_report::{TargetsReport, evidence_label, human_bytes};
 
@@ -34,20 +34,34 @@ impl Drop for TerminalGuard {
 
 pub(super) fn run_cleanup_terminal_assistant(
     report: &TargetsReport,
-    forced_mode: Option<CleanupAssistantMode>,
-    forced_action: Option<CleanupAssistantAction>,
+    start_options: CleanupAssistantStartOptions,
 ) -> Result<CleanupAssistantSelection, CliError> {
-    let mut state = CleanupAssistantState::new(report.targets.len(), forced_mode, forced_action)?;
+    let mut state = CleanupAssistantState::with_start_options(start_options)?;
     let mut stderr = io::stderr();
     let _guard = TerminalGuard::enter(&mut stderr)?;
+    let mut events = CrosstermEventReader;
 
+    run_cleanup_terminal_assistant_loop(&mut stderr, &mut events, report, &mut state)
+}
+
+fn run_cleanup_terminal_assistant_loop(
+    writer: &mut impl Write,
+    events: &mut impl TerminalEventReader,
+    report: &TargetsReport,
+    state: &mut CleanupAssistantState,
+) -> Result<CleanupAssistantSelection, CliError> {
     loop {
-        draw(&mut stderr, report, &state)?;
+        draw(writer, report, state)?;
         if state.page() == CleanupAssistantPage::Done {
             return Ok(state.selection(report));
         }
 
-        let Event::Key(key) = event::read()? else {
+        let Some(event) = events.read_event()? else {
+            return Err(CliError::Usage(
+                "cleanup assistant input ended before selection completed".to_string(),
+            ));
+        };
+        let Event::Key(key) = event else {
             continue;
         };
         if key.kind != KeyEventKind::Press {
@@ -65,8 +79,8 @@ pub(super) fn run_cleanup_terminal_assistant(
                     state.choose_current();
                 }
                 if let Err(error) = state.next_page() {
-                    draw_error(&mut stderr, &error)?;
-                    wait_for_keypress()?;
+                    draw_error(writer, &error)?;
+                    wait_for_keypress(events)?;
                 }
             }
             KeyCode::Backspace | KeyCode::Left => state.previous_page(),
@@ -75,45 +89,57 @@ pub(super) fn run_cleanup_terminal_assistant(
     }
 }
 
+trait TerminalEventReader {
+    fn read_event(&mut self) -> Result<Option<Event>, CliError>;
+}
+
+struct CrosstermEventReader;
+
+impl TerminalEventReader for CrosstermEventReader {
+    fn read_event(&mut self) -> Result<Option<Event>, CliError> {
+        Ok(Some(event::read()?))
+    }
+}
+
 fn draw(
-    stderr: &mut io::Stderr,
+    writer: &mut impl Write,
     report: &TargetsReport,
     state: &CleanupAssistantState,
 ) -> Result<(), CliError> {
-    execute!(stderr, MoveTo(0, 0), Clear(ClearType::All))?;
-    writeln!(stderr, "cargo-reclaim cleanup assistant")?;
-    writeln!(stderr)?;
+    execute!(writer, MoveTo(0, 0), Clear(ClearType::All))?;
+    writeln!(writer, "cargo-reclaim cleanup assistant")?;
+    writeln!(writer)?;
     match state.page() {
-        CleanupAssistantPage::Targets => draw_targets(stderr, report, state)?,
-        CleanupAssistantPage::Mode => draw_mode(stderr, state)?,
-        CleanupAssistantPage::Action => draw_action(stderr, state)?,
+        CleanupAssistantPage::Targets => draw_targets(writer, report, state)?,
+        CleanupAssistantPage::Mode => draw_mode(writer, state)?,
+        CleanupAssistantPage::Action => draw_action(writer, state)?,
         CleanupAssistantPage::Done => {}
     }
-    writeln!(stderr)?;
+    writeln!(writer)?;
     writeln!(
-        stderr,
+        writer,
         "Enter: continue/select  Space: toggle  Up/Down: move  Backspace: back  Esc/q: cancel"
     )?;
     if state.page() == CleanupAssistantPage::Targets {
-        writeln!(stderr, "a: select all  n: select none")?;
+        writeln!(writer, "a: select all  n: select none")?;
     }
-    stderr.flush()?;
+    writer.flush()?;
     Ok(())
 }
 
 fn draw_targets(
-    stderr: &mut io::Stderr,
+    writer: &mut impl Write,
     report: &TargetsReport,
     state: &CleanupAssistantState,
 ) -> Result<(), CliError> {
-    writeln!(stderr, "Select target directories")?;
+    writeln!(writer, "Select target directories")?;
     writeln!(
-        stderr,
+        writer,
         "Targets: {} ({})",
         report.targets.len(),
         human_bytes(report.total_size_bytes)
     )?;
-    writeln!(stderr)?;
+    writeln!(writer)?;
     for (index, target) in report.targets.iter().enumerate() {
         let cursor = if index == state.cursor() { ">" } else { " " };
         let selected = if state.selected()[index] {
@@ -122,7 +148,7 @@ fn draw_targets(
             "[ ]"
         };
         writeln!(
-            stderr,
+            writer,
             "{cursor} {selected} {:>10} {:<18} {}",
             human_bytes(target.size_bytes),
             evidence_label(&target.evidence),
@@ -132,9 +158,9 @@ fn draw_targets(
     Ok(())
 }
 
-fn draw_mode(stderr: &mut io::Stderr, state: &CleanupAssistantState) -> Result<(), CliError> {
-    writeln!(stderr, "Choose cleanup mode")?;
-    writeln!(stderr)?;
+fn draw_mode(writer: &mut impl Write, state: &CleanupAssistantState) -> Result<(), CliError> {
+    writeln!(writer, "Choose cleanup mode")?;
+    writeln!(writer)?;
     let modes = [
         (
             CleanupAssistantMode::SmartTrim,
@@ -154,14 +180,14 @@ fn draw_mode(stderr: &mut io::Stderr, state: &CleanupAssistantState) -> Result<(
         } else {
             ""
         };
-        writeln!(stderr, "{cursor} {label:<34} {detail} {selected}")?;
+        writeln!(writer, "{cursor} {label:<34} {detail} {selected}")?;
     }
     Ok(())
 }
 
-fn draw_action(stderr: &mut io::Stderr, state: &CleanupAssistantState) -> Result<(), CliError> {
-    writeln!(stderr, "Choose apply decision")?;
-    writeln!(stderr)?;
+fn draw_action(writer: &mut impl Write, state: &CleanupAssistantState) -> Result<(), CliError> {
+    writeln!(writer, "Choose apply decision")?;
+    writeln!(writer)?;
     let actions = [
         (CleanupAssistantAction::ValidateOnly, "Validate only"),
         (CleanupAssistantAction::Execute, "Execute"),
@@ -174,23 +200,225 @@ fn draw_action(stderr: &mut io::Stderr, state: &CleanupAssistantState) -> Result
         } else {
             ""
         };
-        writeln!(stderr, "{cursor} {label} {selected}")?;
+        writeln!(writer, "{cursor} {label} {selected}")?;
     }
     Ok(())
 }
 
-fn draw_error(stderr: &mut io::Stderr, error: &CliError) -> Result<(), CliError> {
-    writeln!(stderr)?;
-    writeln!(stderr, "{error}")?;
-    writeln!(stderr, "Press any key to continue.")?;
-    stderr.flush()?;
+fn draw_error(writer: &mut impl Write, error: &CliError) -> Result<(), CliError> {
+    writeln!(writer)?;
+    writeln!(writer, "{error}")?;
+    writeln!(writer, "Press any key to continue.")?;
+    writer.flush()?;
     Ok(())
 }
 
-fn wait_for_keypress() -> Result<(), CliError> {
+fn wait_for_keypress(events: &mut impl TerminalEventReader) -> Result<(), CliError> {
     loop {
-        if matches!(event::read()?, Event::Key(_)) {
+        let Some(event) = events.read_event()? else {
+            return Err(CliError::Usage(
+                "cleanup assistant input ended while waiting for keypress".to_string(),
+            ));
+        };
+        if matches!(event, Event::Key(_)) {
             return Ok(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::path::PathBuf;
+
+    use cargo_reclaim::{PathKind, TargetEvidence};
+    use crossterm::event::{KeyEvent, KeyModifiers};
+
+    use super::super::target_report::TargetListEntry;
+    use super::*;
+
+    struct TestEventReader {
+        events: VecDeque<Event>,
+    }
+
+    impl TestEventReader {
+        fn new(events: impl IntoIterator<Item = Event>) -> Self {
+            Self {
+                events: events.into_iter().collect(),
+            }
+        }
+    }
+
+    impl TerminalEventReader for TestEventReader {
+        fn read_event(&mut self) -> Result<Option<Event>, CliError> {
+            Ok(self.events.pop_front())
+        }
+    }
+
+    fn run_harness(
+        report: &TargetsReport,
+        start_options: CleanupAssistantStartOptions,
+        events: impl IntoIterator<Item = Event>,
+    ) -> Result<(CleanupAssistantSelection, String), CliError> {
+        let mut state = CleanupAssistantState::with_start_options(start_options)?;
+        let mut output = Vec::new();
+        let mut events = TestEventReader::new(events);
+        let selection =
+            run_cleanup_terminal_assistant_loop(&mut output, &mut events, report, &mut state)?;
+        Ok((selection, String::from_utf8_lossy(&output).into_owned()))
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn report_fixture() -> TargetsReport {
+        let targets = vec![
+            TargetListEntry {
+                path: PathBuf::from("/workspace/first/target"),
+                size_bytes: 1024,
+                path_kind: PathKind::Directory,
+                evidence: TargetEvidence::StrongMarker {
+                    marker: ".rustc_info.json".to_string(),
+                },
+            },
+            TargetListEntry {
+                path: PathBuf::from("/workspace/second/target"),
+                size_bytes: 2048,
+                path_kind: PathKind::Directory,
+                evidence: TargetEvidence::ProjectContext {
+                    project_manifest: PathBuf::from("/workspace/second/Cargo.toml"),
+                },
+            },
+        ];
+        TargetsReport {
+            roots: vec![PathBuf::from("/workspace")],
+            config_path: None,
+            config_version: None,
+            total_size_bytes: targets.iter().map(|target| target.size_bytes).sum(),
+            targets,
+            skipped_paths: Vec::new(),
+            problems: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn no_selector_flow_selects_target_mode_and_action() -> Result<(), CliError> {
+        let report = report_fixture();
+        let start_options = CleanupAssistantStartOptions {
+            selected: vec![false, false],
+            first_page: CleanupAssistantPage::Targets,
+            minimum_page: CleanupAssistantPage::Targets,
+            forced_mode: None,
+            forced_action: None,
+        };
+
+        let (selection, output) = run_harness(
+            &report,
+            start_options,
+            [
+                key(KeyCode::Char(' ')),
+                key(KeyCode::Enter),
+                key(KeyCode::Enter),
+                key(KeyCode::Enter),
+            ],
+        )?;
+
+        assert_eq!(
+            selection.targets,
+            vec![PathBuf::from("/workspace/first/target")]
+        );
+        assert_eq!(selection.mode, CleanupAssistantMode::SmartTrim);
+        assert_eq!(selection.action, CleanupAssistantAction::ValidateOnly);
+        assert!(selection.target_selection_modified);
+        assert!(output.contains("Select target directories"));
+        assert!(output.contains("Choose cleanup mode"));
+        assert!(output.contains("Choose apply decision"));
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_target_start_cannot_back_into_target_page() -> Result<(), CliError> {
+        let report = report_fixture();
+        let start_options = CleanupAssistantStartOptions {
+            selected: vec![false, true],
+            first_page: CleanupAssistantPage::Mode,
+            minimum_page: CleanupAssistantPage::Mode,
+            forced_mode: None,
+            forced_action: None,
+        };
+
+        let (selection, output) = run_harness(
+            &report,
+            start_options,
+            [
+                key(KeyCode::Backspace),
+                key(KeyCode::Enter),
+                key(KeyCode::Enter),
+            ],
+        )?;
+
+        assert_eq!(
+            selection.targets,
+            vec![PathBuf::from("/workspace/second/target")]
+        );
+        assert_eq!(selection.mode, CleanupAssistantMode::SmartTrim);
+        assert_eq!(selection.action, CleanupAssistantAction::ValidateOnly);
+        assert!(!selection.target_selection_modified);
+        assert!(!output.contains("Select target directories"));
+        assert!(output.contains("Choose cleanup mode"));
+        assert!(output.contains("Choose apply decision"));
+        Ok(())
+    }
+
+    #[test]
+    fn delete_target_start_cannot_back_out_of_forced_action_page() -> Result<(), CliError> {
+        let report = report_fixture();
+        let start_options = CleanupAssistantStartOptions {
+            selected: vec![true, false],
+            first_page: CleanupAssistantPage::Action,
+            minimum_page: CleanupAssistantPage::Action,
+            forced_mode: Some(CleanupAssistantMode::DeleteTarget),
+            forced_action: None,
+        };
+
+        let (selection, output) = run_harness(
+            &report,
+            start_options,
+            [key(KeyCode::Backspace), key(KeyCode::Enter)],
+        )?;
+
+        assert_eq!(
+            selection.targets,
+            vec![PathBuf::from("/workspace/first/target")]
+        );
+        assert_eq!(selection.mode, CleanupAssistantMode::DeleteTarget);
+        assert_eq!(selection.action, CleanupAssistantAction::ValidateOnly);
+        assert!(!selection.target_selection_modified);
+        assert!(!output.contains("Select target directories"));
+        assert!(!output.contains("Choose cleanup mode"));
+        assert!(output.contains("Choose apply decision"));
+        Ok(())
+    }
+
+    #[test]
+    fn exhausted_input_returns_usage_error() {
+        let report = report_fixture();
+        let start_options = CleanupAssistantStartOptions {
+            selected: vec![false, false],
+            first_page: CleanupAssistantPage::Targets,
+            minimum_page: CleanupAssistantPage::Targets,
+            forced_mode: None,
+            forced_action: None,
+        };
+
+        let error = run_harness(&report, start_options, []).unwrap_err();
+
+        assert!(matches!(error, CliError::Usage(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("cleanup assistant input ended before selection completed")
+        );
     }
 }
