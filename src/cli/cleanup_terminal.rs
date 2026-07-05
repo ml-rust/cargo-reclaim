@@ -4,7 +4,8 @@ use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+    enable_raw_mode,
 };
 
 use super::CliError;
@@ -51,7 +52,7 @@ fn run_cleanup_terminal_assistant_loop(
     state: &mut CleanupAssistantState,
 ) -> Result<CleanupAssistantSelection, CliError> {
     loop {
-        draw(writer, report, state)?;
+        draw(writer, report, state, terminal_size())?;
         if state.page() == CleanupAssistantPage::Done {
             return Ok(state.selection(report));
         }
@@ -86,6 +87,9 @@ fn run_cleanup_terminal_assistant_loop(
             KeyCode::Backspace | KeyCode::Left => state.previous_page(),
             _ => {}
         }
+        if state.page() == CleanupAssistantPage::Done {
+            return Ok(state.selection(report));
+        }
     }
 }
 
@@ -105,62 +109,145 @@ fn draw(
     writer: &mut impl Write,
     report: &TargetsReport,
     state: &CleanupAssistantState,
+    size: TerminalSize,
 ) -> Result<(), CliError> {
     execute!(writer, MoveTo(0, 0), Clear(ClearType::All))?;
-    writeln!(writer, "cargo-reclaim cleanup assistant")?;
-    writeln!(writer)?;
+    write_line(writer, size.width, "cargo-reclaim cleanup assistant")?;
+    write_line(writer, size.width, "")?;
     match state.page() {
-        CleanupAssistantPage::Targets => draw_targets(writer, report, state)?,
-        CleanupAssistantPage::Mode => draw_mode(writer, state)?,
-        CleanupAssistantPage::Action => draw_action(writer, state)?,
+        CleanupAssistantPage::Targets => draw_targets(writer, report, state, size)?,
+        CleanupAssistantPage::Mode => draw_mode(writer, state, size)?,
+        CleanupAssistantPage::Action => draw_action(writer, state, size)?,
         CleanupAssistantPage::Done => {}
     }
-    writeln!(writer)?;
-    writeln!(
+    write_line(writer, size.width, "")?;
+    write_line(
         writer,
-        "Enter: continue/select  Space: toggle  Up/Down: move  Backspace: back  Esc/q: cancel"
+        size.width,
+        "Enter: continue/select  Space: toggle  Up/Down: move  Backspace: back  Esc/q: cancel",
     )?;
     if state.page() == CleanupAssistantPage::Targets {
-        writeln!(writer, "a: select all  n: select none")?;
+        write_line(writer, size.width, "a: select all  n: select none")?;
     }
     writer.flush()?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerminalSize {
+    width: usize,
+    height: usize,
+}
+
+impl TerminalSize {
+    fn new(width: u16, height: u16) -> Self {
+        Self {
+            width: usize::from(width).max(20),
+            height: usize::from(height).max(8),
+        }
+    }
+}
+
+fn terminal_size() -> TerminalSize {
+    let (width, height) = terminal::size().unwrap_or((120, 30));
+    TerminalSize::new(width, height)
+}
+
+fn write_line(writer: &mut impl Write, width: usize, text: &str) -> Result<(), CliError> {
+    let line = truncate_to_width(text, width);
+    write!(writer, "{line}\r\n")?;
+    Ok(())
+}
+
+fn truncate_to_width(text: &str, width: usize) -> String {
+    let width = width.max(1);
+    let count = text.chars().count();
+    if count <= width {
+        return text.to_string();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    let mut truncated = text.chars().take(width - 1).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn target_row_budget(size: TerminalSize) -> usize {
+    // Header(2) + target heading(3) + footer(3).
+    size.height.saturating_sub(8).max(1)
+}
+
+fn visible_range(total: usize, cursor: usize, limit: usize) -> std::ops::Range<usize> {
+    if total <= limit {
+        return 0..total;
+    }
+    let half = limit / 2;
+    let mut start = cursor.saturating_sub(half);
+    start = start.min(total - limit);
+    start..start + limit
+}
+
+fn target_row_text(
+    cursor: bool,
+    selected: bool,
+    size: String,
+    evidence: &str,
+    path: String,
+) -> String {
+    let cursor = if cursor { ">" } else { " " };
+    let selected = if selected { "[x]" } else { "[ ]" };
+    format!("{cursor} {selected} {size:>10} {evidence:<18} {path}")
 }
 
 fn draw_targets(
     writer: &mut impl Write,
     report: &TargetsReport,
     state: &CleanupAssistantState,
+    size: TerminalSize,
 ) -> Result<(), CliError> {
-    writeln!(writer, "Select target directories")?;
-    writeln!(
-        writer,
-        "Targets: {} ({})",
-        report.targets.len(),
-        human_bytes(report.total_size_bytes)
-    )?;
-    writeln!(writer)?;
-    for (index, target) in report.targets.iter().enumerate() {
-        let cursor = if index == state.cursor() { ">" } else { " " };
-        let selected = if state.selected()[index] {
-            "[x]"
-        } else {
-            "[ ]"
-        };
-        writeln!(
-            writer,
-            "{cursor} {selected} {:>10} {:<18} {}",
+    let limit = target_row_budget(size);
+    let range = visible_range(report.targets.len(), state.cursor(), limit);
+    let targets_label = if range.len() < report.targets.len() {
+        format!(
+            "Targets: {} ({}) | showing {}-{}",
+            report.targets.len(),
+            human_bytes(report.total_size_bytes),
+            range.start + 1,
+            range.end
+        )
+    } else {
+        format!(
+            "Targets: {} ({})",
+            report.targets.len(),
+            human_bytes(report.total_size_bytes)
+        )
+    };
+
+    write_line(writer, size.width, "Select target directories")?;
+    write_line(writer, size.width, &targets_label)?;
+    write_line(writer, size.width, "")?;
+    for index in range {
+        let target = &report.targets[index];
+        let text = target_row_text(
+            index == state.cursor(),
+            state.selected()[index],
             human_bytes(target.size_bytes),
             evidence_label(&target.evidence),
-            target.path.display()
-        )?;
+            target.path.display().to_string(),
+        );
+        write_line(writer, size.width, &text)?;
     }
     Ok(())
 }
 
-fn draw_mode(writer: &mut impl Write, state: &CleanupAssistantState) -> Result<(), CliError> {
-    writeln!(writer, "Choose cleanup mode")?;
-    writeln!(writer)?;
+fn draw_mode(
+    writer: &mut impl Write,
+    state: &CleanupAssistantState,
+    size: TerminalSize,
+) -> Result<(), CliError> {
+    write_line(writer, size.width, "Choose cleanup mode")?;
+    write_line(writer, size.width, "")?;
     let modes = [
         (
             CleanupAssistantMode::SmartTrim,
@@ -180,14 +267,22 @@ fn draw_mode(writer: &mut impl Write, state: &CleanupAssistantState) -> Result<(
         } else {
             ""
         };
-        writeln!(writer, "{cursor} {label:<34} {detail} {selected}")?;
+        write_line(
+            writer,
+            size.width,
+            &format!("{cursor} {label:<34} {detail} {selected}"),
+        )?;
     }
     Ok(())
 }
 
-fn draw_action(writer: &mut impl Write, state: &CleanupAssistantState) -> Result<(), CliError> {
-    writeln!(writer, "Choose apply decision")?;
-    writeln!(writer)?;
+fn draw_action(
+    writer: &mut impl Write,
+    state: &CleanupAssistantState,
+    size: TerminalSize,
+) -> Result<(), CliError> {
+    write_line(writer, size.width, "Choose apply decision")?;
+    write_line(writer, size.width, "")?;
     let actions = [
         (CleanupAssistantAction::ValidateOnly, "Validate only"),
         (CleanupAssistantAction::Execute, "Execute"),
@@ -200,15 +295,16 @@ fn draw_action(writer: &mut impl Write, state: &CleanupAssistantState) -> Result
         } else {
             ""
         };
-        writeln!(writer, "{cursor} {label} {selected}")?;
+        write_line(writer, size.width, &format!("{cursor} {label} {selected}"))?;
     }
     Ok(())
 }
 
 fn draw_error(writer: &mut impl Write, error: &CliError) -> Result<(), CliError> {
-    writeln!(writer)?;
-    writeln!(writer, "{error}")?;
-    writeln!(writer, "Press any key to continue.")?;
+    let size = terminal_size();
+    write_line(writer, size.width, "")?;
+    write_line(writer, size.width, &error.to_string())?;
+    write_line(writer, size.width, "Press any key to continue.")?;
     writer.flush()?;
     Ok(())
 }

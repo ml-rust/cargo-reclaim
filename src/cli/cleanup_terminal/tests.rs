@@ -173,6 +173,58 @@ fn report_fixture() -> TargetsReport {
     }
 }
 
+fn many_targets_report(count: usize) -> TargetsReport {
+    let targets = (0..count)
+        .map(|index| TargetListEntry {
+            path: PathBuf::from(format!(
+                "/workspace/project-{index:02}/target/with/a/very/long/path/that/must/not/wrap"
+            )),
+            size_bytes: 1024 * (index as u64 + 1),
+            path_kind: PathKind::Directory,
+            evidence: TargetEvidence::StrongMarker {
+                marker: "CACHEDIR.TAG".to_string(),
+            },
+        })
+        .collect::<Vec<_>>();
+    TargetsReport {
+        roots: vec![PathBuf::from("/workspace")],
+        config_path: None,
+        config_version: None,
+        total_size_bytes: targets.iter().map(|target| target.size_bytes).sum(),
+        targets,
+        skipped_paths: Vec::new(),
+        problems: Vec::new(),
+    }
+}
+
+#[test]
+fn target_page_uses_crlf_truncates_rows_and_scrolls_to_cursor() -> Result<(), CliError> {
+    let report = many_targets_report(14);
+    let mut state =
+        CleanupAssistantState::with_start_options(target_selection_options(report.targets.len()))?;
+    for _ in 0..10 {
+        state.move_down();
+    }
+
+    let mut output = Vec::new();
+    draw(&mut output, &report, &state, TerminalSize::new(80, 12))?;
+    let output = String::from_utf8_lossy(&output);
+
+    assert!(output.contains("\r\n"));
+    assert!(output.contains("showing 9-12"));
+    assert!(!output.contains("project-00"));
+    assert!(output.contains("project-10"));
+    assert_eq!(output.matches("[ ]").count(), 4);
+    for line in output
+        .split("\r\n")
+        .filter(|line| line.contains("/workspace"))
+    {
+        assert!(line.chars().count() <= 80, "{line}");
+        assert!(line.ends_with('…'));
+    }
+    Ok(())
+}
+
 #[test]
 fn multi_selects_targets_with_space_and_down() -> Result<(), CliError> {
     let report = report_fixture();
