@@ -77,6 +77,48 @@ fn top_level_all_executes_smart_trim_and_preserves_target_outputs() -> Result<()
 }
 
 #[test]
+fn terminal_cleanup_output_summarizes_entries_and_writes_full_report() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("cli_cleanup_terminal_report")?;
+    let project = write_project(temp.path(), "project")?;
+    let state_root = temp.path().join("state-root");
+
+    let output = common::cargo_reclaim_command(temp.path())
+        .env("HOME", &state_root)
+        .env("USERPROFILE", &state_root)
+        .env("LOCALAPPDATA", state_root.join("AppData/Local"))
+        .arg("reclaim")
+        .arg(&project)
+        .args(["--all", "--yes"])
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("cargo-reclaim cleanup execution"));
+    assert!(stdout.contains("full report: "));
+    assert!(stdout.contains("notable entries:"));
+    assert!(stdout.contains("deleted\tdelete\t"));
+    assert!(stdout.contains("entries not shown:"));
+    assert!(!stdout.contains("not_planned_for_deletion"));
+    assert!(!stdout.contains("target/doc/index.html"));
+
+    let report_path = full_report_path(&stdout)?;
+    assert!(report_path.is_file());
+    let report: Value = serde_json::from_str(&fs::read_to_string(report_path)?)?;
+    assert_eq!(report["command"], "cleanup");
+    assert_eq!(report["dry_run"], false);
+    let entries = report["entries"]
+        .as_array()
+        .ok_or("full report entries must be an array")?;
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["status"] == "not_planned_for_deletion")
+    );
+    Ok(())
+}
+
+#[test]
 fn explicit_target_validates_smart_trim_without_deleting_whole_target() -> Result<(), Box<dyn Error>>
 {
     let temp = TestTemp::new("cli_cleanup_target_validate")?;
@@ -378,6 +420,13 @@ fn run_json(args: &[&str], root: &Path) -> Result<Value, Box<dyn Error>> {
     assert!(output.status.success());
     assert!(String::from_utf8(output.stderr)?.is_empty());
     Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+fn full_report_path(stdout: &str) -> Result<PathBuf, Box<dyn Error>> {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("full report: ").map(PathBuf::from))
+        .ok_or_else(|| "missing full report path".into())
 }
 
 struct TestTemp {

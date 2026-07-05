@@ -66,7 +66,7 @@ cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo
 cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
 ```
 
-`scheduler service status` prints the resolved state file, log directory, run log path, lifetime totals, and recent run summaries. The resident scheduler writes JSONL run records to `runs.jsonl` under the resolved `log_dir`.
+Foreground `cleanup` and `apply` terminal runs print a concise summary plus `full report: <path>` for the complete JSON entry list. `scheduler service status` prints the resolved state file, log directory, run log path, lifetime totals, and recent run summaries. The resident scheduler writes JSONL run records to `runs.jsonl` under the resolved `log_dir`.
 
 Supported Rust: `cargo-reclaim` targets Rust 1.88+.
 
@@ -87,13 +87,13 @@ Use `cargo clean` when you are inside one project and want to delete that projec
 
 ## Interaction Modes
 
-| Mode | Example | Skips | Result |
-| ---- | ------- | ----- | ------ |
-| TTY assistant default | `cargo-reclaim ~/Projects` | Nothing; this is the primary guided flow | Opens the cleanup assistant for smart trim or whole-target deletion decisions. |
-| Read-only inventory | `cargo-reclaim list ~/Projects` | Cleanup entirely | Lists Cargo target directories and sizes. |
-| Bulk smart trim | `cargo-reclaim ~/Projects --all --yes` | The assistant and per-target selection | Selects all eligible smart-trim candidates and executes them after validation. |
-| Explicit whole-target delete | `cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes` | Assistant mode choice and selection pages | Deletes the selected target directory directly after validation. |
-| Validate only | `cargo-reclaim ~/Projects --all --dry-run` or `cargo-reclaim ~/Projects --target ~/Projects/my-crate/target --validate` | Deletion and assistant pages skipped by the selector flags | Revalidates and reports what would change without touching files. |
+| Mode                         | Example                                                                                                                 | Skips                                                      | Result                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| TTY assistant default        | `cargo-reclaim ~/Projects`                                                                                              | Nothing; this is the primary guided flow                   | Opens the cleanup assistant for smart trim or whole-target deletion decisions. |
+| Read-only inventory          | `cargo-reclaim list ~/Projects`                                                                                         | Cleanup entirely                                           | Lists Cargo target directories and sizes.                                      |
+| Bulk smart trim              | `cargo-reclaim ~/Projects --all --yes`                                                                                  | The assistant and per-target selection                     | Selects all eligible smart-trim candidates and executes them after validation. |
+| Explicit whole-target delete | `cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes`                                   | Assistant mode choice and selection pages                  | Deletes the selected target directory directly after validation.               |
+| Validate only                | `cargo-reclaim ~/Projects --all --dry-run` or `cargo-reclaim ~/Projects --target ~/Projects/my-crate/target --validate` | Deletion and assistant pages skipped by the selector flags | Revalidates and reports what would change without touching files.              |
 
 `--target` skips selection, `--all` selects all, `--delete-target` skips mode choice, `--yes` executes, and `--dry-run` or `--validate` validate only. `--yes` alone does not imply `--all`; bulk cleanup needs explicit `--all --yes`.
 
@@ -189,6 +189,9 @@ cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.
 
 # Inspect the raw scheduler run log printed by service status.
 tail -n 20 ~/.local/state/cargo-reclaim/logs/runs.jsonl
+
+# Inspect a foreground cleanup/apply report from the `full report:` path printed after the run.
+jq '.totals, .entries[] | select(.status != "not_planned_for_deletion")' ~/.local/state/cargo-reclaim/reports/*.json
 
 # Preview platform service artifacts before installing them.
 cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml

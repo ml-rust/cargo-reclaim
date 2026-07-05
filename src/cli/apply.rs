@@ -1,15 +1,18 @@
 use std::ffi::OsString;
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    ApplyEntryStatus, ApplyReport, execute_persisted_plan_apply, load_plan_from_path,
-    validate_persisted_plan_for_apply,
+    ApplyEntryResult, ApplyEntryStatus, ApplyReport, SchedulerPlatform, default_state_dir,
+    execute_persisted_plan_apply, load_plan_from_path, validate_persisted_plan_for_apply,
 };
 
 use super::{CliError, OutputFormat, next_path};
+
+const TERMINAL_NOTABLE_ENTRY_LIMIT: usize = 20;
 
 #[derive(Debug)]
 pub(super) struct ApplyCommand {
@@ -123,6 +126,8 @@ pub(super) fn write_apply_report_with_command(
         return Ok(());
     }
 
+    let report_path = save_terminal_apply_report(report, command_label).ok();
+
     if report.dry_run {
         writeln!(output, "cargo-reclaim {command_label} validation")?;
         writeln!(output, "validation only; no files were deleted or modified")?;
@@ -152,18 +157,118 @@ pub(super) fn write_apply_report_with_command(
     writeln!(output, "skipped: {}", report.totals.skipped_count)?;
     writeln!(output, "stale skips: {}", report.totals.stale_skip_count)?;
 
-    for entry in &report.entries {
+    if let Some(path) = report_path {
+        writeln!(output, "full report: {}", path.display())?;
+    } else {
         writeln!(
             output,
-            "{}\t{}\t{}\t{}",
-            apply_status_label(entry.status),
-            entry.planned_action,
-            entry.path,
-            entry.reason
+            "full report: unavailable; rerun with --json to capture every entry"
+        )?;
+    }
+    write_terminal_notable_entries(output, report)?;
+
+    Ok(())
+}
+
+fn save_terminal_apply_report(
+    report: &ApplyReport,
+    command_label: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let report_dir = default_state_dir(current_scheduler_platform()).join("reports");
+    fs::create_dir_all(&report_dir)?;
+    let path = report_dir.join(report_file_name(report, command_label));
+    let mut file = fs::File::create(&path)?;
+    serde_json::to_writer_pretty(&mut file, &apply_json_document(report, command_label))?;
+    writeln!(file)?;
+    Ok(path)
+}
+
+fn report_file_name(report: &ApplyReport, command_label: &str) -> String {
+    let timestamp_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let mode = if report.dry_run {
+        "validation"
+    } else {
+        "execution"
+    };
+    let plan_id = sanitize_file_component(report.plan_id.as_str());
+    format!("{timestamp_millis}-{command_label}-{mode}-{plan_id}.json")
+}
+
+fn sanitize_file_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn current_scheduler_platform() -> SchedulerPlatform {
+    if cfg!(target_os = "macos") {
+        SchedulerPlatform::Launchd
+    } else if cfg!(target_os = "windows") {
+        SchedulerPlatform::TaskScheduler
+    } else {
+        SchedulerPlatform::SystemdUser
+    }
+}
+
+fn write_terminal_notable_entries(
+    output: &mut impl Write,
+    report: &ApplyReport,
+) -> Result<(), CliError> {
+    let notable_entries = report
+        .entries
+        .iter()
+        .filter(|entry| is_terminal_notable(entry))
+        .collect::<Vec<_>>();
+    let hidden_count = report.entries.len().saturating_sub(notable_entries.len());
+    let shown_count = notable_entries.len().min(TERMINAL_NOTABLE_ENTRY_LIMIT);
+    let omitted_notable_count = notable_entries.len().saturating_sub(shown_count);
+
+    if shown_count > 0 {
+        writeln!(output, "notable entries:")?;
+        for entry in notable_entries
+            .into_iter()
+            .take(TERMINAL_NOTABLE_ENTRY_LIMIT)
+        {
+            writeln!(
+                output,
+                "{}\t{}\t{}\t{}",
+                apply_status_label(entry.status),
+                entry.planned_action,
+                entry.path,
+                entry.reason
+            )?;
+        }
+    }
+
+    if hidden_count > 0 || omitted_notable_count > 0 {
+        writeln!(
+            output,
+            "entries not shown: {} preserved/unchanged, {} additional notable; use --json or open the full report for every entry",
+            hidden_count, omitted_notable_count
         )?;
     }
 
     Ok(())
+}
+
+fn is_terminal_notable(entry: &ApplyEntryResult) -> bool {
+    matches!(
+        entry.status,
+        ApplyEntryStatus::WouldDelete
+            | ApplyEntryStatus::Deleted
+            | ApplyEntryStatus::SkipStalePlan
+            | ApplyEntryStatus::DeleteFailed
+    )
 }
 
 fn write_apply_json_report(
@@ -171,6 +276,13 @@ fn write_apply_json_report(
     report: &ApplyReport,
     command_label: &str,
 ) -> Result<(), CliError> {
+    let document = apply_json_document(report, command_label);
+    serde_json::to_writer(&mut *output, &document)?;
+    writeln!(output)?;
+    Ok(())
+}
+
+fn apply_json_document(report: &ApplyReport, command_label: &str) -> serde_json::Value {
     let entries = report
         .entries
         .iter()
@@ -185,7 +297,7 @@ fn write_apply_json_report(
             })
         })
         .collect::<Vec<_>>();
-    let document = serde_json::json!({
+    serde_json::json!({
         "command": command_label,
         "dry_run": report.dry_run,
         "plan_id": report.plan_id.as_str(),
@@ -201,10 +313,7 @@ fn write_apply_json_report(
             "applied_bytes": report.totals.applied_bytes,
         },
         "entries": entries,
-    });
-    serde_json::to_writer(&mut *output, &document)?;
-    writeln!(output)?;
-    Ok(())
+    })
 }
 
 pub(super) fn apply_status_label(status: ApplyEntryStatus) -> &'static str {
