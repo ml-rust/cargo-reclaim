@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.2.1] - 2026-07-05
+
+### Fixed
+
+- Summarized foreground cleanup/apply terminal output by default and wrote complete per-run JSON reports under the cargo-reclaim state directory.
+
+---
+
 ## [0.2.0] - 2026-07-05
 
 ### Changed
@@ -87,6 +95,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+[0.2.1]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.0
