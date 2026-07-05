@@ -35,18 +35,15 @@ fn service_run_json_creates_state_log_and_plan() -> Result<(), Box<dyn Error>> {
     assert_eq!(document["cycles_completed"], 1);
     assert_eq!(
         document["paths"]["state_path"],
-        temp.path()
-            .join("state/service-state.json")
-            .display()
-            .to_string()
+        state_path(temp.path()).display().to_string()
     );
     assert_eq!(
         document["paths"]["run_log_path"],
-        temp.path().join("logs/runs.jsonl").display().to_string()
+        run_log_path(temp.path()).display().to_string()
     );
-    assert!(temp.path().join("state/service-state.json").is_file());
-    assert!(temp.path().join("logs/runs.jsonl").is_file());
-    assert!(fs::read_dir(temp.path().join("state/plans"))?.count() >= 1);
+    assert!(state_path(temp.path()).is_file());
+    assert!(run_log_path(temp.path()).is_file());
+    assert!(fs::read_dir(plans_dir(temp.path()))?.count() >= 1);
     Ok(())
 }
 
@@ -72,7 +69,7 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(temp.path().join("logs"))?;
     let pid = std::process::id();
     fs::write(
-        temp.path().join("state/service-state.json"),
+        state_path(temp.path()),
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 1,
             "status": "running",
@@ -86,7 +83,7 @@ fn service_status_json_reports_persisted_state() -> Result<(), Box<dyn Error>> {
         }))?,
     )?;
     fs::write(
-        temp.path().join("logs/runs.jsonl"),
+        run_log_path(temp.path()),
         r#"{"schema_version":1,"run_id":"run-1","recorded_at":{"unix_seconds":20,"nanoseconds":0},"event":"started","trigger":null,"selected_policy":"conservative","plan":null,"skipped_projects":[],"apply":null,"recommendations":[],"problems":[]}
 not-json
 {"schema_version":1,"run_id":"run-1","recorded_at":{"unix_seconds":21,"nanoseconds":0},"event":"apply_completed","trigger":null,"selected_policy":"conservative","plan":null,"skipped_projects":[],"apply":{"plan_id":"sha256:test","dry_run":false,"totals":{"entry_count":2,"delete_candidate_count":1,"would_delete_count":0,"skipped_count":1,"stale_skip_count":0,"applied_count":1,"failed_count":0,"would_delete_bytes":0,"applied_bytes":1234},"notable_entries":[]},"recommendations":[],"problems":[]}
@@ -108,10 +105,7 @@ not-json
     assert_eq!(document["last_run_id"], "scheduler-status-test");
     assert_eq!(
         document["paths"]["state_path"],
-        temp.path()
-            .join("state/service-state.json")
-            .display()
-            .to_string()
+        state_path(temp.path()).display().to_string()
     );
     assert_eq!(
         document["paths"]["log_dir"],
@@ -119,7 +113,7 @@ not-json
     );
     assert_eq!(
         document["paths"]["run_log_path"],
-        temp.path().join("logs/runs.jsonl").display().to_string()
+        run_log_path(temp.path()).display().to_string()
     );
     assert_eq!(document["run_log"]["record_count"], 4);
     assert_eq!(document["run_log"]["corrupt_record_count"], 1);
@@ -152,13 +146,10 @@ not-json
     assert!(stdout.contains("cargo-reclaim scheduler service: running"));
     assert!(stdout.contains(&format!(
         "state file: {}",
-        temp.path().join("state/service-state.json").display()
+        state_path(temp.path()).display()
     )));
     assert!(stdout.contains(&format!("log dir: {}", temp.path().join("logs").display())));
-    assert!(stdout.contains(&format!(
-        "run log: {}",
-        temp.path().join("logs/runs.jsonl").display()
-    )));
+    assert!(stdout.contains(&format!("run log: {}", run_log_path(temp.path()).display())));
     assert!(stdout.contains(&format!("pid: {pid}")));
     assert!(stdout.contains("last run: scheduler-status-test"));
     assert!(stdout.contains("run log records: 4"));
@@ -186,7 +177,7 @@ fn service_status_json_reports_dead_running_pid_as_stale() -> Result<(), Box<dyn
     )?;
     fs::create_dir_all(temp.path().join("state"))?;
     fs::write(
-        temp.path().join("state/service-state.json"),
+        state_path(temp.path()),
         r#"{
   "schema_version": 1,
   "status": "running",
@@ -223,6 +214,18 @@ fn write_config(path: &Path, body: &str) -> Result<PathBuf, Box<dyn Error>> {
 
 fn toml_string(path: &Path) -> String {
     format!("\"{}\"", path.display().to_string().replace('\\', "\\\\"))
+}
+
+fn state_path(root: &Path) -> PathBuf {
+    root.join("state").join("service-state.json")
+}
+
+fn plans_dir(root: &Path) -> PathBuf {
+    root.join("state").join("plans")
+}
+
+fn run_log_path(root: &Path) -> PathBuf {
+    root.join("logs").join("runs.jsonl")
 }
 
 struct TestTemp {
