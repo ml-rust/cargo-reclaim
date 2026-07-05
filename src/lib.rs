@@ -19,8 +19,9 @@ mod toolchain_hash;
 pub mod watcher;
 
 pub use active_process::{
-    ActiveObservationProvider, ActiveObservationScope, ProcfsActiveObservationProvider,
-    SysinfoActiveObservationProvider, platform_active_observation_provider,
+    ActiveObservationProvider, ActiveObservationScope, DISABLE_ACTIVE_PROCESS_DETECTION_ENV,
+    ProcfsActiveObservationProvider, SysinfoActiveObservationProvider,
+    platform_active_observation_provider,
 };
 pub use background::{
     BACKGROUND_RUN_LOG_SCHEMA_VERSION, BACKGROUND_SERVICE_STATE_SCHEMA_VERSION,
