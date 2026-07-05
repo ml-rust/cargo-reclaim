@@ -18,12 +18,12 @@ mod cleanup_assistant;
 mod cleanup_terminal;
 mod edit_plan;
 mod error_output;
+mod list;
 mod output;
 mod persistence;
 mod plan;
 mod scheduler;
 mod target_report;
-mod targets;
 
 use apply::{ApplyCommand, parse_apply_command, run_apply};
 use cargo_config::{CargoConfigCommand, parse_cargo_config_command, run_cargo_config_command};
@@ -31,11 +31,11 @@ use cargo_home::{CargoHomeCommand, parse_cargo_home_command, run_cargo_home_comm
 use cleanup::{CleanupCommand, parse_cleanup_command, run_cleanup_command};
 use edit_plan::{EditPlanCommand, parse_edit_plan_command, run_edit_plan};
 use error_output::write_error_json;
+use list::{ListCommand, parse_list_command, run_list_command};
 use output::write_help;
 use persistence::{SavePlanRequest, parse_days, parse_duration, parse_size};
 use plan::run_plan_command;
 use scheduler::{SchedulerPreviewCommand, parse_scheduler_command, run_scheduler_preview};
-use targets::{TargetsCommand, parse_targets_command, run_targets_command};
 
 pub fn run() -> ExitCode {
     let mut stdout = io::stdout();
@@ -85,7 +85,7 @@ fn run_with_args(
         Command::SchedulerPreview(command) => run_scheduler_preview(&command, stdout),
         Command::CargoConfig(command) => run_cargo_config_command(&command, stdout),
         Command::CargoHome(command) => run_cargo_home_command(&command, stdout),
-        Command::Targets(command) => run_targets_command(&command, stdout),
+        Command::List(command) => run_list_command(&command, stdout),
         Command::Cleanup(command) => {
             let provider = platform_active_observation_provider();
             run_cleanup_command(&command, stdout, &provider)
@@ -103,7 +103,7 @@ enum Command {
     SchedulerPreview(SchedulerPreviewCommand),
     CargoConfig(CargoConfigCommand),
     CargoHome(CargoHomeCommand),
-    Targets(TargetsCommand),
+    List(ListCommand),
     Cleanup(CleanupCommand),
 }
 
@@ -163,8 +163,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
         "scheduler" => parse_scheduler_command(args).map(Command::SchedulerPreview),
         "cargo-config" => parse_cargo_config_command(args).map(Command::CargoConfig),
         "cargo-home" => parse_cargo_home_command(args).map(Command::CargoHome),
-        "list" => parse_list_command(args),
-        "targets" | "target" => parse_targets_command(args).map(Command::Targets),
+        "list" => parse_list_command(args).map(Command::List),
         command if command.starts_with('-') => {
             parse_cleanup_command(std::iter::once(OsString::from(command)).chain(args))
                 .map(Command::Cleanup)
@@ -174,15 +173,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliEr
                 .map(Command::Cleanup)
         }
         command => Err(CliError::Usage(format!(
-            "unknown command `{command}`; expected `cleanup`, `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `list`, `targets`, or `help`"
+            "unknown command `{command}`; expected `scan`, `plan`, `apply`, `edit-plan`, `scheduler`, `cargo-config`, `cargo-home`, `list`, or `help`; pass a root path to open cleanup"
         ))),
     }
-}
-
-fn parse_list_command(args: impl IntoIterator<Item = OsString>) -> Result<Command, CliError> {
-    // Reuse the shared targets parser, but pin it to list mode so `clean` stays a positional path.
-    let args = std::iter::once(OsString::from("list")).chain(args);
-    parse_targets_command(args).map(Command::Targets)
 }
 
 fn is_path_like_root(value: &str) -> bool {
@@ -870,17 +863,17 @@ mod tests {
 
     #[test]
     fn parse_cargo_subcommand_prefix() -> Result<(), CliError> {
-        let Command::Targets(targets::TargetsCommand::List(_)) =
-            parse_args(["reclaim", "targets", "workspace"].map(OsString::from))?
-        else {
-            panic!("expected targets list command");
-        };
-
-        let Command::Targets(targets::TargetsCommand::List(_)) =
-            parse_args(["reclaim", "list", "workspace"].map(OsString::from))?
+        let Command::List(_) = parse_args(["reclaim", "list", "workspace"].map(OsString::from))?
         else {
             panic!("expected list command");
         };
+
+        assert!(
+            parse_args(["reclaim", "targets", "workspace"].map(OsString::from))
+                .unwrap_err()
+                .to_string()
+                .contains("unknown command `targets`")
+        );
 
         let command = parse_args(["reclaim", "--version"].map(OsString::from))?;
         assert!(matches!(command, Command::Version));

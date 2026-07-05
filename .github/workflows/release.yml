@@ -6,14 +6,14 @@ run-name: Release ${{ inputs.tag }}
 # workflow with the same tag and the successful prepare workflow run ID to publish
 # crates.io and create the GitHub Release without rebuilding.
 #
-# Required configuration before the first real release:
+# Required release configuration:
 #   - set `package.version` in Cargo.toml to the intended stable base version
 #   - add a `CARGO_REGISTRY_TOKEN` secret (Environment: crates.io)
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to publish, for example v0.1.0-beta.6"
+        description: "Existing release tag to publish, for example v0.2.0"
         required: true
         type: string
       prepare_run_id:

@@ -10,13 +10,13 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
     writeln!(output, "cargo-reclaim")?;
     writeln!(
         output,
-        "Usage: cargo-reclaim [OPTIONS] [ROOT ...]\n       cargo-reclaim cleanup [OPTIONS] [ROOT ...]\n       cargo-reclaim <scan|plan|apply|edit-plan|scheduler|cargo-config|cargo-home|list|targets> [OPTIONS]"
+        "Usage: cargo-reclaim [OPTIONS] [ROOT ...]\n       cargo-reclaim list [OPTIONS] [ROOT ...]\n       cargo-reclaim <scan|plan|apply|edit-plan|scheduler|cargo-config|cargo-home> [OPTIONS]"
     )?;
     writeln!(output)?;
     writeln!(output, "Commands:")?;
     writeln!(
         output,
-        "  cleanup  Open the TTY cleanup assistant; non-TTY/--json without a selector is a usage error; use --all for bulk smart trim and --delete-target for whole-target deletion"
+        "  [ROOT ...]  Open the TTY cleanup assistant; use --all for bulk smart trim and --target with --delete-target for explicit whole-target deletion"
     )?;
     writeln!(output, "  scan    Build a read-only dry-run plan for roots")?;
     writeln!(output, "  plan    Build a read-only dry-run plan for roots")?;
@@ -26,10 +26,6 @@ pub(super) fn write_help(output: &mut impl Write) -> Result<(), CliError> {
         "  edit-plan  List, edit, or interactively select entries in a persisted plan"
     )?;
     writeln!(output, "  list    Read-only target inventory with sizes")?;
-    writeln!(
-        output,
-        "  targets  Legacy inventory and whole-target clean surface"
-    )?;
     writeln!(
         output,
         "  scheduler preview  Preview scheduler artifacts only"

@@ -6,6 +6,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.2.0] - 2026-07-05
+
+### Changed
+
+- Made `cargo-reclaim <roots...>` the primary cleanup assistant entrypoint, with smart trim as the default cleanup mode for active projects.
+- Made `cargo-reclaim list <roots...>` the read-only target inventory surface and removed the old public `targets` command surface.
+- Moved explicit whole-target deletion to the cleanup assistant path with `--target <path> --delete-target --yes`, keeping whole-target cleanup separate from default smart trim.
+- Updated CLI help, JSON inventory output, README examples, and release preparation metadata around the 0.2.0 command model.
+
+### Added
+
+- Real terminal assistant coverage for selector, mode, confirmation, cancellation, page-skipping flags, and non-TTY guard behavior.
+- Deterministic CLI integration test isolation from live cargo/rustc process scans.
+
+### Fixed
+
+- Improved target inventory sizing throughput and stale plan-test stability before the 0.2.0 release.
+
+---
+
 ## [0.1.1] - 2026-07-04
 
 ### Fixed
@@ -67,5 +87,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+[0.2.0]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.0

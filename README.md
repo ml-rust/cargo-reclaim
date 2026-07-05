@@ -104,7 +104,7 @@ Use `cargo clean` when you are inside one project and want to delete that projec
 - Lists Cargo target directories under one or more roots.
 - Understands configured Cargo target dirs and shared target dirs.
 - Reports measured size largest-first.
-- Supports interactive whole-target cleanup when that is the chosen operation.
+- Supports explicit whole-target cleanup through the assistant path when that is the chosen operation.
 
 ### Partial Artifact Cleanup
 
@@ -115,7 +115,7 @@ Use `cargo clean` when you are inside one project and want to delete that projec
 
 ### Safety And Revalidation
 
-- `scan`, `plan`, `targets`, `cargo-home report`, and config recommendation commands are read-only.
+- `scan`, `plan`, `list`, `cargo-home report`, and config recommendation commands are read-only.
 - `apply` consumes a saved plan and revalidates filesystem state before deletion.
 - Entries that changed, disappeared, became symlinks, or no longer match the saved snapshot are skipped instead of blindly removed.
 - Destructive commands require `--yes`.
