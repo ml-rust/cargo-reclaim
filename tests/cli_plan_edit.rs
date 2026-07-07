@@ -1003,6 +1003,52 @@ fn edit_plan_interactive_output(
     Ok(child.wait_with_output()?)
 }
 
+#[test]
+fn edit_plan_rejects_dry_run_report_with_actionable_guidance() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_edit_plan_report_rejected")?;
+    write_manifest(temp.path())?;
+    fs::create_dir_all(temp.path().join("target/debug/incremental"))?;
+    fs::write(
+        temp.path().join("target/debug/incremental/cache.bin"),
+        b"abc",
+    )?;
+
+    // `plan --json` emits a dry-run report, not an executable plan document.
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["plan", "--allow-name-only-targets", "--json"])
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+    let report_path = temp.path().join("report.json");
+    fs::write(&report_path, &plan_output.stdout)?;
+
+    let edit_output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .args(["edit-plan", "--plan"])
+        .arg(&report_path)
+        .arg("--list")
+        .output()?;
+
+    assert!(!edit_output.status.success());
+    let stderr = String::from_utf8(edit_output.stderr)?;
+    assert!(
+        stderr.contains("dry-run report"),
+        "expected report-format diagnosis, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--save-plan"),
+        "expected guidance toward --save-plan, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("encode"),
+        "load failure must not be reported as an encode error: {stderr}"
+    );
+    assert!(
+        !stderr.contains("missing field"),
+        "raw serde error must not leak to the user: {stderr}"
+    );
+    Ok(())
+}
+
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
     Ok(())

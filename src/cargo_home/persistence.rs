@@ -5,7 +5,8 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use crate::persistence::{
-    PersistedTimestamp, PlanId, PlanPersistenceError, PlanPersistenceResult, fingerprint_path,
+    PersistedTimestamp, PlanId, PlanPersistenceError, PlanPersistenceResult,
+    deserialize_plan_document, fingerprint_path,
 };
 
 use super::model::{
@@ -179,7 +180,7 @@ pub fn load_cargo_home_plan_from_path(
 ) -> PlanPersistenceResult<PersistedCargoHomePlan> {
     let path = path.as_ref();
     let bytes = fs::read(path).map_err(|error| io_error(path, error))?;
-    Ok(serde_json::from_slice(&bytes)?)
+    deserialize_plan_document(path, &bytes, "cargo-home plan")
 }
 
 impl PersistedCargoHomePlanSnapshot {

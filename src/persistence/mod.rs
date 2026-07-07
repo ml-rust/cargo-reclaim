@@ -1,4 +1,5 @@
 mod document;
+mod document_kind;
 mod error;
 mod fingerprint;
 mod fs;
@@ -12,6 +13,7 @@ pub use document::{
     PersistedWholeTargetMode, PlanCommandKind, PlanInvocation, SavePlanOptions, ensure_plan_usable,
     persist_plan,
 };
+pub(crate) use document_kind::deserialize_plan_document;
 pub use error::{PlanPersistenceError, PlanPersistenceResult};
 pub(crate) use fingerprint::fingerprint_path;
 pub use fs::{load_plan_from_path, save_plan_to_path};

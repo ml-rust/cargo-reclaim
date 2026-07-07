@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::document::PersistedPlan;
+use super::document_kind::deserialize_plan_document;
 use super::error::{PlanPersistenceError, PlanPersistenceResult};
 
 pub fn save_plan_to_path(
@@ -20,8 +21,7 @@ pub fn save_plan_to_path(
 pub fn load_plan_from_path(path: impl AsRef<Path>) -> PlanPersistenceResult<PersistedPlan> {
     let path = path.as_ref();
     let bytes = fs::read(path).map_err(|error| io_error(path, error))?;
-    let document = serde_json::from_slice::<PersistedPlan>(&bytes)?;
-    Ok(document)
+    deserialize_plan_document(path, &bytes, "plan")
 }
 
 fn temp_sibling_path(path: &Path) -> PathBuf {

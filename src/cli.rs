@@ -723,11 +723,12 @@ impl CliError {
         match self {
             Self::Help(_) => 0,
             Self::Usage(_) => 2,
-            Self::Reclaim(_)
-            | Self::Config(_)
-            | Self::Io(_)
-            | Self::Json(_)
-            | Self::Persistence(_) => 1,
+            Self::Reclaim(_) | Self::Config(_) | Self::Io(_) | Self::Json(_) => 1,
+            Self::Persistence(error) => match error {
+                cargo_reclaim::PlanPersistenceError::DryRunReport { .. }
+                | cargo_reclaim::PlanPersistenceError::UnrecognizedDocument { .. } => 2,
+                _ => 1,
+            },
             Self::Scheduler(_) => 2,
             Self::CargoHome(_) | Self::BackgroundRunner(_) | Self::BackgroundRunLog(_) => 1,
             Self::ToolchainHash(_) => 1,

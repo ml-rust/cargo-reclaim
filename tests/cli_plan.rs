@@ -1024,6 +1024,76 @@ fn follow_symlinks_option_includes_symlinked_project_end_to_end() -> Result<(), 
     Ok(())
 }
 
+#[test]
+fn apply_rejects_dry_run_report_with_actionable_guidance() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_apply_report_rejected")?;
+    write_manifest(temp.path())?;
+    let artifact = temp.path().join("target/debug/incremental/cache.bin");
+    fs::create_dir_all(artifact.parent().expect("artifact parent"))?;
+    fs::write(&artifact, b"abc")?;
+
+    // `plan --json` emits a dry-run report, not an executable plan document.
+    let plan_output = common::cargo_reclaim_command(temp.path())
+        .args(["plan", "--json"])
+        .arg(temp.path())
+        .output()?;
+    assert!(plan_output.status.success());
+    let report_path = temp.path().join("report.json");
+    fs::write(&report_path, &plan_output.stdout)?;
+
+    let apply_output = common::cargo_reclaim_command(temp.path())
+        .args(["apply", "--plan"])
+        .arg(&report_path)
+        .arg("--yes")
+        .output()?;
+
+    assert!(!apply_output.status.success());
+    assert!(artifact.is_file(), "report must not be executed as a plan");
+    let stderr = String::from_utf8(apply_output.stderr)?;
+    assert!(
+        stderr.contains("dry-run report"),
+        "expected report-format diagnosis, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--save-plan"),
+        "expected guidance toward --save-plan, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("encode"),
+        "load failure must not be reported as an encode error: {stderr}"
+    );
+    assert!(
+        !stderr.contains("missing field"),
+        "raw serde error must not leak to the user: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn apply_rejects_unrecognized_plan_document() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_apply_unrecognized")?;
+    let bogus_path = temp.path().join("bogus.json");
+    fs::write(&bogus_path, br#"{"hello":"world"}"#)?;
+
+    let apply_output = common::cargo_reclaim_command(temp.path())
+        .args(["apply", "--plan"])
+        .arg(&bogus_path)
+        .arg("--yes")
+        .output()?;
+
+    assert!(!apply_output.status.success());
+    let stderr = String::from_utf8(apply_output.stderr)?;
+    assert!(
+        stderr.contains("plan document"),
+        "expected a plan-document diagnosis, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("encode"),
+        "load failure must not be reported as an encode error: {stderr}"
+    );
+    Ok(())
+}
+
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
     Ok(())
