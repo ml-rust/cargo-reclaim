@@ -107,6 +107,42 @@ fn targets_command_is_not_public_surface() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn list_discovers_cargo_target_dir_with_custom_name() -> Result<(), Box<dyn Error>> {
+    // A shared CARGO_TARGET_DIR is commonly not named `target` (issue #2 used
+    // `cargo-target`). rustc writes `.rustc_info.json` into it, which marks it as
+    // a cargo build output regardless of the directory name, so it must be listed
+    // even when scanned directly with no Cargo project present.
+    let temp = TestTemp::new("cli_list_custom_target")?;
+    let shared = temp.path().join("cargo-target");
+    fs::create_dir_all(shared.join("debug"))?;
+    fs::write(shared.join(".rustc_info.json"), "{}\n")?;
+    fs::write(shared.join("debug/artifact.bin"), b"data")?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
+    assert_eq!(document["totals"]["target_count"], 1);
+    assert_eq!(document["targets"][0]["path"], shared.display().to_string());
+    Ok(())
+}
+
+#[test]
+fn list_ignores_custom_named_dir_with_only_cachedir_tag() -> Result<(), Box<dyn Error>> {
+    // CACHEDIR.TAG alone is a generic cache marker; a non-`target` directory that
+    // carries only it is not treated as a cargo target, so unrelated tool caches
+    // are never proposed for cleanup.
+    let temp = TestTemp::new("cli_list_generic_cache")?;
+    let cache = temp.path().join("some-cache");
+    fs::create_dir_all(&cache)?;
+    fs::write(
+        cache.join("CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
+    assert_eq!(document["totals"]["target_count"], 0);
+    Ok(())
+}
+
+#[test]
 fn list_reports_no_rust_project_found_for_root_without_projects() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("cli_list_no_project")?;
     fs::create_dir(temp.path().join("some-data"))?;

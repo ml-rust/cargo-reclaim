@@ -72,6 +72,29 @@ fn rustc_info_marker_produces_strong_marker_evidence() -> Result<(), Box<dyn Err
 }
 
 #[test]
+fn rustc_info_marker_is_preferred_over_cachedir_tag() -> Result<(), Box<dyn Error>> {
+    // A real cargo target dir carries both markers. The cargo-specific
+    // `.rustc_info.json` must win so the dir is recognized as cleanable even
+    // when it is not named `target`.
+    let temp = TestTemp::new("both_markers")?;
+    let target = temp.path().join("cargo-target");
+    fs::create_dir(&target)?;
+    fs::write(
+        target.join("CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )?;
+    fs::write(target.join(".rustc_info.json"), "{}\n")?;
+
+    let candidate = classify_target_candidate(&target, None, None, &ScannerOptions::default())?;
+
+    assert_eq!(
+        candidate.evidence,
+        Some(TargetEvidence::strong_marker(".rustc_info.json")?)
+    );
+    Ok(())
+}
+
+#[test]
 fn configured_override_preserves_source_label() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("configured_override")?;
     let target = temp.path().join("custom-target");

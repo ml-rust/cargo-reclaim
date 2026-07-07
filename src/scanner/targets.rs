@@ -110,20 +110,25 @@ pub(crate) fn classify_target_candidate_with_overrides(
         ));
     }
 
-    if path.join(CACHEDIR_TAG).is_file() {
-        return Ok(TargetCandidate::candidate(
-            path.to_path_buf(),
-            TargetCandidateKind::CargoTargetDir,
-            TargetEvidence::strong_marker(CACHEDIR_TAG)?,
-            target_context(path, project, build_root),
-        ));
-    }
-
+    // `.rustc_info.json` is written only by rustc/cargo, so it is the more
+    // specific signal and is checked first: a directory carrying it is a cargo
+    // build output regardless of its name (e.g. a shared CARGO_TARGET_DIR named
+    // `cargo-target`). CACHEDIR.TAG is generic and only anchors the conventional
+    // `target` name.
     if path.join(RUSTC_INFO).is_file() {
         return Ok(TargetCandidate::candidate(
             path.to_path_buf(),
             TargetCandidateKind::CargoTargetDir,
             TargetEvidence::strong_marker(RUSTC_INFO)?,
+            target_context(path, project, build_root),
+        ));
+    }
+
+    if path.join(CACHEDIR_TAG).is_file() {
+        return Ok(TargetCandidate::candidate(
+            path.to_path_buf(),
+            TargetCandidateKind::CargoTargetDir,
+            TargetEvidence::strong_marker(CACHEDIR_TAG)?,
             target_context(path, project, build_root),
         ));
     }

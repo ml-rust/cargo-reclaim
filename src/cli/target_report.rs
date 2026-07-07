@@ -183,6 +183,13 @@ pub(super) fn is_cleanable_cargo_target(candidate: &TargetCandidate) -> bool {
     match candidate.evidence.as_ref() {
         Some(TargetEvidence::ConfiguredPath { .. })
         | Some(TargetEvidence::ProjectContext { .. }) => true,
+        // `.rustc_info.json` is emitted only by rustc/cargo, so a directory that
+        // carries it is a cargo build output no matter its name — this is what
+        // lets a shared CARGO_TARGET_DIR named e.g. `cargo-target` be reclaimed.
+        Some(TargetEvidence::StrongMarker { marker }) if marker == ".rustc_info.json" => true,
+        // CACHEDIR.TAG is a generic cache marker, so it only counts when the
+        // directory also uses the conventional `target` name (avoids treating
+        // unrelated tool caches as cargo output).
         Some(TargetEvidence::StrongMarker { .. }) | Some(TargetEvidence::WeakNameOnly { .. }) => {
             candidate
                 .path
