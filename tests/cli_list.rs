@@ -106,6 +106,58 @@ fn targets_command_is_not_public_surface() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn list_reports_no_rust_project_found_for_root_without_projects() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_list_no_project")?;
+    fs::create_dir(temp.path().join("some-data"))?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
+    assert_eq!(document["totals"]["target_count"], 0);
+    assert_eq!(document["totals"]["project_count"], 0);
+    assert_eq!(
+        document["note"],
+        "no Rust project found under the scanned roots"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-reclaim"))
+        .arg("list")
+        .arg(temp.path())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("targets: 0"));
+    assert!(stdout.contains("note: no Rust project found under the scanned roots"));
+    Ok(())
+}
+
+#[test]
+fn list_reports_projects_present_but_no_cleanable_targets() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_list_project_no_target")?;
+    let project = temp.path().join("proj");
+    fs::create_dir_all(&project)?;
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"proj\"\n")?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
+    assert_eq!(document["totals"]["target_count"], 0);
+    assert_eq!(document["totals"]["project_count"], 1);
+    assert_eq!(
+        document["note"],
+        "Rust projects found, but no cleanable target directories"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_reports_no_note_when_targets_are_found() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("cli_list_note_absent")?;
+    write_project(temp.path(), "project", b"abc")?;
+
+    let document = run_json_command(["list", "--json"], temp.path())?;
+    assert_eq!(document["totals"]["target_count"], 1);
+    assert!(document["note"].is_null());
+    Ok(())
+}
+
 fn write_project(
     root: &Path,
     name: &str,

@@ -218,6 +218,9 @@ fn write_list_terminal(output: &mut impl Write, report: &TargetsReport) -> Resul
         report.targets.len(),
         human_bytes(report.total_size_bytes)
     )?;
+    if let Some(diagnosis) = report.empty_diagnosis() {
+        writeln!(output, "note: {diagnosis}")?;
+    }
     if !report.problems.is_empty() {
         writeln!(output, "problems: {}", report.problems.len())?;
     }
@@ -264,9 +267,11 @@ fn write_list_json(output: &mut impl Write, report: &TargetsReport) -> Result<()
             "totals": {
                 "target_count": report.targets.len(),
                 "total_size_bytes": report.total_size_bytes,
+                "project_count": report.project_count,
                 "skipped_path_count": report.skipped_paths.len(),
                 "problem_count": report.problems.len(),
             },
+            "note": report.empty_diagnosis(),
             "targets": report.targets.iter().map(target_json).collect::<Vec<_>>(),
             "skipped_paths": report.skipped_paths.iter().map(skip_json).collect::<Vec<_>>(),
             "problems": report.problems.iter().map(problem_json).collect::<Vec<_>>(),

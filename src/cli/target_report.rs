@@ -43,9 +43,28 @@ pub(super) struct TargetsReport {
     pub(super) config_path: Option<PathBuf>,
     pub(super) config_version: Option<u16>,
     pub(super) total_size_bytes: u64,
+    pub(super) project_count: usize,
     pub(super) targets: Vec<TargetListEntry>,
     pub(super) skipped_paths: Vec<TargetListSkip>,
     pub(super) problems: Vec<TargetListProblem>,
+}
+
+impl TargetsReport {
+    /// A human-readable explanation for an empty target list, or `None` when
+    /// targets were found. Distinguishes "nothing here is a Rust project" from
+    /// "projects are present but already clean". The count is deliberately left
+    /// out of the message: it tallies Cargo manifest directories, which
+    /// over-reports a single workspace (virtual root plus each member).
+    pub(super) fn empty_diagnosis(&self) -> Option<String> {
+        if !self.targets.is_empty() {
+            return None;
+        }
+        if self.project_count == 0 {
+            Some("no Rust project found under the scanned roots".to_string())
+        } else {
+            Some("Rust projects found, but no cleanable target directories".to_string())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +93,7 @@ pub(super) fn build_targets_report(command: &TargetsDiscovery) -> Result<Targets
     let mut seen_targets = HashSet::new();
     let mut candidates = Vec::new();
     let mut skipped_paths = Vec::new();
+    let mut project_count = 0;
 
     for item in items {
         match item {
@@ -94,7 +114,7 @@ pub(super) fn build_targets_report(command: &TargetsDiscovery) -> Result<Targets
                 path: skip.path,
                 reason: skip.reason,
             }),
-            ScanItem::CargoProject(_) => {}
+            ScanItem::CargoProject(_) => project_count += 1,
         }
     }
 
@@ -128,6 +148,7 @@ pub(super) fn build_targets_report(command: &TargetsDiscovery) -> Result<Targets
         config_path: command.config_path.clone(),
         config_version: command.config_version,
         total_size_bytes,
+        project_count,
         targets,
         skipped_paths,
         problems,
