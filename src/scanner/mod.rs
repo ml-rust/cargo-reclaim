@@ -1,5 +1,6 @@
 mod cargo;
 mod cargo_config;
+mod filesystem;
 mod foundation;
 mod recursive;
 mod targets;

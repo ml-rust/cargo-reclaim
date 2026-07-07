@@ -10,6 +10,7 @@ use super::cargo_config::{
     CargoConfigProblem, CargoConfigUnsupported, CargoConfigUnsupportedReason,
     resolve_project_output_dirs,
 };
+use super::filesystem::{filesystem_device, is_cross_filesystem};
 use super::foundation::TargetDirOverride;
 use super::foundation::{CargoProject, ScannerOptions};
 use super::targets::{
@@ -161,7 +162,6 @@ fn scan_path(
                 output_dir,
                 Some(&project),
                 options,
-                root_device,
                 emitted_targets,
                 items,
             )?;
@@ -207,7 +207,6 @@ fn emit_configured_output_dir(
     output_dir: &TargetDirOverride,
     project_context: Option<&CargoProject>,
     options: &ScannerOptions,
-    root_device: Option<u64>,
     emitted_targets: &mut HashSet<PathBuf>,
     items: &mut Vec<ScanItem>,
 ) -> ReclaimResult<()> {
@@ -253,11 +252,10 @@ fn emit_configured_output_dir(
         return Ok(());
     }
 
-    if is_cross_filesystem(&metadata, options, root_device) {
-        push_skipped(items, path, ScanSkipReason::CrossFilesystem);
-        return Ok(());
-    }
-
+    // A configured output dir is an explicit, named location: unlike incidental
+    // traversal (see `scan_path`), it is not gated by the filesystem boundary, so
+    // a shared CARGO_TARGET_DIR on a separate disk is discovered without
+    // `--cross-filesystems`.
     emit_target_candidate(
         path,
         project_context,
@@ -426,40 +424,4 @@ fn lexically_normalize(path: &Path) -> PathBuf {
     }
 
     normalized
-}
-
-#[cfg(unix)]
-fn filesystem_device(path: &Path, options: &ScannerOptions) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-
-    if options.cross_filesystems {
-        return None;
-    }
-
-    fs::metadata(path).ok().map(|metadata| metadata.dev())
-}
-
-#[cfg(not(unix))]
-fn filesystem_device(_path: &Path, _options: &ScannerOptions) -> Option<u64> {
-    None
-}
-
-#[cfg(unix)]
-fn is_cross_filesystem(
-    metadata: &fs::Metadata,
-    options: &ScannerOptions,
-    root_device: Option<u64>,
-) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    !options.cross_filesystems && root_device.is_some_and(|device| metadata.dev() != device)
-}
-
-#[cfg(not(unix))]
-fn is_cross_filesystem(
-    _metadata: &fs::Metadata,
-    _options: &ScannerOptions,
-    _root_device: Option<u64>,
-) -> bool {
-    false
 }

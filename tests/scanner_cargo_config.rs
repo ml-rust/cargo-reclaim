@@ -259,6 +259,33 @@ fn scan_skips_configured_symlink_output_by_default() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+#[test]
+fn scan_discovers_configured_target_outside_the_scan_root() -> Result<(), Box<dyn Error>> {
+    // A project inside the scanned root points its target dir at a sibling that
+    // lives entirely outside the root's subtree (the shared-target layout from
+    // issue #2). It must still be discovered, not left behind because it is not
+    // reachable by walking the root.
+    let temp = TestTemp::new("recursive_configured_outside_root")?;
+    let scan_root = temp.path().join("workspace");
+    let project = scan_root.join("project");
+    fs::create_dir_all(&project)?;
+    write_manifest(&project)?;
+    let shared_target = temp.path().join("shared-target");
+    fs::create_dir(&shared_target)?;
+
+    let _env_guard = EnvGuard::set("CARGO_BUILD_TARGET_DIR", shared_target.to_str().unwrap())?;
+    let items = scan_roots([&scan_root], &ScannerOptions::default())?;
+
+    assert!(target_candidates(&items).any(|candidate| {
+        candidate.path == shared_target
+            && matches!(
+                candidate.evidence.as_ref(),
+                Some(TargetEvidence::ConfiguredPath { source }) if source == "CARGO_BUILD_TARGET_DIR"
+            )
+    }));
+    Ok(())
+}
+
 fn write_manifest(path: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(path.join("Cargo.toml"), "[package]\nname = \"sample\"\n")?;
     Ok(())
