@@ -6,6 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.2.2] - 2026-07-07
+
+### Fixed
+
+- Rejected a `plan --json` dry-run report (or an unrecognized file) passed to `apply --plan`, `edit-plan --plan`, or `cargo-home apply --plan` with an actionable error that points at `--save-plan`, instead of a raw serialization error about a missing `id` field (#1).
+- Discovered a shared `CARGO_TARGET_DIR` or `build.target-dir` that lives on a different filesystem than the project root without requiring `--cross-filesystems`; the flag now governs incidental traversal only, not explicitly configured output locations (#2).
+- Recognized a cargo target directory by its `.rustc_info.json` marker regardless of directory name, so a shared target directory named e.g. `cargo-target` is listed and cleanable; the generic `CACHEDIR.TAG` marker still requires the conventional `target` name (#2).
+
+### Changed
+
+- Explained empty `list` results, distinguishing "no Rust project found under the scanned roots" from "Rust projects found, but no cleanable target directories," in both terminal and JSON output.
+
+---
+
 ## [0.2.1] - 2026-07-05
 
 ### Fixed
@@ -95,6 +109,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+[0.2.2]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.2.2
 [0.2.1]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ml-rust/cargo-reclaim/releases/tag/v0.1.1
