@@ -47,7 +47,12 @@ pub fn planner_candidates_from_target_root_with_context(
         let Some(child_name) = child.file_name() else {
             continue;
         };
-        collect_child_candidates(
+        // A concurrent `cargo build` can delete an artifact (for example a
+        // `deps/*.rcgu.o` object file) between directory enumeration and the
+        // stat the snapshot performs, surfacing as `MissingInventoryPath`.
+        // Skip the vanished child and keep going, matching how the stale-deps
+        // and stale-incremental passes already tolerate the same race.
+        match collect_child_candidates(
             target_root,
             PathBuf::from(child_name),
             &evidence,
@@ -55,7 +60,11 @@ pub fn planner_candidates_from_target_root_with_context(
             options,
             &mut visited_dirs,
             &mut candidates,
-        )?;
+        ) {
+            Ok(()) => {}
+            Err(ReclaimError::MissingInventoryPath { .. }) => {}
+            Err(error) => return Err(error),
+        }
     }
 
     Ok(candidates)
@@ -133,7 +142,7 @@ fn collect_child_candidates(
             let Some(file_name) = child.file_name() else {
                 continue;
             };
-            collect_child_candidates(
+            match collect_child_candidates(
                 target_root,
                 child_path.join(file_name),
                 evidence,
@@ -141,7 +150,11 @@ fn collect_child_candidates(
                 options,
                 visited_dirs,
                 candidates,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(ReclaimError::MissingInventoryPath { .. }) => {}
+                Err(error) => return Err(error),
+            }
         }
 
         if candidates.len() == candidate_count_before {

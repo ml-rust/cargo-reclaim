@@ -1264,6 +1264,53 @@ fn target_content_symlinks_are_not_planned_by_default() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+#[test]
+#[cfg(unix)]
+fn vanished_target_child_is_skipped_during_inventory() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::symlink;
+
+    let temp = TestTemp::new("integration_vanished_child")?;
+    let target = temp.path().join("target");
+    let deps = target.join("debug/deps");
+    fs::create_dir_all(&deps)?;
+    // A real artifact that must still be inventoried.
+    fs::write(deps.join("real-0000000000000000.rcgu.o"), b"obj")?;
+    // A symlink whose target does not exist reproduces the concurrent-build
+    // race deterministically: the entry exists at directory-enumeration time,
+    // but the stat the snapshot performs resolves the link and fails with
+    // NotFound, surfacing as `MissingInventoryPath`.
+    symlink(
+        temp.path().join("missing-build-output"),
+        deps.join("gone-1111111111111111.rcgu.o"),
+    )?;
+
+    let options = InventoryOptions {
+        follow_symlinks: true,
+        ..InventoryOptions::default()
+    };
+    let candidates = cargo_reclaim::planner_candidates_from_target_root(
+        &target,
+        TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        &options,
+    )?;
+
+    assert!(
+        candidates.iter().any(|candidate| candidate
+            .snapshot
+            .path
+            .ends_with("real-0000000000000000.rcgu.o")),
+        "the surviving artifact should still be inventoried"
+    );
+    assert!(
+        !candidates.iter().any(|candidate| candidate
+            .snapshot
+            .path
+            .ends_with("gone-1111111111111111.rcgu.o")),
+        "the vanished artifact should be skipped rather than fail the run"
+    );
+    Ok(())
+}
+
 fn entry_for(
     plan: &cargo_reclaim::Plan,
     path: impl AsRef<Path>,
