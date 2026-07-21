@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.3.0] - 2026-07-21
+
+### Added
+
+- Split the `[background]` watcher into independent, composable trigger blocks: `[background.periodic]` (fires on a timer) and `[background.trigger]` (fires on a poll). Configure either or both, so a routine cadence and a responsive disk-pressure gate can run at once — the latter can trim the instant free space crosses a threshold instead of waiting for the next periodic pass.
+- Introduced the *limiter* concept, orthogonal to the trigger: each block may carry `only_when_disk_free_below`, `min_free_disk`, or `max_target_size`. With no limiter a fired run always cleans; with a limiter it cleans only when a threshold is breached. Disk limiters use a cheap free-space check; `max_target_size` scans target sizes.
+- Surfaced non-fatal config deprecation notices through `ReclaimConfig::deprecations`, printed as warnings by the scheduler commands.
+
+### Changed
+
+- `mode` is no longer a `[background]` key; how a run is triggered is now expressed by the presence of the `periodic`/`trigger` blocks. Policy and budget config still govern what a run removes and how much.
+
+### Deprecated
+
+- The flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into the new blocks (with a warning), and will be removed in 0.4. `mode = "periodic"` maps to a `[background.periodic]` block; `mode = "threshold"` maps to a `[background.trigger]` block that inherits `[policy].max_target_size` as a limiter.
+
+### Fixed
+
+- Kept the background inventory from aborting a run when a concurrent `cargo build` deletes an artifact (for example a `deps/*.rcgu.o` object file) between directory enumeration and the snapshot's stat; the vanished path is now skipped like the stale-deps and stale-incremental passes already did, instead of failing the run.
+
+---
+
 ## [0.2.2] - 2026-07-07
 
 ### Fixed
