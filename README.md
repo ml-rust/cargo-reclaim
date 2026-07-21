@@ -259,13 +259,29 @@ log_dir = "/home/you/.local/state/cargo-reclaim/my-crate/logs"
 
 [background]
 enabled = true
-mode = "threshold"
-check_every = "30m"
-min_free_disk = "150 GiB"
-target_free_disk = "200 GiB"
+target_free_disk = "200 GiB"        # budget goal: how much a limited run reclaims
+
+# Routine cadence: fires every 30m with no limiter, so it always cleans.
+[background.periodic]
+every = "30m"
+
+# Responsive gate: polls every 5m and cleans only when free space is low.
+[background.trigger]
+every = "5m"
+only_when_disk_free_below = "10%"   # clean when free space drops below this fraction of the disk
+# min_free_disk = "150 GiB"         # or gate on an absolute free-space floor
+# max_target_size = "100 GiB"       # or gate on a per-target high-water mark (scans target sizes)
 ```
 
-`max_target_size` is the per-target high-water trigger. `target_size_goal` is the lower trim goal for budgeted project cleanup. `min_free_disk` is an absolute global free-space trigger, and `target_free_disk` is the global free-space goal used to budget a cleanup run.
+`[scheduler].at` is the anchored daily cleanup time; `[background]` is a separate resident watcher. It is built from three orthogonal ideas — do not conflate them:
+
+- **Trigger — *when* a run fires.** Configure a `[background.periodic]` block (fires every `every`), a `[background.trigger]` block (fires every `every`), or both. They are independent, so you can run a routine cadence and a responsive gate at the same time.
+- **Limiter — *whether* a fired run actually cleans.** Each block may carry limiter keys (`only_when_disk_free_below`, `min_free_disk`, `max_target_size`). With no limiter the run always cleans; with a limiter it cleans only when a threshold is breached, and does nothing when it passes. Disk limiters use a cheap free-space check; `max_target_size` makes the block scan target sizes.
+- **Policy + budget — *what* a run removes and *how much*.** Governed by the policy (`[policy].mode` / `[scheduler].policy`) and the budget keys (`target_size_goal`, `target_free_disk`), identically for every trigger.
+
+So the example above runs a safe trim every 30 minutes *and*, between those, checks free space every 5 minutes and trims immediately if the disk crosses 90% full — without scanning targets on the frequent poll.
+
+> **Deprecated (removed in 0.4):** the flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into the blocks above, with a warning. `mode = "periodic"` becomes a `[background.periodic]` block; `mode = "threshold"` becomes a `[background.trigger]` block (inheriting `[policy].max_target_size` as a limiter). Migrate to the subtable form.
 
 ## Platform Notes
 

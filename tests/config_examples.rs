@@ -2,7 +2,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cargo_reclaim::{BackgroundMode, WholeTargetConfig, parse_config};
+use cargo_reclaim::{WholeTargetConfig, parse_config};
 
 #[test]
 fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), Box<dyn Error>> {
@@ -44,23 +44,25 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
     assert_eq!(config.scheduler.state_dir, Some("state".into()));
     assert_eq!(config.scheduler.log_dir, Some("logs".into()));
     assert_eq!(config.background.enabled, Some(false));
-    assert_eq!(config.background.mode, Some(BackgroundMode::Threshold));
-    assert_eq!(
-        config.background.check_every,
-        Some(Duration::from_secs(15 * 60))
-    );
-    assert_eq!(
-        config.background.only_when_disk_free_below_basis_points,
-        Some(1250)
-    );
-    assert_eq!(
-        config.background.min_free_disk_bytes,
-        Some(20 * 1024 * 1024 * 1024)
-    );
     assert_eq!(
         config.background.target_free_disk_bytes,
         Some(30 * 1024 * 1024 * 1024)
     );
+
+    let periodic = config.background.periodic.expect("periodic block");
+    assert_eq!(periodic.every, Duration::from_secs(30 * 60));
+    assert!(periodic.limiter.is_empty());
+
+    let trigger = config.background.trigger.expect("trigger block");
+    assert_eq!(trigger.every, Duration::from_secs(5 * 60));
+    assert_eq!(trigger.limiter.disk_free_below_basis_points, Some(1250));
+    assert_eq!(
+        trigger.limiter.min_free_disk_bytes,
+        Some(20 * 1024 * 1024 * 1024)
+    );
+
+    // The canonical subtable form emits no deprecation notices.
+    assert!(config.deprecations.is_empty());
 
     Ok(())
 }

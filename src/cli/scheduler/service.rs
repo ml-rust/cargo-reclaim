@@ -167,6 +167,9 @@ fn run_service(
     output: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
     let config = load_config_from_path(&command.config_path)?;
+    for note in &config.deprecations {
+        eprintln!("warning: {note}");
+    }
     let config_path = canonical_config_path(command.config_path.clone());
     let paths = service_paths(&config_path, &config)?;
     let options = service_options(&config_path, paths.clone(), command.max_cycles);

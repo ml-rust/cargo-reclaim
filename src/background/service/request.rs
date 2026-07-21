@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::config::{BackgroundMode, ReclaimConfig, WholeTargetConfig};
+use crate::config::{BackgroundLimiter, ReclaimConfig, WholeTargetConfig};
 use crate::disk::disk_free_space;
 use crate::inventory::InventoryOptions;
 use crate::planner::{PlannerOptions, WholeTargetMode};
@@ -28,10 +28,6 @@ pub(crate) struct BackgroundCycleRequestContext {
     mode: SchedulerMode,
     allow_apply: bool,
     background_enabled: bool,
-    background_mode: Option<BackgroundMode>,
-    max_target_size_bytes: Option<u64>,
-    disk_free_below_basis_points: Option<u16>,
-    min_free_disk_bytes: Option<u64>,
 }
 
 impl BackgroundCycleRequestContext {
@@ -56,15 +52,15 @@ impl BackgroundCycleRequestContext {
             mode,
             allow_apply,
             background_enabled: config.background.enabled.unwrap_or(true),
-            background_mode: config.background.mode,
-            max_target_size_bytes: config.policy_thresholds.max_target_size_bytes,
-            disk_free_below_basis_points: config.background.only_when_disk_free_below_basis_points,
-            min_free_disk_bytes: config.background.min_free_disk_bytes,
         })
     }
 
+    /// Build a cleanup request for a single background trigger, gated by its
+    /// `limiter`. An empty limiter always cleans (a `periodic` block); a limiter
+    /// with disk thresholds cleans only when a threshold is breached.
     pub(crate) fn request(
         &self,
+        limiter: &BackgroundLimiter,
         run_id: String,
         log_path: PathBuf,
         plan_path: PathBuf,
@@ -79,7 +75,7 @@ impl BackgroundCycleRequestContext {
             scanner_options: self.scanner_options.clone(),
             inventory_options: self.inventory_options.clone(),
             planner_options: self.planner_options.clone(),
-            trigger: BackgroundRunTrigger::Decision(self.run_decision()?),
+            trigger: BackgroundRunTrigger::Decision(self.run_decision(limiter)?),
             config_path: Some(self.config_path.clone()),
             config_version: Some(self.config_version),
             created_at: now,
@@ -88,7 +84,10 @@ impl BackgroundCycleRequestContext {
         })
     }
 
-    fn run_decision(&self) -> BackgroundServiceResult<WatcherDecision> {
+    fn run_decision(
+        &self,
+        limiter: &BackgroundLimiter,
+    ) -> BackgroundServiceResult<WatcherDecision> {
         if !self.background_enabled {
             return Ok(WatcherDecision {
                 state: WatcherDecisionState::Inactive,
@@ -96,20 +95,33 @@ impl BackgroundCycleRequestContext {
             });
         }
 
-        if self.background_mode == Some(BackgroundMode::Threshold) {
-            let observed_targets = observed_targets_from_roots(
-                &self.roots,
-                &self.scanner_options,
-                &self.inventory_options,
-            )?;
-            let disk_free_space = self.observed_disk_free_space()?;
+        // A non-empty limiter gates the run: only clean when a threshold is
+        // breached. Disk thresholds use a cheap free-space check; a
+        // `max_target_size` limiter additionally scans target sizes.
+        if !limiter.is_empty() {
+            let observed_targets = if limiter.needs_target_scan() {
+                observed_targets_from_roots(
+                    &self.roots,
+                    &self.scanner_options,
+                    &self.inventory_options,
+                )?
+            } else {
+                Vec::new()
+            };
+            let disk_free_space = if limiter.disk_free_below_basis_points.is_some()
+                || limiter.min_free_disk_bytes.is_some()
+            {
+                self.observed_disk_free_space()?
+            } else {
+                None
+            };
             return Ok(decide_watcher_thresholds(WatcherDecisionInput {
                 enabled: self.background_enabled,
                 mode: WatcherMode::Threshold,
                 thresholds: WatcherThresholds {
-                    max_target_size_bytes: self.max_target_size_bytes,
-                    disk_free_below_basis_points: self.disk_free_below_basis_points,
-                    min_free_disk_bytes: self.min_free_disk_bytes,
+                    max_target_size_bytes: limiter.max_target_size_bytes,
+                    disk_free_below_basis_points: limiter.disk_free_below_basis_points,
+                    min_free_disk_bytes: limiter.min_free_disk_bytes,
                 },
                 observed_targets,
                 disk_free_basis_points: disk_free_space.and_then(|space| space.free_basis_points()),
@@ -119,6 +131,7 @@ impl BackgroundCycleRequestContext {
             }));
         }
 
+        // No limiter: a periodic block always cleans when it fires.
         Ok(WatcherDecision {
             state: if self.mode == SchedulerMode::Cleanup
                 && self.allow_apply
@@ -135,9 +148,6 @@ impl BackgroundCycleRequestContext {
     fn observed_disk_free_space(
         &self,
     ) -> BackgroundServiceResult<Option<crate::disk::DiskFreeSpace>> {
-        if self.disk_free_below_basis_points.is_none() && self.min_free_disk_bytes.is_none() {
-            return Ok(None);
-        }
         let root = self
             .roots
             .first()

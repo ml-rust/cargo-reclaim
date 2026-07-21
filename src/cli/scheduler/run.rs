@@ -5,10 +5,10 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use cargo_reclaim::{
-    BackgroundMode, BackgroundRunReport, BackgroundRunRequest, BackgroundRunTrigger, DiskFreeSpace,
-    InventoryOptions, PlannerOptions, PolicyKind, ScannerOptions, SchedulerMode, WatcherDecision,
-    WatcherDecisionInput, WatcherDecisionState, WatcherMode, WatcherObservedTarget,
-    WatcherThresholds, disk_free_space, load_config_from_path,
+    BackgroundLimiter, BackgroundRunReport, BackgroundRunRequest, BackgroundRunTrigger,
+    DiskFreeSpace, InventoryOptions, PlannerOptions, PolicyKind, ScannerOptions, SchedulerMode,
+    WatcherDecision, WatcherDecisionInput, WatcherDecisionState, WatcherMode,
+    WatcherObservedTarget, WatcherThresholds, disk_free_space, load_config_from_path,
     platform_active_observation_provider, run_background_cleanup_cycle, scan_roots, snapshot_path,
 };
 use cargo_reclaim::{ScanItem, TargetCandidateKind, WholeTargetConfig, WholeTargetMode};
@@ -107,6 +107,9 @@ pub(super) fn run_scheduler_cycle(
     output: &mut impl Write,
 ) -> Result<ExitCode, CliError> {
     let config = load_config_from_path(&command.config_path)?;
+    for note in &config.deprecations {
+        eprintln!("warning: {note}");
+    }
     let mode = match command.mode {
         Some(mode) => mode,
         None => config
@@ -126,9 +129,19 @@ pub(super) fn run_scheduler_cycle(
     let scanner_options = scanner_options_from_config(&config);
     let inventory_options = inventory_options_from_config(&config);
     let planner_options = planner_options_from_config(&config);
-    let observed_targets =
-        observed_targets_from_roots(&roots, &scanner_options, &inventory_options)?;
-    let disk_free_space = observed_disk_free_space(&config, &roots)?;
+    let limiter = effective_background_limiter(&config);
+    let observed_targets = if limiter.needs_target_scan() {
+        observed_targets_from_roots(&roots, &scanner_options, &inventory_options)?
+    } else {
+        Vec::new()
+    };
+    let disk_free_space = if limiter.disk_free_below_basis_points.is_some()
+        || limiter.min_free_disk_bytes.is_some()
+    {
+        observed_disk_free_space(&roots)?
+    } else {
+        None
+    };
 
     let now = SystemTime::now();
     let request = BackgroundRunRequest {
@@ -145,6 +158,7 @@ pub(super) fn run_scheduler_cycle(
             allow_apply,
             &config,
             policy,
+            &limiter,
             observed_targets,
             disk_free_space,
         )),
@@ -285,11 +299,25 @@ fn whole_target_mode_from_config(value: WholeTargetConfig) -> WholeTargetMode {
     }
 }
 
+/// The limiter that gates a one-shot `scheduler run`. A configured `periodic`
+/// block (or no blocks at all) means an unconditional run; otherwise the
+/// `trigger` block's limiter gates the run on disk pressure.
+fn effective_background_limiter(config: &cargo_reclaim::ReclaimConfig) -> BackgroundLimiter {
+    if config.background.periodic.is_some() {
+        return BackgroundLimiter::default();
+    }
+    if let Some(trigger) = &config.background.trigger {
+        return trigger.limiter.clone();
+    }
+    BackgroundLimiter::default()
+}
+
 fn run_decision(
     mode: SchedulerMode,
     allow_apply: bool,
     config: &cargo_reclaim::ReclaimConfig,
     policy: PolicyKind,
+    limiter: &BackgroundLimiter,
     observed_targets: Vec<WatcherObservedTarget>,
     disk_free_space: Option<DiskFreeSpace>,
 ) -> WatcherDecision {
@@ -301,16 +329,14 @@ fn run_decision(
         };
     }
 
-    if config.background.mode == Some(BackgroundMode::Threshold) {
+    if !limiter.is_empty() {
         return cargo_reclaim::decide_watcher_thresholds(WatcherDecisionInput {
             enabled,
             mode: WatcherMode::Threshold,
             thresholds: WatcherThresholds {
-                max_target_size_bytes: config.policy_thresholds.max_target_size_bytes,
-                disk_free_below_basis_points: config
-                    .background
-                    .only_when_disk_free_below_basis_points,
-                min_free_disk_bytes: config.background.min_free_disk_bytes,
+                max_target_size_bytes: limiter.max_target_size_bytes,
+                disk_free_below_basis_points: limiter.disk_free_below_basis_points,
+                min_free_disk_bytes: limiter.min_free_disk_bytes,
             },
             observed_targets,
             disk_free_basis_points: disk_free_space.and_then(|space| space.free_basis_points()),
@@ -356,18 +382,7 @@ fn observed_targets_from_roots(
     Ok(observed_targets)
 }
 
-fn observed_disk_free_space(
-    config: &cargo_reclaim::ReclaimConfig,
-    roots: &[PathBuf],
-) -> Result<Option<DiskFreeSpace>, CliError> {
-    if config
-        .background
-        .only_when_disk_free_below_basis_points
-        .is_none()
-        && config.background.min_free_disk_bytes.is_none()
-    {
-        return Ok(None);
-    }
+fn observed_disk_free_space(roots: &[PathBuf]) -> Result<Option<DiskFreeSpace>, CliError> {
     let root = roots
         .first()
         .map(PathBuf::as_path)

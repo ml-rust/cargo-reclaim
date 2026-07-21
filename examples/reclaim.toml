@@ -35,8 +35,14 @@ log_dir = "logs"
 
 [background]
 enabled = false
-mode = "threshold"
-check_every = "15m"
-only_when_disk_free_below = "12.5%"
-min_free_disk = "20 GiB"
 target_free_disk = "30 GiB"
+
+# Routine cadence: fires every 30m with no limiter, so it always cleans.
+[background.periodic]
+every = "30m"
+
+# Responsive gate: polls every 5m and cleans only when free space is low.
+[background.trigger]
+every = "5m"
+disk_free_below = "12.5%"
+min_free_disk = "20 GiB"

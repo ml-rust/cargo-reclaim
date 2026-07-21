@@ -194,6 +194,60 @@ fn service_threshold_cycle_uses_measured_disk_free_space() -> Result<(), Box<dyn
 }
 
 #[test]
+fn periodic_and_trigger_blocks_both_fire_in_one_service() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("background_service_both_blocks")?;
+    let project = write_project(temp.path())?;
+    let config_path = write_config(
+        temp.path(),
+        &format!(
+            "roots = [{}]\n\
+             [background.periodic]\nevery = \"30m\"\n\
+             [background.trigger]\nevery = \"5m\"\ndisk_free_below = \"100%\"\n",
+            toml_string(&project)
+        ),
+    )?;
+    let config = load_config_from_path(&config_path)?;
+    assert!(config.deprecations.is_empty());
+    let state_dir = temp.path().join("state");
+    let log_dir = temp.path().join("logs");
+    let mut clock = FakeClock::new([1_000, 1_100]);
+    let mut sleeper = FakeSleeper::default();
+    let mut runner = PlatformBackgroundServiceCycleRunner;
+
+    // Both blocks are due at the first wake, so both fire in one iteration.
+    let summary = run_background_service_with_runtime(
+        BackgroundServiceOptions {
+            config_path,
+            state_dir: state_dir.clone(),
+            log_dir: log_dir.clone(),
+            mode: None,
+            max_cycles: Some(2),
+        },
+        &config,
+        &mut clock,
+        &mut sleeper,
+        &mut runner,
+    )?;
+
+    assert_eq!(summary.cycles_completed, 2);
+    // The trigger block records a disk_free_below reason; the periodic block does not.
+    let log = fs::read_to_string(log_dir.join("runs.jsonl"))?;
+    assert!(log.contains("\"kind\":\"disk_free_below\""));
+    // The two same-instant fires get distinct plan files, not one overwriting the other.
+    assert!(
+        state_dir
+            .join("plans/cargo-reclaim-19700101T001820Z.json")
+            .is_file()
+    );
+    assert!(
+        state_dir
+            .join("plans/cargo-reclaim-19700101T001820Z-1.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+#[test]
 fn state_read_reports_missing_and_existing_state() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("background_service_state")?;
     let state_path = temp.path().join("state/service-state.json");

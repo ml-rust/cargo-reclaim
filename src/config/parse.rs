@@ -78,11 +78,25 @@ pub(super) struct PlannerConfig {
 #[derive(Debug, Deserialize)]
 pub(super) struct BackgroundDocument {
     pub enabled: Option<bool>,
+    pub target_free_disk: Option<String>,
+    // Canonical trigger blocks.
+    #[serde(default)]
+    pub periodic: Option<TriggerDocument>,
+    #[serde(default)]
+    pub trigger: Option<TriggerDocument>,
+    // Deprecated flat form (0.3), removed in 0.4.
     pub mode: Option<String>,
     pub check_every: Option<String>,
     pub only_when_disk_free_below: Option<String>,
     pub min_free_disk: Option<String>,
-    pub target_free_disk: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct TriggerDocument {
+    pub every: Option<String>,
+    pub max_target_size: Option<String>,
+    pub disk_free_below: Option<String>,
+    pub min_free_disk: Option<String>,
 }
 
 #[cfg(test)]
@@ -90,7 +104,6 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{parse_config, parse_config_with_base};
-    use crate::config::BackgroundMode;
 
     #[test]
     fn parses_supported_config_shape() -> Result<(), Box<dyn std::error::Error>> {
@@ -189,25 +202,24 @@ field = true
         );
         assert_eq!(config.policy_thresholds.unattended_allowed, Some(true));
         assert_eq!(config.background.enabled, Some(true));
-        assert_eq!(config.background.mode, Some(BackgroundMode::Threshold));
+        // The deprecated flat threshold form normalizes into a `trigger` block.
+        assert!(config.background.periodic.is_none());
+        let trigger = config.background.trigger.expect("trigger block");
+        assert_eq!(trigger.every.as_secs(), 15 * 60);
+        assert_eq!(trigger.limiter.disk_free_below_basis_points, Some(1250));
         assert_eq!(
-            config
-                .background
-                .check_every
-                .map(|duration| duration.as_secs()),
-            Some(15 * 60)
-        );
-        assert_eq!(
-            config.background.only_when_disk_free_below_basis_points,
-            Some(1250)
-        );
-        assert_eq!(
-            config.background.min_free_disk_bytes,
+            trigger.limiter.min_free_disk_bytes,
             Some(20 * 1024 * 1024 * 1024)
         );
         assert_eq!(
             config.background.target_free_disk_bytes,
             Some(30 * 1024 * 1024 * 1024)
+        );
+        assert!(
+            config
+                .deprecations
+                .iter()
+                .any(|note| note.contains("[background] flat"))
         );
         Ok(())
     }

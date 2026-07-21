@@ -4,11 +4,16 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::error::ConfigError;
-use super::parse::{BackgroundDocument, ConfigDocument, PlannerConfig, PolicyConfig};
+use super::parse::{
+    BackgroundDocument, ConfigDocument, PlannerConfig, PolicyConfig, TriggerDocument,
+};
 use super::values::{
     parse_config_duration, parse_config_percentage_basis_points, parse_config_size,
     resolve_config_path,
 };
+
+/// Firing cadence used when a background block omits `every`.
+const DEFAULT_BACKGROUND_CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReclaimConfig {
@@ -28,6 +33,9 @@ pub struct ReclaimConfig {
     pub keep_rustc_hashes: Vec<u64>,
     pub keep_installed_toolchains: bool,
     pub keep_toolchains: Vec<String>,
+    /// Non-fatal deprecation notices gathered while parsing (e.g. flat
+    /// `[background]` keys). Callers should surface these to the user.
+    pub deprecations: Vec<String>,
 }
 
 impl ReclaimConfig {
@@ -35,6 +43,7 @@ impl ReclaimConfig {
         document: ConfigDocument,
         relative_base: Option<&Path>,
     ) -> Result<Self, ConfigError> {
+        let mut deprecations = Vec::new();
         let ConfigDocument {
             version,
             roots,
@@ -82,7 +91,13 @@ impl ReclaimConfig {
             .transpose()?
             .unwrap_or_default();
         let background = background
-            .map(BackgroundConfig::from_document)
+            .map(|document| {
+                BackgroundConfig::from_document(
+                    document,
+                    policy_thresholds.max_target_size_bytes,
+                    &mut deprecations,
+                )
+            })
             .transpose()?
             .unwrap_or_default();
 
@@ -120,6 +135,7 @@ impl ReclaimConfig {
             keep_rustc_hashes,
             keep_installed_toolchains,
             keep_toolchains,
+            deprecations,
         })
     }
 }
@@ -167,45 +183,174 @@ impl PolicyThresholdConfig {
     }
 }
 
+/// Resident background watcher configuration.
+///
+/// `mode` no longer lives here: how a run is *triggered* is expressed by the
+/// [`periodic`](Self::periodic) and [`trigger`](Self::trigger) blocks (either,
+/// both, or neither), and whether a fired run actually cleans is decided by
+/// each block's [`BackgroundLimiter`]. `target_free_disk_bytes` is a budget goal
+/// (how much a limited run reclaims) and is unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BackgroundConfig {
     pub enabled: Option<bool>,
-    pub mode: Option<BackgroundMode>,
-    pub check_every: Option<Duration>,
-    pub only_when_disk_free_below_basis_points: Option<u16>,
-    pub min_free_disk_bytes: Option<u64>,
     pub target_free_disk_bytes: Option<u64>,
+    pub periodic: Option<BackgroundTrigger>,
+    pub trigger: Option<BackgroundTrigger>,
+}
+
+/// One background trigger: a firing cadence plus an optional limiter gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundTrigger {
+    pub every: Duration,
+    pub limiter: BackgroundLimiter,
+}
+
+/// The threshold gate applied to a fired run. Empty ⇒ always clean; otherwise
+/// clean only when a threshold is breached, and do nothing when it passes.
+///
+/// `disk_free_below_basis_points` and `min_free_disk_bytes` are measured from a
+/// cheap free-space check. `max_target_size_bytes` is a per-target high-water
+/// mark; a block that sets it makes its poll scan target sizes, so leave it
+/// unset for a cheap disk-only trigger.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BackgroundLimiter {
+    pub max_target_size_bytes: Option<u64>,
+    pub disk_free_below_basis_points: Option<u16>,
+    pub min_free_disk_bytes: Option<u64>,
+}
+
+impl BackgroundLimiter {
+    /// No limiter configured, so a fired run always cleans.
+    pub fn is_empty(&self) -> bool {
+        self.max_target_size_bytes.is_none()
+            && self.disk_free_below_basis_points.is_none()
+            && self.min_free_disk_bytes.is_none()
+    }
+
+    /// Whether evaluating this limiter needs a target-size scan.
+    pub fn needs_target_scan(&self) -> bool {
+        self.max_target_size_bytes.is_some()
+    }
+}
+
+impl BackgroundTrigger {
+    fn from_document(document: TriggerDocument) -> Result<Self, ConfigError> {
+        let every = document
+            .every
+            .as_deref()
+            .map(parse_config_duration)
+            .transpose()?
+            .unwrap_or(DEFAULT_BACKGROUND_CHECK_EVERY);
+        Ok(Self {
+            every,
+            limiter: BackgroundLimiter {
+                max_target_size_bytes: document
+                    .max_target_size
+                    .as_deref()
+                    .map(parse_config_size)
+                    .transpose()?,
+                disk_free_below_basis_points: document
+                    .disk_free_below
+                    .as_deref()
+                    .map(parse_config_percentage_basis_points)
+                    .transpose()?,
+                min_free_disk_bytes: document
+                    .min_free_disk
+                    .as_deref()
+                    .map(parse_config_size)
+                    .transpose()?,
+            },
+        })
+    }
 }
 
 impl BackgroundConfig {
-    fn from_document(document: BackgroundDocument) -> Result<Self, ConfigError> {
-        Ok(Self {
+    pub(super) fn from_document(
+        document: BackgroundDocument,
+        policy_max_target_size_bytes: Option<u64>,
+        deprecations: &mut Vec<String>,
+    ) -> Result<Self, ConfigError> {
+        let mut config = Self {
             enabled: document.enabled,
-            mode: document.mode.map(BackgroundMode::parse).transpose()?,
-            check_every: document
-                .check_every
-                .as_deref()
-                .map(parse_config_duration)
-                .transpose()?,
-            only_when_disk_free_below_basis_points: document
-                .only_when_disk_free_below
-                .as_deref()
-                .map(parse_config_percentage_basis_points)
-                .transpose()?,
-            min_free_disk_bytes: document
-                .min_free_disk
-                .as_deref()
-                .map(parse_config_size)
-                .transpose()?,
             target_free_disk_bytes: document
                 .target_free_disk
                 .as_deref()
                 .map(parse_config_size)
                 .transpose()?,
-        })
+            periodic: document
+                .periodic
+                .map(BackgroundTrigger::from_document)
+                .transpose()?,
+            trigger: document
+                .trigger
+                .map(BackgroundTrigger::from_document)
+                .transpose()?,
+        };
+
+        // Backward compatibility: the flat `mode`/`check_every`/threshold keys are
+        // deprecated in 0.3 and removed in 0.4. Normalize them into the block that
+        // an explicit subtable did not already provide.
+        let uses_flat = document.mode.is_some()
+            || document.check_every.is_some()
+            || document.only_when_disk_free_below.is_some()
+            || document.min_free_disk.is_some();
+        if uses_flat {
+            deprecations.push(
+                "[background] flat `mode`/`check_every`/`only_when_disk_free_below`/`min_free_disk` \
+                 are deprecated (removed in 0.4); use [background.periodic] and [background.trigger]"
+                    .to_string(),
+            );
+            let mode = document.mode.map(BackgroundMode::parse).transpose()?;
+            let every = document
+                .check_every
+                .as_deref()
+                .map(parse_config_duration)
+                .transpose()?
+                .unwrap_or(DEFAULT_BACKGROUND_CHECK_EVERY);
+            let disk_free_below_basis_points = document
+                .only_when_disk_free_below
+                .as_deref()
+                .map(parse_config_percentage_basis_points)
+                .transpose()?;
+            let min_free_disk_bytes = document
+                .min_free_disk
+                .as_deref()
+                .map(parse_config_size)
+                .transpose()?;
+            match mode {
+                // Old `threshold` mode fired at `check_every` and cleaned only when a
+                // limiter was breached — that is a `trigger` block. It also honored
+                // the per-target `[policy].max_target_size` high-water mark.
+                Some(BackgroundMode::Threshold) => {
+                    if config.trigger.is_none() {
+                        config.trigger = Some(BackgroundTrigger {
+                            every,
+                            limiter: BackgroundLimiter {
+                                max_target_size_bytes: policy_max_target_size_bytes,
+                                disk_free_below_basis_points,
+                                min_free_disk_bytes,
+                            },
+                        });
+                    }
+                }
+                // Old `periodic` (or unspecified) fired at `check_every` and always
+                // cleaned — that is a `periodic` block with no limiter.
+                _ => {
+                    if config.periodic.is_none() {
+                        config.periodic = Some(BackgroundTrigger {
+                            every,
+                            limiter: BackgroundLimiter::default(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(config)
     }
 }
 
+/// Only retained to parse the deprecated flat `mode` string; removed in 0.4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundMode {
     Periodic,

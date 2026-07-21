@@ -91,10 +91,6 @@ pub fn run_background_service_with_runtime(
     let mut state = BackgroundServiceState::running(started_at);
     write_background_service_state(&paths.state_path, &state)?;
 
-    let interval = config
-        .background
-        .check_every
-        .unwrap_or(DEFAULT_BACKGROUND_CHECK_EVERY);
     let request_context = BackgroundCycleRequestContext::from_config(
         config,
         &options.config_path,
@@ -103,50 +99,122 @@ pub fn run_background_service_with_runtime(
             None => scheduler_mode_from_config(config)?,
         },
     )?;
+    let mut schedules = resolve_schedules(config);
     let mut cycles_completed = 0;
 
     loop {
         let now = clock.now();
-        let stamp = build_service_timestamp(now);
-        let run_id = format!("scheduler-{stamp}");
-        let plan_path = paths.plans_dir.join(format!("cargo-reclaim-{stamp}.json"));
-        let request =
-            request_context.request(run_id.clone(), paths.runs_log_path.clone(), plan_path, now)?;
+        // Multiple schedules can be due at the same instant (notably at startup).
+        // They share `now`, so disambiguate the 2nd+ fire in a wake to avoid
+        // overwriting each other's run id and audit plan; the common single-fire
+        // case keeps the bare `scheduler-{stamp}` id.
+        let mut fired_in_wake = 0usize;
 
-        match runner.run_cycle(request) {
-            Ok(_) => {
-                state.last_problem = None;
-                state.consecutive_failures = 0;
+        for schedule in schedules.iter_mut() {
+            let due = schedule.next_at.is_none_or(|next_at| next_at <= now);
+            if !due {
+                continue;
             }
-            Err(error) => {
-                state.consecutive_failures = state.consecutive_failures.saturating_add(1);
-                state.last_problem = Some(error.to_string());
+
+            let stamp = build_service_timestamp(now);
+            let suffix = if fired_in_wake == 0 {
+                String::new()
+            } else {
+                format!("-{fired_in_wake}")
+            };
+            fired_in_wake += 1;
+            let run_id = format!("scheduler-{stamp}{suffix}");
+            let plan_path = paths
+                .plans_dir
+                .join(format!("cargo-reclaim-{stamp}{suffix}.json"));
+            let request = request_context.request(
+                &schedule.limiter,
+                run_id.clone(),
+                paths.runs_log_path.clone(),
+                plan_path,
+                now,
+            )?;
+
+            match runner.run_cycle(request) {
+                Ok(_) => {
+                    state.last_problem = None;
+                    state.consecutive_failures = 0;
+                }
+                Err(error) => {
+                    state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+                    state.last_problem = Some(error.to_string());
+                }
+            }
+            cycles_completed += 1;
+            schedule.next_at = Some(now + schedule.every);
+            state.last_run_id = Some(run_id);
+            state.last_run_at = Some(persisted_timestamp(now)?);
+
+            if options
+                .max_cycles
+                .is_some_and(|max_cycles| cycles_completed >= max_cycles)
+            {
+                state.status = BackgroundServiceStatus::Stopped;
+                state.pid = None;
+                state.next_run_at = None;
+                write_background_service_state(&paths.state_path, &state)?;
+                return Ok(BackgroundServiceRunSummary {
+                    state,
+                    cycles_completed,
+                });
             }
         }
-        cycles_completed += 1;
 
-        state.last_run_id = Some(run_id);
-        state.last_run_at = Some(persisted_timestamp(now)?);
-        let next_run_at = now + interval;
-        state.next_run_at = Some(persisted_timestamp(next_run_at)?);
+        let next_wake = schedules
+            .iter()
+            .filter_map(|schedule| schedule.next_at)
+            .min();
+        state.next_run_at = next_wake.map(persisted_timestamp).transpose()?;
         write_background_service_state(&paths.state_path, &state)?;
 
-        if options
-            .max_cycles
-            .is_some_and(|max_cycles| cycles_completed >= max_cycles)
-        {
-            state.status = BackgroundServiceStatus::Stopped;
-            state.pid = None;
-            state.next_run_at = None;
-            write_background_service_state(&paths.state_path, &state)?;
-            return Ok(BackgroundServiceRunSummary {
-                state,
-                cycles_completed,
-            });
-        }
-
-        sleeper.sleep(interval);
+        let sleep_for = next_wake
+            .map(|next_at| next_at.duration_since(now).unwrap_or(Duration::ZERO))
+            .unwrap_or(DEFAULT_BACKGROUND_CHECK_EVERY);
+        sleeper.sleep(sleep_for);
     }
+}
+
+/// One background trigger resolved for the service loop: its firing cadence, the
+/// limiter gate applied on each fire, and the next time it is due.
+struct BackgroundSchedule {
+    every: Duration,
+    limiter: crate::config::BackgroundLimiter,
+    next_at: Option<SystemTime>,
+}
+
+/// Resolve the active triggers. An enabled background section with neither block
+/// configured falls back to a single periodic trigger at the default cadence,
+/// preserving the pre-0.3 default. Whether a fired run actually cleans is decided
+/// per-limiter (a disabled section yields inactive runs).
+fn resolve_schedules(config: &ReclaimConfig) -> Vec<BackgroundSchedule> {
+    let mut schedules = Vec::new();
+    if let Some(periodic) = &config.background.periodic {
+        schedules.push(BackgroundSchedule {
+            every: periodic.every,
+            limiter: periodic.limiter.clone(),
+            next_at: None,
+        });
+    }
+    if let Some(trigger) = &config.background.trigger {
+        schedules.push(BackgroundSchedule {
+            every: trigger.every,
+            limiter: trigger.limiter.clone(),
+            next_at: None,
+        });
+    }
+    if schedules.is_empty() {
+        schedules.push(BackgroundSchedule {
+            every: DEFAULT_BACKGROUND_CHECK_EVERY,
+            limiter: crate::config::BackgroundLimiter::default(),
+            next_at: None,
+        });
+    }
+    schedules
 }
 
 pub fn read_background_service_state(
