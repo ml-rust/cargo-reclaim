@@ -29,6 +29,8 @@ pub struct ReclaimConfig {
     pub scanner: ScannerConfig,
     pub scheduler: SchedulerConfig,
     pub recent_write_keep_window: Option<Duration>,
+    /// Age below which the `sweep` policy will not reclaim a final binary.
+    pub sweep_older_than: Option<Duration>,
     pub keep_size_bytes: Option<u64>,
     pub keep_rustc_hashes: Vec<u64>,
     pub keep_installed_toolchains: bool,
@@ -66,6 +68,7 @@ impl ReclaimConfig {
             .transpose()?;
         let PlannerConfig {
             recent_write_keep_window,
+            sweep_older_than,
             keep_days,
             keep_size,
             keep_rustc_hashes,
@@ -73,6 +76,10 @@ impl ReclaimConfig {
             keep_toolchains,
         } = planner.unwrap_or_default();
         let planner_recent_write_keep_window = recent_write_keep_window
+            .as_deref()
+            .map(parse_config_duration)
+            .transpose()?;
+        let planner_sweep_older_than = sweep_older_than
             .as_deref()
             .map(parse_config_duration)
             .transpose()?;
@@ -131,6 +138,7 @@ impl ReclaimConfig {
             recent_write_keep_window: planner_recent_write_keep_window
                 .or(planner_keep_days_window)
                 .or(policy_keep_recent_projects),
+            sweep_older_than: planner_sweep_older_than,
             keep_size_bytes: planner_keep_size_bytes,
             keep_rustc_hashes,
             keep_installed_toolchains,

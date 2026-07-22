@@ -65,6 +65,7 @@ pub(super) struct PolicyConfig {
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct PlannerConfig {
     pub recent_write_keep_window: Option<String>,
+    pub sweep_older_than: Option<String>,
     pub keep_days: Option<u64>,
     pub keep_size: Option<String>,
     #[serde(default)]

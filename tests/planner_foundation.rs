@@ -39,6 +39,100 @@ fn candidate_with_modified(
     ))
 }
 
+fn sweep_options() -> PlannerOptions {
+    PlannerOptions {
+        recent_write_keep_window: Some(Duration::from_secs(60 * 60)),
+        sweep_older_than: Some(Duration::from_secs(24 * 60 * 60)),
+        ..PlannerOptions::default()
+    }
+}
+
+// "now" is 100h after the epoch; artifacts are dated relative to it.
+fn sweep_now() -> std::time::SystemTime {
+    UNIX_EPOCH + Duration::from_secs(100 * 60 * 60)
+}
+
+#[test]
+fn sweep_reclaims_cold_final_executable() -> Result<(), Box<dyn Error>> {
+    // 90h old — well past the 24h sweep threshold.
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/app",
+            100,
+            ArtifactClass::FinalExecutable,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            10 * 60 * 60,
+        )?,
+        PolicyKind::Sweep,
+        &sweep_options(),
+        sweep_now(),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
+fn sweep_preserves_final_executable_newer_than_threshold() -> Result<(), Box<dyn Error>> {
+    // 10h old — past the 1h keep window but younger than the 24h sweep threshold.
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/app",
+            100,
+            ArtifactClass::FinalExecutable,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            90 * 60 * 60,
+        )?,
+        PolicyKind::Sweep,
+        &sweep_options(),
+        sweep_now(),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    assert!(entry.policy_reason.contains("sweep age threshold"));
+    Ok(())
+}
+
+#[test]
+fn sweep_preserves_docs_and_packages() -> Result<(), Box<dyn Error>> {
+    for class in [ArtifactClass::Docs, ArtifactClass::Package] {
+        let entry = plan_candidate_with_options(
+            candidate_with_modified(
+                "target/doc/index.html",
+                100,
+                class,
+                TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+                10 * 60 * 60,
+            )?,
+            PolicyKind::Sweep,
+            &sweep_options(),
+            sweep_now(),
+        )?;
+        assert_eq!(entry.action, PlanAction::Preserve, "class {class:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn balanced_still_preserves_cold_final_executable() -> Result<(), Box<dyn Error>> {
+    // Only the sweep policy reclaims final binaries; balanced never does.
+    let entry = plan_candidate_with_options(
+        candidate_with_modified(
+            "target/debug/app",
+            100,
+            ArtifactClass::FinalExecutable,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            10 * 60 * 60,
+        )?,
+        PolicyKind::Balanced,
+        &sweep_options(),
+        sweep_now(),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Preserve);
+    Ok(())
+}
+
 #[test]
 fn strong_incremental_balanced_policy_yields_delete() -> Result<(), Box<dyn Error>> {
     let entry = plan_candidate(

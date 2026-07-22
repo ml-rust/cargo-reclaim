@@ -619,9 +619,10 @@ fn parse_policy(value: &str) -> Result<PolicyKind, CliError> {
         "conservative" => Ok(PolicyKind::Conservative),
         "balanced" => Ok(PolicyKind::Balanced),
         "aggressive" => Ok(PolicyKind::Aggressive),
+        "sweep" => Ok(PolicyKind::Sweep),
         "custom" => Ok(PolicyKind::Custom),
         _ => Err(CliError::Usage(format!(
-            "unknown policy `{value}`; expected observe, conservative, balanced, aggressive, or custom"
+            "unknown policy `{value}`; expected observe, conservative, balanced, aggressive, sweep, or custom"
         ))),
     }
 }

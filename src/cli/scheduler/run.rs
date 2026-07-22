@@ -277,6 +277,7 @@ fn inventory_options_from_config(config: &cargo_reclaim::ReclaimConfig) -> Inven
 fn planner_options_from_config(config: &cargo_reclaim::ReclaimConfig) -> PlannerOptions {
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
+        sweep_older_than: config.sweep_older_than,
         keep_size_bytes: config.keep_size_bytes,
         target_size_goal_bytes: config.policy_thresholds.target_size_goal_bytes,
         target_free_disk_bytes: config.background.target_free_disk_bytes,

@@ -93,7 +93,7 @@ fn path_is_at_or_inside(path: &Path, root: &Path) -> bool {
 
 fn is_delete_candidate(class: CargoHomeClass, policy: PolicyKind) -> bool {
     match policy {
-        PolicyKind::Observe | PolicyKind::Custom => false,
+        PolicyKind::Observe | PolicyKind::Custom | PolicyKind::Sweep => false,
         PolicyKind::Conservative => matches!(class, CargoHomeClass::RegistryCache),
         PolicyKind::Balanced => matches!(
             class,

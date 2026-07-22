@@ -276,6 +276,7 @@ pub(crate) fn policy_label(policy: crate::PolicyKind) -> &'static str {
         crate::PolicyKind::Conservative => "conservative",
         crate::PolicyKind::Balanced => "balanced",
         crate::PolicyKind::Aggressive => "aggressive",
+        crate::PolicyKind::Sweep => "sweep",
         crate::PolicyKind::Custom => "custom",
     }
 }
@@ -283,7 +284,7 @@ pub(crate) fn policy_label(policy: crate::PolicyKind) -> &'static str {
 fn is_known_policy_label(policy: &str) -> bool {
     matches!(
         policy,
-        "observe" | "conservative" | "balanced" | "aggressive" | "custom"
+        "observe" | "conservative" | "balanced" | "aggressive" | "sweep" | "custom"
     )
 }
 

@@ -1,9 +1,9 @@
 use std::error::Error;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use cargo_reclaim::{
-    ActiveObservation, ArtifactClass, CargoTool, ObservedCargoProcess, PathSnapshot, PlanAction,
-    PlannerCandidate, PlannerOptions, PolicyKind, TargetContext, TargetEvidence,
+    ActiveObservation, ArtifactClass, CargoTool, ObservedCargoProcess, PathKind, PathSnapshot,
+    PlanAction, PlannerCandidate, PlannerOptions, PolicyKind, TargetContext, TargetEvidence,
     plan_candidate_with_active_observation,
 };
 
@@ -20,6 +20,163 @@ fn candidate_with_context(
         evidence,
     )
     .with_target_context(target_context))
+}
+
+fn candidate_with_context_modified(
+    path: &str,
+    size_bytes: u64,
+    artifact_class: ArtifactClass,
+    evidence: TargetEvidence,
+    target_context: TargetContext,
+    modified_secs: u64,
+) -> Result<PlannerCandidate, Box<dyn Error>> {
+    Ok(PlannerCandidate::new(
+        PathSnapshot::with_details(
+            path,
+            size_bytes,
+            PathKind::Directory,
+            Some(UNIX_EPOCH + Duration::from_secs(modified_secs)),
+        )?,
+        artifact_class,
+        evidence,
+    )
+    .with_target_context(target_context))
+}
+
+fn active_cargo() -> ActiveObservation {
+    ActiveObservation::complete([
+        ObservedCargoProcess::new(CargoTool::Cargo).with_cwd("/work/sample/crate")
+    ])
+}
+
+fn keep_window_options() -> PlannerOptions {
+    PlannerOptions {
+        recent_write_keep_window: Some(Duration::from_secs(60 * 60)),
+        ..PlannerOptions::default()
+    }
+}
+
+fn sample_context() -> TargetContext {
+    TargetContext::new("/work/sample/target").with_project_root("/work/sample")
+}
+
+#[test]
+fn stale_deps_is_protected_during_active_build() -> Result<(), Box<dyn Error>> {
+    // Even a "superseded" hash variant can be a live feature-variant the running build
+    // links against, so the whole target is protected while a build is active.
+    let entry = plan_candidate_with_active_observation(
+        candidate_with_context_modified(
+            "/work/sample/target/debug/deps/sample-0123456789abcdef",
+            100,
+            ArtifactClass::StaleDeps,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            sample_context(),
+            0,
+        )?,
+        PolicyKind::Balanced,
+        &keep_window_options(),
+        &active_cargo(),
+        UNIX_EPOCH + Duration::from_secs(2 * 60 * 60),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(entry.policy_reason.contains("cwd"));
+    Ok(())
+}
+
+#[test]
+fn deps_output_is_protected_during_active_build() -> Result<(), Box<dyn Error>> {
+    // Regression: a current dependency output must never be deleted mid-build, even
+    // when it is old — cargo may still be linking against it.
+    let entry = plan_candidate_with_active_observation(
+        candidate_with_context_modified(
+            "/work/sample/target/debug/deps/libsample-0123456789abcdef.rmeta",
+            100,
+            ArtifactClass::DepsOutput,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            sample_context(),
+            0,
+        )?,
+        PolicyKind::Balanced,
+        &keep_window_options(),
+        &active_cargo(),
+        UNIX_EPOCH + Duration::from_secs(10 * 60 * 60),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(entry.policy_reason.contains("cwd"));
+    Ok(())
+}
+
+#[test]
+fn incremental_is_protected_during_active_build() -> Result<(), Box<dyn Error>> {
+    let entry = plan_candidate_with_active_observation(
+        candidate_with_context_modified(
+            "/work/sample/target/debug/incremental",
+            100,
+            ArtifactClass::Incremental,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            sample_context(),
+            0,
+        )?,
+        PolicyKind::Balanced,
+        &keep_window_options(),
+        &active_cargo(),
+        UNIX_EPOCH + Duration::from_secs(10 * 60 * 60),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    Ok(())
+}
+
+#[test]
+fn sweep_does_not_delete_final_binary_during_active_build() -> Result<(), Box<dyn Error>> {
+    let options = PlannerOptions {
+        recent_write_keep_window: Some(Duration::from_secs(60 * 60)),
+        sweep_older_than: Some(Duration::from_secs(24 * 60 * 60)),
+        ..PlannerOptions::default()
+    };
+    let entry = plan_candidate_with_active_observation(
+        candidate_with_context_modified(
+            "/work/sample/target/debug/app",
+            100,
+            ArtifactClass::FinalExecutable,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            sample_context(),
+            0,
+        )?,
+        PolicyKind::Sweep,
+        &options,
+        &active_cargo(),
+        // 100h old — well past the sweep threshold, but a build is active.
+        UNIX_EPOCH + Duration::from_secs(100 * 60 * 60),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    Ok(())
+}
+
+#[test]
+fn cold_deps_output_is_reclaimable_between_builds() -> Result<(), Box<dyn Error>> {
+    // With no build active, an old dependency output is reclaimable; cargo re-plans
+    // and rebuilds it on the next build if it is still needed.
+    let entry = plan_candidate_with_active_observation(
+        candidate_with_context_modified(
+            "/work/sample/target/debug/deps/libsample-0123456789abcdef.rmeta",
+            100,
+            ArtifactClass::DepsOutput,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            sample_context(),
+            0,
+        )?,
+        PolicyKind::Balanced,
+        &keep_window_options(),
+        &ActiveObservation::not_attempted(),
+        UNIX_EPOCH + Duration::from_secs(10 * 60 * 60),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
 }
 
 #[test]

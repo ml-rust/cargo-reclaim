@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::ReclaimResult;
 use crate::model::{ArtifactClass, PathSnapshot, PlanAction, PlanEntry, TargetEvidence};
@@ -8,6 +8,9 @@ use super::{
     ActiveObservation, PlannerCandidate, PlannerOptions, ProcessView, TargetContext,
     WholeTargetMode,
 };
+
+/// Default age below which the `Sweep` policy will not reclaim a final binary.
+const DEFAULT_SWEEP_OLDER_THAN: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub(super) fn plan_candidate_for_policy(
     policy: PolicyKind,
@@ -55,7 +58,7 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
-    if PolicyKind::is_default_protected_output(artifact_class) {
+    if policy.is_protected_output(artifact_class) {
         return PlanEntry::preserved(
             snapshot,
             artifact_class,
@@ -93,10 +96,30 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
+    // While a build is touching this target, protect the WHOLE target — delete nothing.
+    // cargo-reclaim cannot reliably tell which artifacts the running build still needs:
+    // even a "superseded" hash variant can be a live feature-variant the linker wants
+    // (multiple concurrent hashes exist under `--all-features`), and cargo will not
+    // rebuild an output its fingerprint DB considers fresh. Only cargo's own fingerprint
+    // DB is authoritative, so any mid-build deletion risks breaking the build. Reclaim
+    // happens between builds instead — where cargo re-plans and rebuilds what it needs.
+    if let Some(active_reason) = active_skip_reason(target_context.as_ref(), active_observation) {
+        return PlanEntry::new(
+            snapshot,
+            artifact_class,
+            evidence,
+            PlanAction::SkipActive,
+            active_reason,
+            false,
+        );
+    }
+
+    // No active build: protect only the recent-write hot set. Between builds cargo
+    // re-plans and rebuilds any output we remove, so age-based reclaim is recoverable.
     if !matches!(
         artifact_class,
         ArtifactClass::StaleDeps | ArtifactClass::StaleIncremental
-    ) && is_recently_modified(&snapshot.modified, options, now)
+    ) && is_modified_within(&snapshot.modified, options.recent_write_keep_window, now)
     {
         return PlanEntry::new(
             snapshot,
@@ -117,14 +140,18 @@ pub(super) fn plan_candidate_for_policy(
         );
     }
 
-    if let Some(reason) = active_skip_reason(target_context.as_ref(), active_observation) {
-        return PlanEntry::new(
+    // The Sweep policy reclaims final binaries, but only once they are clearly
+    // cold (older than the sweep age threshold), so a recently-built binary is
+    // never swept out from under active work.
+    if policy == PolicyKind::Sweep
+        && PolicyKind::is_sweep_final_artifact(artifact_class)
+        && !is_older_than_sweep_threshold(&snapshot.modified, options, now)
+    {
+        return PlanEntry::preserved(
             snapshot,
             artifact_class,
             evidence,
-            PlanAction::SkipActive,
-            reason,
-            false,
+            "final artifact is newer than the sweep age threshold",
         );
     }
 
@@ -286,16 +313,41 @@ fn is_recently_modified(
     options: &PlannerOptions,
     now: SystemTime,
 ) -> bool {
-    let Some(keep_window) = options.recent_write_keep_window else {
+    is_modified_within(modified, options.recent_write_keep_window, now)
+}
+
+/// Whether `modified` falls within `window` of `now`. No window ⇒ never within
+/// (nothing protected); an unreadable/future mtime is treated as within (protect).
+fn is_modified_within(
+    modified: &Option<SystemTime>,
+    window: Option<Duration>,
+    now: SystemTime,
+) -> bool {
+    let Some(window) = window else {
         return false;
     };
     let Some(modified) = *modified else {
         return false;
     };
-
     now.duration_since(modified)
-        .map(|age| age <= keep_window)
+        .map(|age| age <= window)
         .unwrap_or(true)
+}
+
+/// Whether an artifact is old enough for the `Sweep` policy to reclaim it. An
+/// unreadable/future mtime is treated as not-old-enough (preserve).
+fn is_older_than_sweep_threshold(
+    modified: &Option<SystemTime>,
+    options: &PlannerOptions,
+    now: SystemTime,
+) -> bool {
+    let threshold = options.sweep_older_than.unwrap_or(DEFAULT_SWEEP_OLDER_THAN);
+    let Some(modified) = *modified else {
+        return false;
+    };
+    now.duration_since(modified)
+        .map(|age| age > threshold)
+        .unwrap_or(false)
 }
 
 fn is_under_keep_size(snapshot: &PathSnapshot, options: &PlannerOptions) -> bool {
@@ -310,6 +362,10 @@ fn is_removable_for_policy(policy: PolicyKind, artifact_class: ArtifactClass) ->
         PolicyKind::Conservative => PolicyKind::is_conservative_removable_class(artifact_class),
         PolicyKind::Balanced | PolicyKind::Aggressive | PolicyKind::Custom => {
             PolicyKind::is_default_removable_class(artifact_class)
+        }
+        PolicyKind::Sweep => {
+            PolicyKind::is_default_removable_class(artifact_class)
+                || PolicyKind::is_sweep_final_artifact(artifact_class)
         }
     }
 }

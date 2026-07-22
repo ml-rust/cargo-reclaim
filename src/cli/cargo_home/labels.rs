@@ -10,6 +10,7 @@ pub(super) fn policy_label(policy: PolicyKind) -> &'static str {
         PolicyKind::Conservative => "conservative",
         PolicyKind::Balanced => "balanced",
         PolicyKind::Aggressive => "aggressive",
+        PolicyKind::Sweep => "sweep",
         PolicyKind::Custom => "custom",
     }
 }
