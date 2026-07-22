@@ -53,8 +53,14 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
     assert_eq!(periodic.every, Duration::from_secs(30 * 60));
     assert!(periodic.limiter.is_empty());
 
+    assert_eq!(
+        config.sweep_older_than,
+        Some(Duration::from_secs(24 * 60 * 60))
+    );
+
     let trigger = config.background.trigger.expect("trigger block");
     assert_eq!(trigger.every, Duration::from_secs(5 * 60));
+    assert_eq!(trigger.policy.as_deref(), Some("sweep"));
     assert_eq!(trigger.limiter.disk_free_below_basis_points, Some(1250));
     assert_eq!(
         trigger.limiter.min_free_disk_bytes,

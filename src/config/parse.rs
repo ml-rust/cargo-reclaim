@@ -95,6 +95,7 @@ pub(super) struct BackgroundDocument {
 #[derive(Debug, Deserialize)]
 pub(super) struct TriggerDocument {
     pub every: Option<String>,
+    pub policy: Option<String>,
     pub max_target_size: Option<String>,
     pub disk_free_below: Option<String>,
     pub min_free_disk: Option<String>,

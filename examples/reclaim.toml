@@ -19,6 +19,7 @@ cross_filesystems = true
 
 [planner]
 recent_write_keep_window = "4h"
+sweep_older_than = "24h"
 keep_size = "64 MiB"
 keep_rustc_hashes = []
 keep_installed_toolchains = false
@@ -41,8 +42,10 @@ target_free_disk = "30 GiB"
 [background.periodic]
 every = "30m"
 
-# Responsive gate: polls every 5m and cleans only when free space is low.
+# Responsive gate: polls every 5m and, when free space is low, escalates to the
+# `sweep` policy so cold final binaries are reclaimed too.
 [background.trigger]
 every = "5m"
+policy = "sweep"
 disk_free_below = "12.5%"
 min_free_disk = "20 GiB"

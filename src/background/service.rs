@@ -99,7 +99,7 @@ pub fn run_background_service_with_runtime(
             None => scheduler_mode_from_config(config)?,
         },
     )?;
-    let mut schedules = resolve_schedules(config);
+    let mut schedules = resolve_schedules(config, &request_context)?;
     let mut cycles_completed = 0;
 
     loop {
@@ -128,6 +128,7 @@ pub fn run_background_service_with_runtime(
                 .plans_dir
                 .join(format!("cargo-reclaim-{stamp}{suffix}.json"));
             let request = request_context.request(
+                schedule.policy,
                 &schedule.limiter,
                 run_id.clone(),
                 paths.runs_log_path.clone(),
@@ -183,19 +184,25 @@ pub fn run_background_service_with_runtime(
 /// limiter gate applied on each fire, and the next time it is due.
 struct BackgroundSchedule {
     every: Duration,
+    policy: crate::policy::PolicyKind,
     limiter: crate::config::BackgroundLimiter,
     next_at: Option<SystemTime>,
 }
 
-/// Resolve the active triggers. An enabled background section with neither block
+/// Resolve the active triggers and the policy each runs with (its own override,
+/// else the scheduler default). An enabled background section with neither block
 /// configured falls back to a single periodic trigger at the default cadence,
 /// preserving the pre-0.3 default. Whether a fired run actually cleans is decided
 /// per-limiter (a disabled section yields inactive runs).
-fn resolve_schedules(config: &ReclaimConfig) -> Vec<BackgroundSchedule> {
+fn resolve_schedules(
+    config: &ReclaimConfig,
+    context: &BackgroundCycleRequestContext,
+) -> BackgroundServiceResult<Vec<BackgroundSchedule>> {
     let mut schedules = Vec::new();
     if let Some(periodic) = &config.background.periodic {
         schedules.push(BackgroundSchedule {
             every: periodic.every,
+            policy: context.effective_policy(periodic.policy.as_deref())?,
             limiter: periodic.limiter.clone(),
             next_at: None,
         });
@@ -203,6 +210,7 @@ fn resolve_schedules(config: &ReclaimConfig) -> Vec<BackgroundSchedule> {
     if let Some(trigger) = &config.background.trigger {
         schedules.push(BackgroundSchedule {
             every: trigger.every,
+            policy: context.effective_policy(trigger.policy.as_deref())?,
             limiter: trigger.limiter.clone(),
             next_at: None,
         });
@@ -210,11 +218,12 @@ fn resolve_schedules(config: &ReclaimConfig) -> Vec<BackgroundSchedule> {
     if schedules.is_empty() {
         schedules.push(BackgroundSchedule {
             every: DEFAULT_BACKGROUND_CHECK_EVERY,
+            policy: context.effective_policy(None)?,
             limiter: crate::config::BackgroundLimiter::default(),
             next_at: None,
         });
     }
-    schedules
+    Ok(schedules)
 }
 
 pub fn read_background_service_state(

@@ -206,10 +206,13 @@ pub struct BackgroundConfig {
     pub trigger: Option<BackgroundTrigger>,
 }
 
-/// One background trigger: a firing cadence plus an optional limiter gate.
+/// One background trigger: a firing cadence, an optional limiter gate, and an
+/// optional policy override (e.g. `"sweep"`) so this trigger can reclaim more
+/// aggressively than the scheduler default when it fires.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundTrigger {
     pub every: Duration,
+    pub policy: Option<String>,
     pub limiter: BackgroundLimiter,
 }
 
@@ -251,6 +254,7 @@ impl BackgroundTrigger {
             .unwrap_or(DEFAULT_BACKGROUND_CHECK_EVERY);
         Ok(Self {
             every,
+            policy: document.policy,
             limiter: BackgroundLimiter {
                 max_target_size_bytes: document
                     .max_target_size
@@ -333,6 +337,7 @@ impl BackgroundConfig {
                     if config.trigger.is_none() {
                         config.trigger = Some(BackgroundTrigger {
                             every,
+                            policy: None,
                             limiter: BackgroundLimiter {
                                 max_target_size_bytes: policy_max_target_size_bytes,
                                 disk_free_below_basis_points,
@@ -347,6 +352,7 @@ impl BackgroundConfig {
                     if config.periodic.is_none() {
                         config.periodic = Some(BackgroundTrigger {
                             every,
+                            policy: None,
                             limiter: BackgroundLimiter::default(),
                         });
                     }

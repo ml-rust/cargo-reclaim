@@ -226,9 +226,16 @@ This revalidation step is the core safety boundary: cargo-reclaim refuses stale 
 | `conservative` | No       | Narrow low-risk classes such as incremental and temporary artifacts.                                                                                                                                                                                                                                                        | Active projects where rebuild impact must stay minimal.                    |
 | `balanced`     | Yes      | Default removable classes: incremental, build-script caches, fingerprints, temporary artifacts, stale fingerprint-group intermediates, stale hashed deps variants, old hashed deps outputs when a recent-write keep window is configured, stale incremental sessions or unit variants, dep-info files, and object metadata. | Normal workstation cleanup and scheduled partial trimming.                 |
 | `aggressive`   | No       | Same default removable classes as `balanced`; whole-target deletion is still separate and requires explicit whole-target cleanup.                                                                                                                                                                                           | One-off deep cleanup when rebuild cost is acceptable.                      |
+| `sweep`        | No       | The `balanced` removable classes **plus** cold final binaries (`final_executable`, `final_rlib`, `final_library`, `final_wasm`) once they are older than `[planner].sweep_older_than` (default 24h). Keeps the target directory, docs, packages, and unknown files. cargo-sweep-style reclamation.                            | Disk-pressure recovery: free the bulk of an oversized target by dropping stale binaries, keeping the hot build path. |
 | `custom`       | No       | Currently follows the default removable class set used by `balanced`.                                                                                                                                                                                                                                                       | Config-driven future policy tuning while preserving current safety checks. |
 
-Protected by default in every non-whole-target policy: whole target directories, docs, packages, timings, final executables, final libraries, final `.rlib` files, final `.wasm` files, and unknown artifacts. Weak name-only target evidence requires confirmation instead of automatic deletion.
+Protected by default in every non-whole-target policy: whole target directories, docs, packages, timings, final executables, final libraries, final `.rlib` files, final `.wasm` files, and unknown artifacts. (`sweep` additionally releases the final-binary classes once they pass the age gate.) Weak name-only target evidence requires confirmation instead of automatic deletion.
+
+### Cleaning during an active build
+
+While a `cargo`/`rustc` build is touching a target, cargo-reclaim reclaims **nothing** from it — the whole target is protected. It cannot reliably tell which artifacts the running build still needs: even a "superseded" hashed `deps` variant can be a live feature-variant the linker wants (a single crate has several concurrent hash variants under `--all-features`), and cargo will not rebuild an output its fingerprint DB considers fresh. Only cargo's own fingerprint DB is authoritative, so any mid-build deletion risks breaking the build.
+
+Reclaim therefore happens **between builds** (no active `cargo`/`rustc` process on the target), where the full policy removable set applies by age — cargo re-plans and rebuilds anything still needed on the next build, so that reclaim is recoverable. The practical consequence: cargo-reclaim cannot shrink a target that is under continuous heavy building. For that case, use a disruptive trigger that stops the build first (see below) or run `cargo clean` in a quiet window.
 
 ## Scheduler Configuration
 
@@ -247,6 +254,7 @@ target_size_goal = "80 GiB"
 
 [planner]
 recent_write_keep_window = "4h"
+sweep_older_than = "24h"            # age gate for the `sweep` policy's final-binary removal
 
 [scheduler]
 at = "04:15"
@@ -265,10 +273,12 @@ target_free_disk = "200 GiB"        # budget goal: how much a limited run reclai
 [background.periodic]
 every = "30m"
 
-# Responsive gate: polls every 5m and cleans only when free space is low.
+# Responsive gate: polls every 5m and, when free space is low, escalates to the
+# `sweep` policy to reclaim cold final binaries too — not just stale intermediates.
 [background.trigger]
 every = "5m"
 only_when_disk_free_below = "10%"   # clean when free space drops below this fraction of the disk
+policy = "sweep"                    # more aggressive than the routine cadence when disk is low
 # min_free_disk = "150 GiB"         # or gate on an absolute free-space floor
 # max_target_size = "100 GiB"       # or gate on a per-target high-water mark (scans target sizes)
 ```
@@ -277,11 +287,11 @@ only_when_disk_free_below = "10%"   # clean when free space drops below this fra
 
 - **Trigger — *when* a run fires.** Configure a `[background.periodic]` block (fires every `every`), a `[background.trigger]` block (fires every `every`), or both. They are independent, so you can run a routine cadence and a responsive gate at the same time.
 - **Limiter — *whether* a fired run actually cleans.** Each block may carry limiter keys (`only_when_disk_free_below`, `min_free_disk`, `max_target_size`). With no limiter the run always cleans; with a limiter it cleans only when a threshold is breached, and does nothing when it passes. Disk limiters use a cheap free-space check; `max_target_size` makes the block scan target sizes.
-- **Policy + budget — *what* a run removes and *how much*.** Governed by the policy (`[policy].mode` / `[scheduler].policy`) and the budget keys (`target_size_goal`, `target_free_disk`), identically for every trigger.
+- **Policy + budget — *what* a run removes and *how much*.** Governed by the policy in effect and the budget keys (`target_size_goal`, `target_free_disk`). Each block may set its own `policy` (default `[scheduler].policy`), so the routine cadence can stay `balanced` while a disk-pressure trigger escalates to `sweep`.
 
-So the example above runs a safe trim every 30 minutes *and*, between those, checks free space every 5 minutes and trims immediately if the disk crosses 90% full — without scanning targets on the frequent poll.
+So the example above runs a safe `balanced` trim every 30 minutes *and*, between those, checks free space every 5 minutes and — if the disk crosses 90% full — runs a `sweep` that additionally reclaims cold final binaries, without scanning targets on the frequent poll.
 
-> **Deprecated (removed in 0.4):** the flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into the blocks above, with a warning. `mode = "periodic"` becomes a `[background.periodic]` block; `mode = "threshold"` becomes a `[background.trigger]` block (inheriting `[policy].max_target_size` as a limiter). Migrate to the subtable form.
+> **Deprecated (to be removed in a future release):** the flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into the blocks above, with a warning. `mode = "periodic"` becomes a `[background.periodic]` block; `mode = "threshold"` becomes a `[background.trigger]` block (inheriting `[policy].max_target_size` as a limiter). Migrate to the subtable form.
 
 ## Platform Notes
 

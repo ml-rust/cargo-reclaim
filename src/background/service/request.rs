@@ -27,6 +27,7 @@ pub(crate) struct BackgroundCycleRequestContext {
     planner_options: PlannerOptions,
     mode: SchedulerMode,
     allow_apply: bool,
+    allow_unattended_high_policy: bool,
     background_enabled: bool,
 }
 
@@ -51,8 +52,36 @@ impl BackgroundCycleRequestContext {
             planner_options: planner_options_from_config(config),
             mode,
             allow_apply,
+            allow_unattended_high_policy: config
+                .scheduler
+                .allow_unattended_high_policy
+                .unwrap_or(false),
             background_enabled: config.background.enabled.unwrap_or(true),
         })
+    }
+
+    /// Resolve the policy a trigger runs with: its own `policy` override if set,
+    /// otherwise the scheduler default. An override that raises the aggression to
+    /// a high policy (balanced/aggressive/sweep/custom) must still satisfy the
+    /// unattended high-policy gate.
+    pub(crate) fn effective_policy(
+        &self,
+        policy_override: Option<&str>,
+    ) -> BackgroundServiceResult<PolicyKind> {
+        let Some(policy_override) = policy_override else {
+            return Ok(self.policy);
+        };
+        let policy = parse_policy(policy_override)?;
+        if self.mode == SchedulerMode::Cleanup
+            && self.allow_apply
+            && is_high_policy(policy)
+            && !self.allow_unattended_high_policy
+        {
+            return Err(BackgroundServiceError::Scheduler(
+                SchedulerError::HighPolicyNotAllowed(policy),
+            ));
+        }
+        Ok(policy)
     }
 
     /// Build a cleanup request for a single background trigger, gated by its
@@ -60,6 +89,7 @@ impl BackgroundCycleRequestContext {
     /// with disk thresholds cleans only when a threshold is breached.
     pub(crate) fn request(
         &self,
+        policy: PolicyKind,
         limiter: &BackgroundLimiter,
         run_id: String,
         log_path: PathBuf,
@@ -71,11 +101,11 @@ impl BackgroundCycleRequestContext {
             log_path,
             plan_path,
             roots: self.roots.clone(),
-            policy: self.policy,
+            policy,
             scanner_options: self.scanner_options.clone(),
             inventory_options: self.inventory_options.clone(),
             planner_options: self.planner_options.clone(),
-            trigger: BackgroundRunTrigger::Decision(self.run_decision(limiter)?),
+            trigger: BackgroundRunTrigger::Decision(self.run_decision(policy, limiter)?),
             config_path: Some(self.config_path.clone()),
             config_version: Some(self.config_version),
             created_at: now,
@@ -86,6 +116,7 @@ impl BackgroundCycleRequestContext {
 
     fn run_decision(
         &self,
+        policy: PolicyKind,
         limiter: &BackgroundLimiter,
     ) -> BackgroundServiceResult<WatcherDecision> {
         if !self.background_enabled {
@@ -126,7 +157,7 @@ impl BackgroundCycleRequestContext {
                 observed_targets,
                 disk_free_basis_points: disk_free_space.and_then(|space| space.free_basis_points()),
                 disk_free_bytes: disk_free_space.map(|space| space.available_bytes),
-                selected_policy: self.policy,
+                selected_policy: policy,
                 unattended_allowed: self.mode == SchedulerMode::Cleanup && self.allow_apply,
             }));
         }
@@ -135,7 +166,7 @@ impl BackgroundCycleRequestContext {
         Ok(WatcherDecision {
             state: if self.mode == SchedulerMode::Cleanup
                 && self.allow_apply
-                && self.policy != PolicyKind::Observe
+                && policy != PolicyKind::Observe
             {
                 WatcherDecisionState::TriggeredPlanAndApply
             } else {
@@ -201,10 +232,7 @@ fn validate_run_apply_policy(
     }
     if mode == SchedulerMode::Cleanup
         && allow_apply
-        && matches!(
-            policy,
-            PolicyKind::Balanced | PolicyKind::Aggressive | PolicyKind::Custom
-        )
+        && is_high_policy(policy)
         && !config
             .scheduler
             .allow_unattended_high_policy
@@ -215,6 +243,14 @@ fn validate_run_apply_policy(
         ));
     }
     Ok(())
+}
+
+/// Policies whose unattended use requires an explicit high-policy opt-in.
+fn is_high_policy(policy: PolicyKind) -> bool {
+    matches!(
+        policy,
+        PolicyKind::Balanced | PolicyKind::Aggressive | PolicyKind::Sweep | PolicyKind::Custom
+    )
 }
 
 fn validate_whole_target_policy(
@@ -246,9 +282,10 @@ fn parse_policy(value: &str) -> BackgroundServiceResult<PolicyKind> {
         "conservative" => Ok(PolicyKind::Conservative),
         "balanced" => Ok(PolicyKind::Balanced),
         "aggressive" => Ok(PolicyKind::Aggressive),
+        "sweep" => Ok(PolicyKind::Sweep),
         "custom" => Ok(PolicyKind::Custom),
         _ => Err(BackgroundServiceError::Config(format!(
-            "unknown policy `{value}`; expected observe, conservative, balanced, aggressive, or custom"
+            "unknown policy `{value}`; expected observe, conservative, balanced, aggressive, sweep, or custom"
         ))),
     }
 }
@@ -283,6 +320,7 @@ fn inventory_options_from_config(config: &ReclaimConfig) -> InventoryOptions {
 fn planner_options_from_config(config: &ReclaimConfig) -> PlannerOptions {
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
+        sweep_older_than: config.sweep_older_than,
         keep_size_bytes: config.keep_size_bytes,
         target_size_goal_bytes: config.policy_thresholds.target_size_goal_bytes,
         target_free_disk_bytes: config.background.target_free_disk_bytes,
