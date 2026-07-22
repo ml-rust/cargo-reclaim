@@ -24,6 +24,7 @@ pub(super) fn plan_candidate_for_policy(
         artifact_class,
         evidence,
         target_context,
+        target_newest_modified,
     } = candidate;
 
     if artifact_class == ArtifactClass::WholeTarget {
@@ -103,13 +104,46 @@ pub(super) fn plan_candidate_for_policy(
     // rebuild an output its fingerprint DB considers fresh. Only cargo's own fingerprint
     // DB is authoritative, so any mid-build deletion risks breaking the build. Reclaim
     // happens between builds instead — where cargo re-plans and rebuilds what it needs.
-    if let Some(active_reason) = active_skip_reason(target_context.as_ref(), active_observation) {
+    // A disruptive trigger (`interrupt_active_build`) opts out of this on purpose,
+    // accepting a broken build to reclaim space now.
+    if !options.interrupt_active_build
+        && let Some(active_reason) = active_skip_reason(target_context.as_ref(), active_observation)
+    {
         return PlanEntry::new(
             snapshot,
             artifact_class,
             evidence,
             PlanAction::SkipActive,
             active_reason,
+            false,
+        );
+    }
+
+    // Race-free active-build protection: a build writes into its target
+    // continuously, so the target's newest artifact mtime stays fresh for the
+    // whole build. Unlike the point-in-time process scan above — which can be
+    // sampled in a gap between rustc invocations, or miss a build driver like
+    // cargo-nextest it does not recognize — this cannot miss an active build.
+    // While the target was written within the keep window, protect it entirely:
+    // we cannot distinguish a superseded hash variant from a live feature-variant
+    // the running build still needs without cargo's fingerprint DB, and cargo
+    // will not rebuild an output its fingerprint DB considers fresh. This is the
+    // only guard for StaleDeps/StaleIncremental, whose own mtimes are old by
+    // definition, so the per-file check below never protects them. Reclaim
+    // happens between builds, where cargo re-plans and rebuilds anything removed.
+    if !options.interrupt_active_build
+        && is_modified_within(
+            &target_newest_modified,
+            options.recent_write_keep_window,
+            now,
+        )
+    {
+        return PlanEntry::new(
+            snapshot,
+            artifact_class,
+            evidence,
+            PlanAction::SkipActive,
+            "target was written within the active-project keep window",
             false,
         );
     }
@@ -209,7 +243,9 @@ fn plan_whole_target_candidate(
                 );
             }
 
-            if is_recently_modified(&snapshot.modified, options, now) {
+            if !options.interrupt_active_build
+                && is_recently_modified(&snapshot.modified, options, now)
+            {
                 return PlanEntry::new(
                     snapshot,
                     ArtifactClass::WholeTarget,
@@ -229,7 +265,10 @@ fn plan_whole_target_candidate(
                 );
             }
 
-            if let Some(reason) = active_skip_reason(target_context.as_ref(), active_observation) {
+            if !options.interrupt_active_build
+                && let Some(reason) =
+                    active_skip_reason(target_context.as_ref(), active_observation)
+            {
                 return PlanEntry::new(
                     snapshot,
                     ArtifactClass::WholeTarget,

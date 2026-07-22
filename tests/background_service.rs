@@ -201,8 +201,8 @@ fn periodic_and_trigger_blocks_both_fire_in_one_service() -> Result<(), Box<dyn 
         temp.path(),
         &format!(
             "roots = [{}]\n\
-             [background.periodic]\nevery = \"30m\"\n\
-             [background.trigger]\nevery = \"5m\"\ndisk_free_below = \"100%\"\n",
+             [[background.trigger]]\nevery = \"30m\"\n\
+             [[background.trigger]]\nevery = \"5m\"\nonly_when_disk_free_below = \"100%\"\n",
             toml_string(&project)
         ),
     )?;

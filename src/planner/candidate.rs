@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crate::model::{ArtifactClass, PathSnapshot, TargetEvidence};
 
 use super::TargetContext;
@@ -8,6 +10,12 @@ pub struct PlannerCandidate {
     pub artifact_class: ArtifactClass,
     pub evidence: TargetEvidence,
     pub target_context: Option<TargetContext>,
+    /// Newest artifact mtime across the whole target this candidate belongs to.
+    /// A build writes into its target continuously, so this is a race-free signal
+    /// that the target has an active build — one the point-in-time process scan
+    /// can miss. Set once per target after all candidates are collected; `None`
+    /// for direct callers that plan a candidate without a target-wide walk.
+    pub target_newest_modified: Option<SystemTime>,
 }
 
 impl PlannerCandidate {
@@ -21,6 +29,7 @@ impl PlannerCandidate {
             artifact_class,
             evidence,
             target_context: None,
+            target_newest_modified: None,
         }
     }
 

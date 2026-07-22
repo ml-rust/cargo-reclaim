@@ -6,10 +6,17 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::active_process::platform_active_observation_provider;
-use crate::config::ReclaimConfig;
+use crate::active_process::{kill_active_builds_under_roots, platform_active_observation_provider};
+use crate::config::{BackgroundLimiter, ReclaimConfig};
 use crate::persistence::PersistedTimestamp;
+use crate::planner::WholeTargetMode;
+use crate::policy::PolicyKind;
+use crate::watcher::WatcherDecisionState;
 use fs2::FileExt;
+
+/// Grace period a disruptive `kill_active_builds` trigger gives a build to exit
+/// after SIGTERM before it is SIGKILLed.
+const KILL_ACTIVE_BUILD_GRACE: Duration = Duration::from_secs(5);
 
 use super::{BackgroundRunReport, BackgroundRunRequest, run_background_cleanup_cycle};
 use request::{BackgroundCycleRequestContext, scheduler_mode_from_config};
@@ -127,9 +134,24 @@ pub fn run_background_service_with_runtime(
             let plan_path = paths
                 .plans_dir
                 .join(format!("cargo-reclaim-{stamp}{suffix}.json"));
+            let decision = request_context.decide(schedule.policy, &schedule.limiter)?;
+            // A disruptive `kill_active_builds` trigger stops the builds filling the
+            // disk before it cleans — but only when it would actually clean (the
+            // limiter is breached). After the kill there is no active build left to
+            // protect, so the run can reclaim freely.
+            if schedule.kill_active_builds
+                && decision.state == WatcherDecisionState::TriggeredPlanAndApply
+            {
+                let _ = kill_active_builds_under_roots(
+                    request_context.roots(),
+                    KILL_ACTIVE_BUILD_GRACE,
+                );
+            }
             let request = request_context.request(
                 schedule.policy,
-                &schedule.limiter,
+                schedule.whole_target_mode,
+                schedule.interrupt_active_build,
+                decision,
                 run_id.clone(),
                 paths.runs_log_path.clone(),
                 plan_path,
@@ -181,17 +203,21 @@ pub fn run_background_service_with_runtime(
 }
 
 /// One background trigger resolved for the service loop: its firing cadence, the
-/// limiter gate applied on each fire, and the next time it is due.
+/// policy/whole-target/disruptiveness it runs with, the limiter gate, and the next
+/// time it is due.
 struct BackgroundSchedule {
     every: Duration,
-    policy: crate::policy::PolicyKind,
-    limiter: crate::config::BackgroundLimiter,
+    policy: PolicyKind,
+    whole_target_mode: WholeTargetMode,
+    interrupt_active_build: bool,
+    kill_active_builds: bool,
+    limiter: BackgroundLimiter,
     next_at: Option<SystemTime>,
 }
 
-/// Resolve the active triggers and the policy each runs with (its own override,
-/// else the scheduler default). An enabled background section with neither block
-/// configured falls back to a single periodic trigger at the default cadence,
+/// Resolve every configured `[[background.trigger]]` into a schedule, each with its
+/// own resolved policy, whole-target mode, and disruptiveness. An enabled background
+/// section with no triggers falls back to a single default-cadence periodic run,
 /// preserving the pre-0.3 default. Whether a fired run actually cleans is decided
 /// per-limiter (a disabled section yields inactive runs).
 fn resolve_schedules(
@@ -199,27 +225,28 @@ fn resolve_schedules(
     context: &BackgroundCycleRequestContext,
 ) -> BackgroundServiceResult<Vec<BackgroundSchedule>> {
     let mut schedules = Vec::new();
-    if let Some(periodic) = &config.background.periodic {
-        schedules.push(BackgroundSchedule {
-            every: periodic.every,
-            policy: context.effective_policy(periodic.policy.as_deref())?,
-            limiter: periodic.limiter.clone(),
-            next_at: None,
-        });
-    }
-    if let Some(trigger) = &config.background.trigger {
+    for trigger in &config.background.triggers {
+        let policy = context.effective_policy(trigger.policy.as_deref())?;
         schedules.push(BackgroundSchedule {
             every: trigger.every,
-            policy: context.effective_policy(trigger.policy.as_deref())?,
+            policy,
+            whole_target_mode: context.effective_whole_target_mode(policy, trigger.whole_target)?,
+            // Killing the build implies deleting during it (there is none left after).
+            interrupt_active_build: trigger.interrupt_active_build || trigger.kill_active_builds,
+            kill_active_builds: trigger.kill_active_builds,
             limiter: trigger.limiter.clone(),
             next_at: None,
         });
     }
     if schedules.is_empty() {
+        let policy = context.effective_policy(None)?;
         schedules.push(BackgroundSchedule {
             every: DEFAULT_BACKGROUND_CHECK_EVERY,
-            policy: context.effective_policy(None)?,
-            limiter: crate::config::BackgroundLimiter::default(),
+            policy,
+            whole_target_mode: context.effective_whole_target_mode(policy, None)?,
+            interrupt_active_build: false,
+            kill_active_builds: false,
+            limiter: BackgroundLimiter::default(),
             next_at: None,
         });
     }

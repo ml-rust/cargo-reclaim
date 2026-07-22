@@ -278,6 +278,7 @@ fn planner_options_from_config(config: &cargo_reclaim::ReclaimConfig) -> Planner
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
         sweep_older_than: config.sweep_older_than,
+        interrupt_active_build: false,
         keep_size_bytes: config.keep_size_bytes,
         target_size_goal_bytes: config.policy_thresholds.target_size_goal_bytes,
         target_free_disk_bytes: config.background.target_free_disk_bytes,
@@ -300,14 +301,19 @@ fn whole_target_mode_from_config(value: WholeTargetConfig) -> WholeTargetMode {
     }
 }
 
-/// The limiter that gates a one-shot `scheduler run`. A configured `periodic`
-/// block (or no blocks at all) means an unconditional run; otherwise the
-/// `trigger` block's limiter gates the run on disk pressure.
+/// The limiter that gates a one-shot `scheduler run`. If any configured trigger
+/// fires unconditionally (no limiter), the one-shot run does too; otherwise it is
+/// gated by the first trigger's limiter. With no triggers it runs unconditionally.
 fn effective_background_limiter(config: &cargo_reclaim::ReclaimConfig) -> BackgroundLimiter {
-    if config.background.periodic.is_some() {
+    if config
+        .background
+        .triggers
+        .iter()
+        .any(|trigger| trigger.limiter.is_empty())
+    {
         return BackgroundLimiter::default();
     }
-    if let Some(trigger) = &config.background.trigger {
+    if let Some(trigger) = config.background.triggers.first() {
         return trigger.limiter.clone();
     }
     BackgroundLimiter::default()

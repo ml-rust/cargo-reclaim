@@ -28,6 +28,8 @@ pub(crate) struct BackgroundCycleRequestContext {
     mode: SchedulerMode,
     allow_apply: bool,
     allow_unattended_high_policy: bool,
+    allow_unattended_whole_target_delete: bool,
+    default_whole_target: Option<WholeTargetConfig>,
     background_enabled: bool,
 }
 
@@ -56,8 +58,44 @@ impl BackgroundCycleRequestContext {
                 .scheduler
                 .allow_unattended_high_policy
                 .unwrap_or(false),
+            allow_unattended_whole_target_delete: config
+                .allow_unattended_whole_target_delete
+                .unwrap_or(false),
+            default_whole_target: config.whole_target,
             background_enabled: config.background.enabled.unwrap_or(true),
         })
+    }
+
+    /// The config roots — the tree a disruptive trigger may kill builds under.
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Resolve the whole-target mode a trigger runs with: its own override, else the
+    /// global `[policy].whole_target`. Unattended `delete` still requires an aggressive
+    /// policy and `allow_unattended_whole_target_delete = true`.
+    pub(crate) fn effective_whole_target_mode(
+        &self,
+        policy: PolicyKind,
+        whole_target: Option<WholeTargetConfig>,
+    ) -> BackgroundServiceResult<WholeTargetMode> {
+        let Some(effective) = whole_target.or(self.default_whole_target) else {
+            return Ok(WholeTargetMode::Off);
+        };
+        if effective == WholeTargetConfig::Delete {
+            if policy != PolicyKind::Aggressive {
+                return Err(BackgroundServiceError::Config(
+                    "whole_target = \"delete\" requires the aggressive policy".to_owned(),
+                ));
+            }
+            if !self.allow_unattended_whole_target_delete {
+                return Err(BackgroundServiceError::Config(
+                    "whole_target = \"delete\" requires allow_unattended_whole_target_delete = true"
+                        .to_owned(),
+                ));
+            }
+        }
+        Ok(whole_target_mode_from_config(effective))
     }
 
     /// Resolve the policy a trigger runs with: its own `policy` override if set,
@@ -84,18 +122,24 @@ impl BackgroundCycleRequestContext {
         Ok(policy)
     }
 
-    /// Build a cleanup request for a single background trigger, gated by its
-    /// `limiter`. An empty limiter always cleans (a `periodic` block); a limiter
-    /// with disk thresholds cleans only when a threshold is breached.
+    /// Build a cleanup request for a single background trigger from a decision
+    /// already computed by [`decide`](Self::decide), applying the trigger's own
+    /// whole-target mode and active-build disruptiveness.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn request(
         &self,
         policy: PolicyKind,
-        limiter: &BackgroundLimiter,
+        whole_target_mode: WholeTargetMode,
+        interrupt_active_build: bool,
+        decision: WatcherDecision,
         run_id: String,
         log_path: PathBuf,
         plan_path: PathBuf,
         now: SystemTime,
     ) -> BackgroundServiceResult<BackgroundRunRequest> {
+        let mut planner_options = self.planner_options.clone();
+        planner_options.whole_target_mode = whole_target_mode;
+        planner_options.interrupt_active_build = interrupt_active_build;
         Ok(BackgroundRunRequest {
             run_id,
             log_path,
@@ -104,8 +148,8 @@ impl BackgroundCycleRequestContext {
             policy,
             scanner_options: self.scanner_options.clone(),
             inventory_options: self.inventory_options.clone(),
-            planner_options: self.planner_options.clone(),
-            trigger: BackgroundRunTrigger::Decision(self.run_decision(policy, limiter)?),
+            planner_options,
+            trigger: BackgroundRunTrigger::Decision(decision),
             config_path: Some(self.config_path.clone()),
             config_version: Some(self.config_version),
             created_at: now,
@@ -114,7 +158,8 @@ impl BackgroundCycleRequestContext {
         })
     }
 
-    fn run_decision(
+    /// Evaluate a trigger's limiter to decide whether (and how) it will clean.
+    pub(crate) fn decide(
         &self,
         policy: PolicyKind,
         limiter: &BackgroundLimiter,
@@ -321,6 +366,7 @@ fn planner_options_from_config(config: &ReclaimConfig) -> PlannerOptions {
     PlannerOptions {
         recent_write_keep_window: config.recent_write_keep_window,
         sweep_older_than: config.sweep_older_than,
+        interrupt_active_build: false,
         keep_size_bytes: config.keep_size_bytes,
         target_size_goal_bytes: config.policy_thresholds.target_size_goal_bytes,
         target_free_disk_bytes: config.background.target_free_disk_bytes,

@@ -232,9 +232,15 @@ fn stale_deps_weak_evidence_requires_confirmation() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+// A recent write into the target means a build is (or just was) active, so even
+// a "proven stale" hash variant must be protected: under `--all-features` an old
+// hash can still be a live feature-variant the running build links, and cargo
+// will not rebuild an output its fingerprint DB considers fresh. Deleting it
+// mid-build is what corrupted builds; the target-level recency guard now skips
+// it. The cold-target counterpart (`stale_deps_deletes_superseded_variant`)
+// proves the variant is still reclaimed between builds.
 #[test]
-fn stale_deps_recent_write_window_does_not_hide_proven_stale_variant() -> Result<(), Box<dyn Error>>
-{
+fn stale_deps_recent_target_write_protects_proven_stale_variant() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("stale_deps_recent_write")?;
     write_manifest(temp.path())?;
     let old_hash = "1111111111111111";
@@ -263,7 +269,7 @@ fn stale_deps_recent_write_window_does_not_hide_proven_stale_variant() -> Result
             .join(format!("target/debug/deps/sample-{old_hash}")),
     )?;
     assert_eq!(entry.artifact_class, ArtifactClass::StaleDeps);
-    assert_eq!(entry.action, PlanAction::Delete);
+    assert_eq!(entry.action, PlanAction::SkipActive);
     Ok(())
 }
 
@@ -387,9 +393,13 @@ fn stale_incremental_deletes_older_unit_variant_and_keeps_newest() -> Result<(),
     Ok(())
 }
 
+// A fresh write anywhere in the target signals an active build, so an older
+// incremental session is protected rather than deleted — the same target-level
+// recency guard that keeps stale deps safe mid-build. The cold-target
+// counterpart (`stale_incremental_deletes_older_session_and_keeps_newest`)
+// proves the old session is still reclaimed between builds.
 #[test]
-fn stale_incremental_recent_project_write_does_not_hide_old_session() -> Result<(), Box<dyn Error>>
-{
+fn stale_incremental_recent_target_write_protects_old_session() -> Result<(), Box<dyn Error>> {
     let temp = TestTemp::new("stale_incremental_recent_project")?;
     write_manifest(temp.path())?;
     write_incremental_session(temp.path(), "debug", "sample-1abc", "s-old")?;
@@ -418,7 +428,7 @@ fn stale_incremental_recent_project_write_does_not_hide_old_session() -> Result<
             .join("target/debug/incremental/sample-1abc/s-old"),
     )?;
     assert_eq!(old_session.artifact_class, ArtifactClass::StaleIncremental);
-    assert_eq!(old_session.action, PlanAction::Delete);
+    assert_eq!(old_session.action, PlanAction::SkipActive);
     Ok(())
 }
 

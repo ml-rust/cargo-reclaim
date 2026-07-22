@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.5.0] - 2026-07-22
+
+### Added
+
+- Background triggers are now an array — configure any number of independent `[[background.trigger]]` blocks, each with its own cadence, limiter, policy, and disruptiveness. A trigger with no limiter is periodic; one with a limiter fires only when breached. (Replaces the single `[background.periodic]` / `[background.trigger]` tables.)
+- Per-trigger `whole_target` override (defaults to `[policy].whole_target`). Unattended `delete` still requires the `aggressive` policy and `allow_unattended_whole_target_delete = true`.
+- Per-trigger disruptiveness toward active builds:
+  - `interrupt_active_build = true` — delete in-use artifacts and whole targets even while a build runs (the build fails when its files vanish). Off by default; a normal trigger protects active builds entirely.
+  - `kill_active_builds = true` — before cleaning, terminate the `cargo`/`rustc` processes building targets under the config `roots` (SIGTERM, a 5-second grace, then SIGKILL), so the disk fill stops and there is no active build left to protect. Only build processes inside `roots` are ever signalled, and never cargo-reclaim itself. This makes an emergency `only_when_disk_free_below`/`whole_target = "delete"` trigger able to stop a runaway build and reset its target instead of letting the disk reach 100%.
+
+### Changed
+
+- The single-table `[background.periodic]` / `[background.trigger]` form (0.3–0.4) is replaced by the `[[background.trigger]]` array. The deprecated flat `mode`/`check_every` form still normalizes into one trigger.
+- Config parsing is now strict: an unknown or misspelled key in any config table is rejected with an actionable error at load time instead of being silently ignored. A wrong key can no longer leave a trigger mis-limited or a setting quietly unset.
+
+### Fixed
+
+- A `[[background.trigger]]` limiter written as `only_when_disk_free_below` (the documented spelling, matching the flat `[background]` form and the README) was silently ignored, because the array parser only accepted a different key name. The limiter therefore read as empty, so a disk-gated `sweep`/emergency trigger fired on **every** cadence regardless of free space — killing builds and cargo-cleaning targets when the disk was nowhere near the threshold. The disk-free limiter key is now `only_when_disk_free_below` everywhere, and unknown keys fail loudly (see above), so this class of silent misconfiguration cannot recur.
+- Active-build protection no longer depends solely on the point-in-time process scan, which could be sampled in a gap between `rustc` invocations (or miss a build driver such as `cargo-nextest` it does not recognize) and let `StaleDeps`/`StaleIncremental` artifacts be deleted mid-build — deleting a live `--all-features` feature-variant the running build still links, which cargo will not rebuild while its fingerprint DB considers it fresh, breaking the build. A build writes into its target continuously, so the target's newest artifact mtime is now used as a race-free signal: while any artifact in a target was written within `[planner].recent_write_keep_window`, the whole target is protected — including the stale classes, whose own mtimes are old by definition and were previously guarded by the process scan alone. Reclaim still happens between builds, and a disruptive `interrupt_active_build`/`kill_active_builds` trigger still opts out.
+
+---
+
 ## [0.4.0] - 2026-07-22
 
 ### Added

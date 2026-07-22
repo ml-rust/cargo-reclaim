@@ -216,6 +216,66 @@ fn stale_incremental_conservative_policy_preserves() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+// A StaleDeps artifact has an old own-mtime by definition, so neither the
+// per-file recent-write check nor a missed process scan protects it. When the
+// TARGET was written within the keep window (an active build writing other
+// units), the race-free target-level guard must still protect it — this is the
+// regression for cargo-reclaim deleting a live `--all-features` hash variant
+// mid-build and breaking the build.
+#[test]
+fn stale_deps_in_recently_written_target_skips_active() -> Result<(), Box<dyn Error>> {
+    let mut stale = candidate_with_modified(
+        "target/debug/deps/libsample-0123456789abcdef.rlib",
+        100,
+        ArtifactClass::StaleDeps,
+        TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        70,
+    )?;
+    // The build wrote another unit into the target 5s ago (within the 20s window).
+    stale.target_newest_modified = Some(UNIX_EPOCH + Duration::from_secs(95));
+
+    let entry = plan_candidate_with_options(
+        stale,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::SkipActive);
+    assert!(entry.policy_reason.contains("keep window"));
+    Ok(())
+}
+
+// Between builds (the whole target is cold, newest write outside the window),
+// the same StaleDeps artifact is reclaimable — cargo re-plans and rebuilds it.
+#[test]
+fn stale_deps_in_cold_target_yields_delete() -> Result<(), Box<dyn Error>> {
+    let mut stale = candidate_with_modified(
+        "target/debug/deps/libsample-0123456789abcdef.rlib",
+        100,
+        ArtifactClass::StaleDeps,
+        TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+        70,
+    )?;
+    stale.target_newest_modified = Some(UNIX_EPOCH + Duration::from_secs(70));
+
+    let entry = plan_candidate_with_options(
+        stale,
+        PolicyKind::Balanced,
+        &PlannerOptions {
+            recent_write_keep_window: Some(Duration::from_secs(20)),
+            ..PlannerOptions::default()
+        },
+        UNIX_EPOCH + Duration::from_secs(100),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
+}
+
 #[test]
 fn deps_output_requires_recent_write_keep_window() -> Result<(), Box<dyn Error>> {
     let entry = plan_candidate(

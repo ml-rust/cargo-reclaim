@@ -265,33 +265,48 @@ allow_unattended_high_policy = true
 state_dir = "/home/you/.local/state/cargo-reclaim/my-crate"
 log_dir = "/home/you/.local/state/cargo-reclaim/my-crate/logs"
 
+[policy]
+allow_unattended_whole_target_delete = true   # required by the emergency trigger below
+
 [background]
 enabled = true
 target_free_disk = "200 GiB"        # budget goal: how much a limited run reclaims
 
-# Routine cadence: fires every 30m with no limiter, so it always cleans.
-[background.periodic]
+# Configure any number of independent [[background.trigger]] blocks.
+# A trigger with no limiter fires on its cadence (periodic); one with a limiter
+# fires only when the limiter is breached. Each owns its policy and disruptiveness.
+
+# 1) Routine: safe balanced trim every 30m. Fully protects active builds.
+[[background.trigger]]
 every = "30m"
 
-# Responsive gate: polls every 5m and, when free space is low, escalates to the
-# `sweep` policy to reclaim cold final binaries too — not just stale intermediates.
-[background.trigger]
+# 2) Responsive: every 5m, if disk is low, escalate to `sweep` (reclaims cold
+#    final binaries too). Still protects active builds.
+[[background.trigger]]
 every = "5m"
-only_when_disk_free_below = "10%"   # clean when free space drops below this fraction of the disk
-policy = "sweep"                    # more aggressive than the routine cadence when disk is low
-# min_free_disk = "150 GiB"         # or gate on an absolute free-space floor
-# max_target_size = "100 GiB"       # or gate on a per-target high-water mark (scans target sizes)
+only_when_disk_free_below = "10%"
+policy = "sweep"
+
+# 3) Emergency: at 5% free, stop the builds filling the disk and cargo-clean the
+#    targets. Deliberately disruptive — a broken build beats a 100%-full crash.
+[[background.trigger]]
+every = "5m"
+only_when_disk_free_below = "5%"
+policy = "aggressive"
+whole_target = "delete"             # nuke targets (cargo-clean equivalent)
+kill_active_builds = true           # SIGTERM -> 5s -> SIGKILL the cargo/rustc under `roots`, then clean
 ```
 
-`[scheduler].at` is the anchored daily cleanup time; `[background]` is a separate resident watcher. It is built from three orthogonal ideas — do not conflate them:
+`[scheduler].at` is the anchored daily cleanup time; `[background]` is a separate resident watcher running any number of independent `[[background.trigger]]` blocks. Each trigger is built from orthogonal, per-trigger settings — do not conflate them:
 
-- **Trigger — *when* a run fires.** Configure a `[background.periodic]` block (fires every `every`), a `[background.trigger]` block (fires every `every`), or both. They are independent, so you can run a routine cadence and a responsive gate at the same time.
-- **Limiter — *whether* a fired run actually cleans.** Each block may carry limiter keys (`only_when_disk_free_below`, `min_free_disk`, `max_target_size`). With no limiter the run always cleans; with a limiter it cleans only when a threshold is breached, and does nothing when it passes. Disk limiters use a cheap free-space check; `max_target_size` makes the block scan target sizes.
-- **Policy + budget — *what* a run removes and *how much*.** Governed by the policy in effect and the budget keys (`target_size_goal`, `target_free_disk`). Each block may set its own `policy` (default `[scheduler].policy`), so the routine cadence can stay `balanced` while a disk-pressure trigger escalates to `sweep`.
+- **Trigger — *when* it fires.** Its `every` cadence. Add as many triggers as you like; a trigger with no limiter is a plain periodic run.
+- **Limiter — *whether* a fired run cleans.** `only_when_disk_free_below`, `min_free_disk`, `max_target_size`. No limiter ⇒ always cleans; with a limiter ⇒ cleans only when breached. Disk limiters use a cheap free-space check; `max_target_size` scans target sizes.
+- **Policy + budget — *what* it removes and *how much*.** Its own `policy` (default `[scheduler].policy`) and the budget keys (`target_size_goal`, `target_free_disk`).
+- **Disruptiveness — *how hard* it hits active builds.** By default a trigger reclaims nothing from a target with a running build (safe). `interrupt_active_build = true` deletes in-use artifacts / whole targets during a build (the build then fails when its files vanish). `kill_active_builds = true` goes further: it terminates the `cargo`/`rustc` processes building targets under `roots` (SIGTERM, 5s grace, then SIGKILL) *before* cleaning, so the disk fill stops and there is nothing left to protect. `whole_target = "delete"` (per-trigger, requires the `aggressive` policy and `allow_unattended_whole_target_delete = true`) makes the run a full `cargo clean` of each target.
 
-So the example above runs a safe `balanced` trim every 30 minutes *and*, between those, checks free space every 5 minutes and — if the disk crosses 90% full — runs a `sweep` that additionally reclaims cold final binaries, without scanning targets on the frequent poll.
+So the example runs a safe trim every 30 minutes; escalates to `sweep` when free space dips under 10%; and, if it ever reaches 5% free, kills the offending builds and wipes their targets rather than let the disk hit 100%.
 
-> **Deprecated (to be removed in a future release):** the flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into the blocks above, with a warning. `mode = "periodic"` becomes a `[background.periodic]` block; `mode = "threshold"` becomes a `[background.trigger]` block (inheriting `[policy].max_target_size` as a limiter). Migrate to the subtable form.
+> **Deprecated (to be removed in a future release):** the flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into a single trigger, with a warning. Migrate to `[[background.trigger]]` blocks.
 
 ## Platform Notes
 

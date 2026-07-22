@@ -49,21 +49,25 @@ fn reclaim_example_config_parses_through_the_real_config_parser() -> Result<(), 
         Some(30 * 1024 * 1024 * 1024)
     );
 
-    let periodic = config.background.periodic.expect("periodic block");
-    assert_eq!(periodic.every, Duration::from_secs(30 * 60));
-    assert!(periodic.limiter.is_empty());
+    assert_eq!(config.background.triggers.len(), 2);
+
+    let routine = &config.background.triggers[0];
+    assert_eq!(routine.every, Duration::from_secs(30 * 60));
+    assert!(routine.limiter.is_empty());
+    assert!(!routine.interrupt_active_build);
+    assert!(!routine.kill_active_builds);
 
     assert_eq!(
         config.sweep_older_than,
         Some(Duration::from_secs(24 * 60 * 60))
     );
 
-    let trigger = config.background.trigger.expect("trigger block");
-    assert_eq!(trigger.every, Duration::from_secs(5 * 60));
-    assert_eq!(trigger.policy.as_deref(), Some("sweep"));
-    assert_eq!(trigger.limiter.disk_free_below_basis_points, Some(1250));
+    let gate = &config.background.triggers[1];
+    assert_eq!(gate.every, Duration::from_secs(5 * 60));
+    assert_eq!(gate.policy.as_deref(), Some("sweep"));
+    assert_eq!(gate.limiter.disk_free_below_basis_points, Some(1250));
     assert_eq!(
-        trigger.limiter.min_free_disk_bytes,
+        gate.limiter.min_free_disk_bytes,
         Some(20 * 1024 * 1024 * 1024)
     );
 

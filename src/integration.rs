@@ -371,6 +371,21 @@ fn build_plan_from_scan_items_with_active_observation_impl(
                     return Err(error);
                 }
             }
+            // A build writes into its target continuously, so the newest artifact
+            // mtime across the whole target is a race-free signal of an active
+            // build — unlike the point-in-time process scan, which can be sampled
+            // in a gap between rustc invocations or miss a build driver it does
+            // not recognize. Stamp it on every candidate so the planner can
+            // protect StaleDeps/StaleIncremental (old mtimes by definition, and
+            // otherwise reliant on the racy process scan alone) while the target
+            // is active.
+            let target_newest_modified = target_candidates
+                .iter()
+                .filter_map(|candidate| candidate.snapshot.modified)
+                .max();
+            for candidate in &mut target_candidates {
+                candidate.target_newest_modified = target_newest_modified;
+            }
             candidates.extend(target_candidates);
         } else {
             let snapshot = match snapshot_path(&target_candidate.path, &inventory_options) {

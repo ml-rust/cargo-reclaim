@@ -191,28 +191,36 @@ impl PolicyThresholdConfig {
     }
 }
 
-/// Resident background watcher configuration.
-///
-/// `mode` no longer lives here: how a run is *triggered* is expressed by the
-/// [`periodic`](Self::periodic) and [`trigger`](Self::trigger) blocks (either,
-/// both, or neither), and whether a fired run actually cleans is decided by
-/// each block's [`BackgroundLimiter`]. `target_free_disk_bytes` is a budget goal
-/// (how much a limited run reclaims) and is unchanged.
+/// Resident background watcher configuration: any number of independent
+/// [`triggers`](Self::triggers). Each trigger owns its own cadence, limiter,
+/// policy, and disruptiveness, so a config can mix (say) a safe 30-minute
+/// routine trim with an aggressive disk-pressure trigger that stops builds and
+/// nukes targets. `target_free_disk_bytes` is a budget goal shared by limited runs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BackgroundConfig {
     pub enabled: Option<bool>,
     pub target_free_disk_bytes: Option<u64>,
-    pub periodic: Option<BackgroundTrigger>,
-    pub trigger: Option<BackgroundTrigger>,
+    pub triggers: Vec<BackgroundTrigger>,
 }
 
-/// One background trigger: a firing cadence, an optional limiter gate, and an
-/// optional policy override (e.g. `"sweep"`) so this trigger can reclaim more
-/// aggressively than the scheduler default when it fires.
+/// One background trigger. A firing cadence plus, independently configurable:
+/// an optional limiter gate (when it cleans), an optional policy override (what
+/// it removes), an optional whole-target override, and its disruptiveness toward
+/// active builds. A trigger with no limiter fires on every `every`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundTrigger {
     pub every: Duration,
     pub policy: Option<String>,
+    /// Per-trigger whole-target override (defaults to the global `[policy]` value).
+    pub whole_target: Option<WholeTargetConfig>,
+    /// Delete in-use artifacts / whole targets even while a build runs (the build
+    /// then fails when its files vanish). Off by default; safe triggers protect
+    /// active builds entirely.
+    pub interrupt_active_build: bool,
+    /// Before cleaning, terminate the `cargo`/`rustc` processes building targets
+    /// under the config roots (SIGTERM, brief grace, then SIGKILL), so the disk
+    /// fill stops and there is no active build to protect. Implies disruptive.
+    pub kill_active_builds: bool,
     pub limiter: BackgroundLimiter,
 }
 
@@ -255,6 +263,13 @@ impl BackgroundTrigger {
         Ok(Self {
             every,
             policy: document.policy,
+            whole_target: document
+                .whole_target
+                .as_deref()
+                .map(WholeTargetConfig::parse)
+                .transpose()?,
+            interrupt_active_build: document.interrupt_active_build,
+            kill_active_builds: document.kill_active_builds,
             limiter: BackgroundLimiter {
                 max_target_size_bytes: document
                     .max_target_size
@@ -262,7 +277,7 @@ impl BackgroundTrigger {
                     .map(parse_config_size)
                     .transpose()?,
                 disk_free_below_basis_points: document
-                    .disk_free_below
+                    .only_when_disk_free_below
                     .as_deref()
                     .map(parse_config_percentage_basis_points)
                     .transpose()?,
@@ -282,26 +297,13 @@ impl BackgroundConfig {
         policy_max_target_size_bytes: Option<u64>,
         deprecations: &mut Vec<String>,
     ) -> Result<Self, ConfigError> {
-        let mut config = Self {
-            enabled: document.enabled,
-            target_free_disk_bytes: document
-                .target_free_disk
-                .as_deref()
-                .map(parse_config_size)
-                .transpose()?,
-            periodic: document
-                .periodic
-                .map(BackgroundTrigger::from_document)
-                .transpose()?,
-            trigger: document
-                .trigger
-                .map(BackgroundTrigger::from_document)
-                .transpose()?,
-        };
+        let mut triggers = Vec::new();
+        for trigger in document.trigger {
+            triggers.push(BackgroundTrigger::from_document(trigger)?);
+        }
 
-        // Backward compatibility: the flat `mode`/`check_every`/threshold keys are
-        // deprecated in 0.3 and removed in 0.4. Normalize them into the block that
-        // an explicit subtable did not already provide.
+        // Backward compatibility: the flat pre-0.3 `mode`/`check_every`/threshold
+        // keys normalize into a single trigger appended to the list.
         let uses_flat = document.mode.is_some()
             || document.check_every.is_some()
             || document.only_when_disk_free_below.is_some()
@@ -309,7 +311,7 @@ impl BackgroundConfig {
         if uses_flat {
             deprecations.push(
                 "[background] flat `mode`/`check_every`/`only_when_disk_free_below`/`min_free_disk` \
-                 are deprecated (removed in 0.4); use [background.periodic] and [background.trigger]"
+                 are deprecated; use one or more [[background.trigger]] blocks"
                     .to_string(),
             );
             let mode = document.mode.map(BackgroundMode::parse).transpose()?;
@@ -319,6 +321,8 @@ impl BackgroundConfig {
                 .map(parse_config_duration)
                 .transpose()?
                 .unwrap_or(DEFAULT_BACKGROUND_CHECK_EVERY);
+            // Parse the disk keys unconditionally so invalid values are always
+            // rejected, even under a `periodic` mode that ignores them.
             let disk_free_below_basis_points = document
                 .only_when_disk_free_below
                 .as_deref()
@@ -329,38 +333,35 @@ impl BackgroundConfig {
                 .as_deref()
                 .map(parse_config_size)
                 .transpose()?;
-            match mode {
-                // Old `threshold` mode fired at `check_every` and cleaned only when a
-                // limiter was breached — that is a `trigger` block. It also honored
-                // the per-target `[policy].max_target_size` high-water mark.
-                Some(BackgroundMode::Threshold) => {
-                    if config.trigger.is_none() {
-                        config.trigger = Some(BackgroundTrigger {
-                            every,
-                            policy: None,
-                            limiter: BackgroundLimiter {
-                                max_target_size_bytes: policy_max_target_size_bytes,
-                                disk_free_below_basis_points,
-                                min_free_disk_bytes,
-                            },
-                        });
-                    }
-                }
-                // Old `periodic` (or unspecified) fired at `check_every` and always
-                // cleaned — that is a `periodic` block with no limiter.
-                _ => {
-                    if config.periodic.is_none() {
-                        config.periodic = Some(BackgroundTrigger {
-                            every,
-                            policy: None,
-                            limiter: BackgroundLimiter::default(),
-                        });
-                    }
-                }
-            }
+            // Old `threshold` mode cleaned only when a limiter was breached (also
+            // honoring `[policy].max_target_size`); `periodic`/unspecified always cleaned.
+            let limiter = match mode {
+                Some(BackgroundMode::Threshold) => BackgroundLimiter {
+                    max_target_size_bytes: policy_max_target_size_bytes,
+                    disk_free_below_basis_points,
+                    min_free_disk_bytes,
+                },
+                _ => BackgroundLimiter::default(),
+            };
+            triggers.push(BackgroundTrigger {
+                every,
+                policy: None,
+                whole_target: None,
+                interrupt_active_build: false,
+                kill_active_builds: false,
+                limiter,
+            });
         }
 
-        Ok(config)
+        Ok(Self {
+            enabled: document.enabled,
+            target_free_disk_bytes: document
+                .target_free_disk
+                .as_deref()
+                .map(parse_config_size)
+                .transpose()?,
+            triggers,
+        })
     }
 }
 
@@ -382,6 +383,7 @@ impl BackgroundMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScannerConfig {
     pub follow_symlinks: Option<bool>,
     pub allow_name_only_targets: Option<bool>,
@@ -389,6 +391,7 @@ pub struct ScannerConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SchedulerConfig {
     pub name: Option<String>,
     pub at: Option<String>,

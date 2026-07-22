@@ -6,6 +6,10 @@ pub struct PlannerOptions {
     /// Age below which the `Sweep` policy will not reclaim a final binary
     /// (default 24h when unset). Ignored by other policies.
     pub sweep_older_than: Option<Duration>,
+    /// Delete artifacts (and whole targets) even while a build is active. A
+    /// disruptive trigger sets this on purpose; the default keeps active builds
+    /// fully protected.
+    pub interrupt_active_build: bool,
     pub keep_size_bytes: Option<u64>,
     pub target_size_goal_bytes: Option<u64>,
     pub target_free_disk_bytes: Option<u64>,

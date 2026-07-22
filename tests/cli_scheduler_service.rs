@@ -16,7 +16,7 @@ fn service_run_json_creates_state_log_and_plan() -> Result<(), Box<dyn Error>> {
     let config_path = write_config(
         temp.path(),
         &format!(
-            "roots = [{}]\n[background.periodic]\nevery = \"1s\"\n[scheduler]\nstate_dir = \"state\"\nlog_dir = \"logs\"\n",
+            "roots = [{}]\n[[background.trigger]]\nevery = \"1s\"\n[scheduler]\nstate_dir = \"state\"\nlog_dir = \"logs\"\n",
             toml_string(&project)
         ),
     )?;

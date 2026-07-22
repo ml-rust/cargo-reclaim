@@ -157,6 +157,34 @@ fn sweep_does_not_delete_final_binary_during_active_build() -> Result<(), Box<dy
 }
 
 #[test]
+fn interrupt_active_build_reclaims_during_active_build() -> Result<(), Box<dyn Error>> {
+    // A disruptive trigger opts out of active-build protection: it deletes even
+    // while a build runs (the build then fails when its files vanish — by design).
+    let options = PlannerOptions {
+        recent_write_keep_window: Some(Duration::from_secs(60 * 60)),
+        interrupt_active_build: true,
+        ..PlannerOptions::default()
+    };
+    let entry = plan_candidate_with_active_observation(
+        candidate_with_context_modified(
+            "/work/sample/target/debug/deps/libsample-0123456789abcdef.rmeta",
+            100,
+            ArtifactClass::DepsOutput,
+            TargetEvidence::strong_marker("CACHEDIR.TAG")?,
+            sample_context(),
+            0,
+        )?,
+        PolicyKind::Balanced,
+        &options,
+        &active_cargo(),
+        UNIX_EPOCH + Duration::from_secs(10 * 60 * 60),
+    )?;
+
+    assert_eq!(entry.action, PlanAction::Delete);
+    Ok(())
+}
+
+#[test]
 fn cold_deps_output_is_reclaimable_between_builds() -> Result<(), Box<dyn Error>> {
     // With no build active, an old dependency output is reclaimable; cargo re-plans
     // and rebuilds it on the next build if it is still needed.

@@ -31,6 +31,7 @@ fn parse_config_with_base(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ConfigDocument {
     pub version: u16,
     #[serde(default)]
@@ -52,6 +53,7 @@ pub(super) struct ConfigDocument {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PolicyConfig {
     pub mode: Option<String>,
     pub whole_target: Option<String>,
@@ -63,6 +65,7 @@ pub(super) struct PolicyConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PlannerConfig {
     pub recent_write_keep_window: Option<String>,
     pub sweep_older_than: Option<String>,
@@ -77,15 +80,16 @@ pub(super) struct PlannerConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct BackgroundDocument {
     pub enabled: Option<bool>,
     pub target_free_disk: Option<String>,
-    // Canonical trigger blocks.
+    // Canonical form: an array of independent triggers, `[[background.trigger]]`.
+    // A trigger with no limiter fires on its cadence (periodic); one with a limiter
+    // fires only when the limiter is breached.
     #[serde(default)]
-    pub periodic: Option<TriggerDocument>,
-    #[serde(default)]
-    pub trigger: Option<TriggerDocument>,
-    // Deprecated flat form (0.3), removed in 0.4.
+    pub trigger: Vec<TriggerDocument>,
+    // Deprecated flat form (pre-0.3); normalized into a single trigger.
     pub mode: Option<String>,
     pub check_every: Option<String>,
     pub only_when_disk_free_below: Option<String>,
@@ -93,11 +97,20 @@ pub(super) struct BackgroundDocument {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct TriggerDocument {
     pub every: Option<String>,
     pub policy: Option<String>,
+    pub whole_target: Option<String>,
+    #[serde(default)]
+    pub interrupt_active_build: bool,
+    #[serde(default)]
+    pub kill_active_builds: bool,
+    // Limiter keys — a trigger with none fires on its cadence; one with a limiter
+    // fires only when the limiter is breached. Names match the flat `[background]`
+    // form and the README exactly, so the same key works in either place.
     pub max_target_size: Option<String>,
-    pub disk_free_below: Option<String>,
+    pub only_when_disk_free_below: Option<String>,
     pub min_free_disk: Option<String>,
 }
 
@@ -124,8 +137,6 @@ keep_recent_projects = "3 days"
 max_target_size = "5 GiB"
 target_size_goal = "4 GiB"
 unattended_allowed = true
-remove_classes = ["incremental"]
-preserve_final_artifacts = true
 
 [scanner]
 follow_symlinks = true
@@ -156,9 +167,6 @@ check_every = "15m"
 only_when_disk_free_below = "12.5%"
 min_free_disk = "20 GiB"
 target_free_disk = "30 GiB"
-
-[future]
-field = true
 "#,
         )?;
 
@@ -204,9 +212,9 @@ field = true
         );
         assert_eq!(config.policy_thresholds.unattended_allowed, Some(true));
         assert_eq!(config.background.enabled, Some(true));
-        // The deprecated flat threshold form normalizes into a `trigger` block.
-        assert!(config.background.periodic.is_none());
-        let trigger = config.background.trigger.expect("trigger block");
+        // The deprecated flat threshold form normalizes into a single trigger.
+        assert_eq!(config.background.triggers.len(), 1);
+        let trigger = &config.background.triggers[0];
         assert_eq!(trigger.every.as_secs(), 15 * 60);
         assert_eq!(trigger.limiter.disk_free_below_basis_points, Some(1250));
         assert_eq!(
@@ -315,6 +323,47 @@ keep_days = 3
     }
 
     #[test]
+    fn parses_multiple_triggers_with_per_trigger_settings() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::config::WholeTargetConfig;
+        let config = parse_config(
+            r#"
+version = 1
+
+[policy]
+allow_unattended_whole_target_delete = true
+
+[[background.trigger]]
+every = "30m"
+
+[[background.trigger]]
+every = "5m"
+policy = "aggressive"
+whole_target = "delete"
+kill_active_builds = true
+only_when_disk_free_below = "5%"
+"#,
+        )?;
+
+        assert_eq!(config.background.triggers.len(), 2);
+
+        let routine = &config.background.triggers[0];
+        assert_eq!(routine.every.as_secs(), 30 * 60);
+        assert!(routine.limiter.is_empty());
+        assert!(!routine.interrupt_active_build);
+        assert!(!routine.kill_active_builds);
+        assert_eq!(routine.whole_target, None);
+
+        let emergency = &config.background.triggers[1];
+        assert_eq!(emergency.policy.as_deref(), Some("aggressive"));
+        assert_eq!(emergency.whole_target, Some(WholeTargetConfig::Delete));
+        assert!(emergency.kill_active_builds);
+        assert_eq!(emergency.limiter.disk_free_below_basis_points, Some(500));
+        assert!(config.deprecations.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn rejects_invalid_background_disk_percentages() {
         for value in ["0%", "100.01%", "101%", "ten%", "12.345%", "12"] {
             let contents =
@@ -332,5 +381,16 @@ keep_days = 3
             parse_config("version = 1\n[policy]\nwhole_target = \"remove\""),
             Err(super::ConfigError::InvalidWholeTargetMode(value)) if value == "remove"
         ));
+    }
+
+    #[test]
+    fn rejects_unknown_trigger_key() {
+        // An obsolete or misspelled limiter key must fail loudly at load. Silent
+        // acceptance is what left a trigger's `only_when_disk_free_below` limiter
+        // empty and firing on every cadence. `disk_free_below` was the obsolete
+        // spelling; it is now rejected rather than ignored.
+        let contents =
+            "version = 1\n[[background.trigger]]\nevery = \"5m\"\ndisk_free_below = \"5%\"\n";
+        assert!(parse_config(contents).is_err());
     }
 }
