@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.4.0] - 2026-07-22
+
+### Added
+
+- New `sweep` policy: cargo-sweep-style reclamation of cold final binaries (`final_executable`, `final_rlib`, `final_library`, `final_wasm`) once they are older than a sweep age threshold, on top of the balanced removable set. It never deletes whole targets, docs, packages, or unknown files, and — like every policy — reclaims nothing from a target with an active build. Configure the age gate with `[planner].sweep_older_than` (default 24h).
+- Per-trigger policy override: a `[background.periodic]` or `[background.trigger]` block may set its own `policy` (e.g. `policy = "sweep"`), so a disk-pressure trigger can reclaim more aggressively than the routine cadence while still satisfying the unattended high-policy gate.
+
+### Notes
+
+- Active builds remain fully protected: while any `cargo`/`rustc` process is touching a target, cargo-reclaim reclaims nothing from it (it cannot distinguish a superseded hash variant from a live feature-variant the linker needs without cargo's fingerprint DB). Age-based reclaim happens between builds, where cargo re-plans and rebuilds anything removed.
+
+---
+
 ## [0.3.0] - 2026-07-21
 
 ### Added
