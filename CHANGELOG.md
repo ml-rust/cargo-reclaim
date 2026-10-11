@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ## [Unreleased]
 
+---
+
+## [0.6.0] - 2026-10-12
+
 ### Security
 
 - Updated `crossbeam-epoch` to 0.9.20 for RUSTSEC-2026-0204 (invalid pointer dereference in the `fmt::Pointer` impl), reached transitively through `rayon`.
