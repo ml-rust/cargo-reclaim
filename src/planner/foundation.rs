@@ -320,7 +320,7 @@ fn plan_whole_target_candidate(
     }
 }
 
-fn active_skip_reason(
+pub(crate) fn active_skip_reason(
     target_context: Option<&TargetContext>,
     active_observation: &ActiveObservation,
 ) -> Option<String> {

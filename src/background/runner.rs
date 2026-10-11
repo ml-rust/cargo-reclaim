@@ -6,7 +6,7 @@ use std::time::SystemTime;
 
 use crate::active_process::ActiveObservationProvider;
 use crate::error::ReclaimError;
-use crate::executor::{ApplyReport, execute_persisted_plan_apply};
+use crate::executor::{ApplyReport, execute_immediate_plan_apply};
 use crate::integration::build_plan_from_roots_with_active_observation_provider;
 use crate::inventory::InventoryOptions;
 use crate::persistence::{
@@ -230,8 +230,12 @@ fn run_after_started(
 
     let mut apply_report = None;
     if decision.state == WatcherDecisionState::TriggeredPlanAndApply {
-        let report = execute_persisted_plan_apply(&document, request.now)
-            .map_err(|source| failure(&request, BackgroundRunnerError::Apply(source)))?;
+        let report = execute_immediate_plan_apply(
+            &document,
+            request.now,
+            request.planner_options.interrupt_active_build,
+        )
+        .map_err(|source| failure(&request, BackgroundRunnerError::Apply(source)))?;
         let apply_completed = BackgroundRunLogRecord::new(
             request.run_id.clone(),
             persisted_timestamp_or_failure(&request)?,

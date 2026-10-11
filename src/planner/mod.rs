@@ -11,3 +11,5 @@ pub use build::{
 };
 pub use candidate::PlannerCandidate;
 pub use options::{PlannerOptions, WholeTargetMode};
+
+pub(crate) use foundation::active_skip_reason;

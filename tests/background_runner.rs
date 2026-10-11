@@ -230,6 +230,64 @@ fn failure_after_start_appends_failed_record() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn disruptive_background_apply_preserves_immediate_request_intent() -> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("background_disruptive")?;
+    let file = temp.path.join("project/target/debug/incremental/cache.bin");
+    write_project_target_file(&file)?;
+    let mut request = request(
+        &temp,
+        "disruptive",
+        triggered(WatcherDecisionState::TriggeredPlanAndApply),
+    )?;
+    let now = SystemTime::now();
+    let old = now - Duration::from_secs(14 * 86400);
+    fs::File::open(&file)?.set_modified(old)?;
+    fs::File::open(file.parent().unwrap())?.set_modified(old)?;
+    request.now = now;
+    request.created_at = now;
+    request.expires_at = now + Duration::from_secs(3600);
+    request.planner_options.interrupt_active_build = true;
+    request.planner_options.recent_write_keep_window = Some(Duration::from_secs(7 * 86400));
+    let report = run_background_cleanup_cycle(request, &NoopActiveProvider)?;
+    assert!(report.apply_report.unwrap().totals.applied_count > 0);
+    assert!(!file.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn saved_disruptive_plan_does_not_authorize_bypassing_activity_checks() -> Result<(), Box<dyn Error>>
+{
+    let temp = TestTemp::new("background_disruptive_saved")?;
+    let file = temp.path.join("project/target/debug/incremental/cache.bin");
+    write_project_target_file(&file)?;
+    let mut request = request(
+        &temp,
+        "disruptive-saved",
+        triggered(WatcherDecisionState::TriggeredPlanOnly),
+    )?;
+    let now = SystemTime::now();
+    let old = now - Duration::from_secs(14 * 86400);
+    fs::File::open(&file)?.set_modified(old)?;
+    fs::File::open(file.parent().unwrap())?.set_modified(old)?;
+    request.now = now;
+    request.created_at = now;
+    request.expires_at = now + Duration::from_secs(3600);
+    request.planner_options.interrupt_active_build = true;
+    request.planner_options.recent_write_keep_window = Some(Duration::from_secs(7 * 86400));
+    let now = request.now;
+    run_background_cleanup_cycle(request, &NoopActiveProvider)?;
+    let document: cargo_reclaim::PersistedPlan =
+        serde_json::from_str(&fs::read_to_string(temp.path.join("plan.json"))?)?;
+    let report = cargo_reclaim::execute_persisted_plan_apply(&document, now)?;
+    assert_eq!(report.totals.applied_count, 0);
+    assert!(report.totals.stale_skip_count > 0);
+    assert!(file.exists());
+    Ok(())
+}
+
 fn request(
     temp: &TestTemp,
     run_id: &str,

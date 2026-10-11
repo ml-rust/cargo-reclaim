@@ -16,6 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ### Fixed
 
+- Recheck build processes and target-wide recent writes before applying a saved build-artifact plan. Preserve candidates when their target became active after planning. This is an apply-time check, not a Cargo build lock.
 - Reject symlink ancestors when validating and deleting saved build-artifact plans, so a replaced parent directory cannot redirect a previously planned deletion. This check does not make concurrent path resolution and deletion atomic.
 - Require the conventional `target` directory name before accepting generic `CACHEDIR.TAG` evidence. Custom Cargo output directories remain supported through Cargo configuration or `.rustc_info.json`.
 

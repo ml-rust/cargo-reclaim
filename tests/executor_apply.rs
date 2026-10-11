@@ -312,6 +312,94 @@ fn apply_execution_reports_delete_failures() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn apply_preserves_an_unchanged_candidate_when_its_target_has_new_writes()
+-> Result<(), Box<dyn Error>> {
+    let temp = TestTemp::new("apply_target_new_writes")?;
+    let target = temp.path.join("target");
+    let file = target.join("debug/deps/libsample-0123456789abcdef.rlib");
+    fs::create_dir_all(file.parent().expect("parent"))?;
+    fs::write(target.join(".rustc_info.json"), "{}")?;
+    fs::write(&file, b"abc")?;
+    let old = SystemTime::now() - Duration::from_secs(14 * 86400);
+    // Windows requires write-attribute access when updating file timestamps.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&file)?
+        .set_modified(old)?;
+    let mut document = persisted_plan_for_path(&file, 3)?;
+    document.body.plan.input.roots = vec![temp.path.to_string_lossy().into_owned()];
+    document
+        .body
+        .invocation
+        .planner_options
+        .recent_write_keep_window_seconds = Some(7 * 86400);
+    document.body.created_at = cargo_reclaim::PersistedTimestamp::from_system_time(old)?;
+    document.body.expires_at = cargo_reclaim::PersistedTimestamp::from_system_time(
+        SystemTime::now() + Duration::from_secs(3600),
+    )?;
+    document.id = PlanId::from_body(&document.body)?;
+    fs::write(target.join("debug/deps/new-build.o"), b"new build output")?;
+
+    let validation = validate_persisted_plan_for_apply(&document, SystemTime::now())?;
+    assert_eq!(validation.totals.would_delete_count, 0);
+    let report = execute_persisted_plan_apply(&document, SystemTime::now())?;
+    assert_eq!(report.totals.applied_count, 0);
+    assert_eq!(report.totals.stale_skip_count, 1);
+    assert_eq!(fs::read(&file)?, b"abc");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_honors_relative_exclusions_during_recent_write_revalidation() -> Result<(), Box<dyn Error>>
+{
+    // Keep the fixture beneath cwd so the plan can use relative paths without
+    // changing process-global cwd in a parallel test run.
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let temp = TestTemp {
+        path: PathBuf::from(format!("reclaim-relative-{unique}")),
+    };
+    let target = temp.path.join("target");
+    let skipped = target.join("debug/cache");
+    let file = target.join("debug/deps/libsample-0123456789abcdef.rlib");
+    fs::create_dir_all(file.parent().unwrap())?;
+    fs::create_dir_all(&skipped)?;
+    fs::write(target.join(".rustc_info.json"), "{}")?;
+    fs::write(&file, b"abc")?;
+    fs::write(skipped.join("fresh.bin"), b"new excluded data")?;
+    let now = SystemTime::now();
+    let old = now - Duration::from_secs(14 * 86400);
+    for path in [
+        &file,
+        &target.join(".rustc_info.json"),
+        &target.join("debug/deps"),
+        &target.join("debug"),
+        &target,
+    ] {
+        fs::File::open(path)?.set_modified(old)?;
+    }
+    let mut document = persisted_plan_for_path(&file, 3)?;
+    document.body.plan.input.roots = vec![temp.path.to_string_lossy().into_owned()];
+    document.body.invocation.scanner_options.skipped_paths =
+        vec![skipped.to_string_lossy().into_owned()];
+    document
+        .body
+        .invocation
+        .planner_options
+        .recent_write_keep_window_seconds = Some(7 * 86400);
+    document.body.created_at = cargo_reclaim::PersistedTimestamp::from_system_time(old)?;
+    document.body.expires_at =
+        cargo_reclaim::PersistedTimestamp::from_system_time(now + Duration::from_secs(3600))?;
+    document.id = PlanId::from_body(&document.body)?;
+
+    let report = execute_persisted_plan_apply(&document, now)?;
+    assert_eq!(report.totals.applied_count, 1, "{report:?}");
+    assert!(!file.exists());
+    assert!(skipped.join("fresh.bin").exists());
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn apply_rejects_a_symlink_substituted_for_an_ancestor() -> Result<(), Box<dyn Error>> {
