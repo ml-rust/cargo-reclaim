@@ -2,16 +2,24 @@
 
 # cargo-reclaim
 
-<h3>Safe Cargo cleanup for real Rust workstations.</h3>
+<h3>Trims stale Cargo build artifacts with saved, revalidated plans.</h3>
 
 <p>
-cargo-reclaim finds large Cargo build directories, trims stale deps and incremental caches, and keeps active projects under control with a default cleanup assistant, saved plans, and a resident scheduler.
+cargo-reclaim finds Cargo target directories and trims their stale artifacts.
+On the command line, a run validates only until you pass <code>--yes</code>.
 </p>
 
 <p>
-  <a href="#quickstart"><strong>Quickstart</strong></a>
-  <a href="#main-commands"><strong>Commands</strong></a>
-  <a href="#real-usage-recipes"><strong>Recipes</strong></a>
+  <a href="https://docs.rs/cargo-reclaim"><strong>Docs</strong></a>
+  ·
+  <a href="https://crates.io/crates/cargo-reclaim"><strong>Crate</strong></a>
+  ·
+  <a href="#commands"><strong>Commands</strong></a>
+  ·
+  <a href="#scheduler"><strong>Scheduler</strong></a>
+  ·
+  <a href="#quick-start"><strong>Example</strong></a>
+  ·
   <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
 </p>
 
@@ -22,14 +30,17 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
 </p>
 
 <p>
+  <a href="https://github.com/ml-rust/cargo-reclaim/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/ml-rust/cargo-reclaim/ci.yml?branch=main&label=ci" alt="CI status">
+  </a>
   <a href="https://crates.io/crates/cargo-reclaim">
     <img src="https://img.shields.io/crates/v/cargo-reclaim" alt="crates.io">
   </a>
   <a href="https://docs.rs/cargo-reclaim">
     <img src="https://img.shields.io/docsrs/cargo-reclaim" alt="docs.rs">
   </a>
-  <a href="LICENSE-MIT">
-    <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue" alt="License: MIT OR Apache-2.0">
+  <a href="#license">
+    <img src="https://img.shields.io/crates/l/cargo-reclaim" alt="License">
   </a>
   <a href="https://github.com/ml-rust/cargo-reclaim/stargazers">
     <img src="https://img.shields.io/github/stars/ml-rust/cargo-reclaim?style=social" alt="GitHub stars">
@@ -38,9 +49,12 @@ cargo-reclaim finds large Cargo build directories, trims stale deps and incremen
 
 </div>
 
-cargo-reclaim is a safer, background-friendly companion to `cargo clean`. It opens a TTY cleanup assistant by default, trims stale artifacts instead of wiping whole targets, inventories Cargo target directories before deletion, validates saved plans before apply, and can run as a resident scheduler for active Rust workstations.
+cargo-reclaim trims stale artifacts in Cargo `target` directories and Cargo home caches. It revalidates a saved plan before it deletes anything.
+It can also run as a resident scheduler with size and disk-space triggers.
 
-## Quickstart
+## Quick Start
+
+cargo-reclaim requires Rust 1.88 or later.
 
 Install from crates.io:
 
@@ -48,198 +62,100 @@ Install from crates.io:
 cargo install cargo-reclaim
 ```
 
-From a checkout:
+Install from a checkout:
 
 ```sh
 cargo install --path .
 ```
 
-Primary cleanup assistant:
+List the Cargo target directories under a project tree. This command reads only:
 
 ```sh
-cargo-reclaim ~/Projects
 cargo-reclaim list ~/Projects
-cargo-reclaim ~/Projects --all --yes
-cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes
-cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
 ```
 
-Foreground `cleanup` and `apply` terminal runs print a concise summary plus `full report: <path>` for the complete JSON entry list. `scheduler service status` prints the resolved state file, log directory, run log path, lifetime totals, and recent run summaries. The resident scheduler writes JSONL run records to `runs.jsonl` under the resolved `log_dir`.
-
-Supported Rust: `cargo-reclaim` targets Rust 1.88+.
-
-## Why cargo-reclaim
-
-- **Find the real disk hogs.** Discover Cargo target directories from project roots, Cargo config target dirs, and target-root evidence, then list them largest-first with measured sizes before cleanup starts.
-- **Trim instead of wipe.** Reclaim stale hashed `deps` variants, old deps outputs, stale incremental sessions, fingerprints, build-script caches, temporary files, and other partial artifacts without always deleting the whole `target` directory.
-- **Protect active work.** Use the TTY cleanup assistant, recent-write windows, preserved classes, policy modes, saved plans, and fresh apply-time revalidation before deletion.
-- **Clean interactively or automatically.** Open the assistant for guided cleanup, run one-shot plans, or install a resident scheduler service that keeps projects below size ceilings.
-- **Automate safely.** Emit JSON for scripts, dashboards, TUI frontends, and other tools; saved plans make review and execution separate steps.
-- **Cover Cargo home too.** Report and clean Cargo home cache data through the same persisted-plan safety model.
-
-## Why not `cargo clean`?
-
-Use `cargo clean` when you are inside one project and want to delete that project's whole build output now. That is simple and correct for a full reset, but it also throws away useful artifacts that make the next build fast. For active projects, cargo-reclaim is designed to preserve the hot build path while trimming stale bulk around it.
-
-`cargo clean` is a manual per-project reset. `cargo-reclaim` is an operating layer around Cargo cleanup: it finds targets, explains what can be reclaimed, preserves active builds and recent outputs, validates saved plans, and can keep cleanup running in the background.
-
-## Interaction Modes
-
-| Mode                         | Example                                                                                                                 | Skips                                                      | Result                                                                         |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| TTY assistant default        | `cargo-reclaim ~/Projects`                                                                                              | Nothing; this is the primary guided flow                   | Opens the cleanup assistant for smart trim or whole-target deletion decisions. |
-| Read-only inventory          | `cargo-reclaim list ~/Projects`                                                                                         | Cleanup entirely                                           | Lists Cargo target directories and sizes.                                      |
-| Bulk smart trim              | `cargo-reclaim ~/Projects --all --yes`                                                                                  | The assistant and per-target selection                     | Selects all eligible smart-trim candidates and executes them after validation. |
-| Explicit whole-target delete | `cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes`                                   | Assistant mode choice and selection pages                  | Deletes the selected target directory directly after validation.               |
-| Validate only                | `cargo-reclaim ~/Projects --all --dry-run` or `cargo-reclaim ~/Projects --target ~/Projects/my-crate/target --validate` | Deletion and assistant pages skipped by the selector flags | Revalidates and reports what would change without touching files.              |
-
-`--target` skips selection, `--all` selects all, `--delete-target` skips mode choice, `--yes` executes, and `--dry-run` or `--validate` validate only. `--yes` alone does not imply `--all`; bulk cleanup needs explicit `--all --yes`.
-
-## Key Capabilities
-
-### Target Discovery
-
-- Lists Cargo target directories under one or more roots.
-- Understands configured Cargo target dirs and shared target dirs.
-- Reports measured size largest-first.
-- Supports explicit whole-target cleanup through the assistant path when that is the chosen operation.
-
-### Partial Artifact Cleanup
-
-- Trims stale rustc incremental cache sessions and older compile-unit variants.
-- Trims stale hashed files under `target/*/deps` when older hash variants can be distinguished from the newest family member.
-- Trims direct old deps outputs when a recent-write keep window is configured.
-- Preserves final binaries, final libraries, docs, packages, timings, unknown artifacts, and whole target directories unless explicit whole-target cleanup is requested.
-
-### Safety And Revalidation
-
-- `scan`, `plan`, `list`, `cargo-home report`, and config recommendation commands are read-only.
-- `apply` consumes a saved plan and revalidates filesystem state before deletion.
-- Entries that changed, disappeared, became symlinks, or no longer match the saved snapshot are skipped instead of blindly removed.
-- Destructive commands require `--yes`.
-
-### Scheduler
-
-- Installs platform service artifacts for Linux `systemd --user`, macOS `launchd`, and Windows Task Scheduler.
-- Runs a resident background loop from a TOML config.
-- Supports per-target high-water limits and global free-space thresholds.
-- Writes durable service state and JSONL run logs for diagnostics.
-
-### Cargo Home
-
-- Reports Cargo home cache usage.
-- Builds saved cleanup plans for Cargo home data.
-- Applies only saved Cargo home plans, with the same validation boundary as target cleanup.
-
-## Main Commands
+Open the cleanup assistant. This command needs a terminal:
 
 ```sh
 cargo-reclaim ~/Projects
-cargo-reclaim list ~/Projects
-cargo-reclaim list ~/Projects --json
-cargo-reclaim ~/Projects --all --yes
-cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes
-
-cargo-reclaim plan ~/Projects/my-crate --policy balanced --whole-target off --keep-recent-writes 4h --save-plan /tmp/reclaim-plan.json
-cargo-reclaim apply --plan /tmp/reclaim-plan.json
-cargo-reclaim apply --plan /tmp/reclaim-plan.json --yes
-
-cargo-reclaim edit-plan --plan /tmp/reclaim-plan.json --list
-cargo-reclaim edit-plan --plan /tmp/reclaim-plan.json --interactive
-
-cargo-reclaim cargo-home report --cargo-home ~/.cargo
-cargo-reclaim cargo-home plan --cargo-home ~/.cargo --policy conservative --save-plan /tmp/cargo-home-plan.json
-cargo-reclaim cargo-home apply --plan /tmp/cargo-home-plan.json --yes
-
-cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
-cargo-reclaim scheduler service run --config ~/.config/cargo-reclaim/reclaim.toml --max-cycles 1 --json
 ```
 
-`scan` and `plan` both build a read-only cleanup plan for one or more roots. `plan` can also persist the plan with `--save-plan`, which is what `apply` consumes later. `list` is the read-only target inventory surface, while the root form opens the interactive cleanup assistant in a TTY.
-
-## Real Usage Recipes
+Trim every eligible target. This command deletes after validation:
 
 ```sh
-# Open the cleanup assistant for a project tree.
-cargo-reclaim ~/Projects
-
-# Produce machine-readable target inventory for another tool.
-cargo-reclaim list ~/Projects --json
-
-# Delete all eligible smart-trim candidates after validation.
 cargo-reclaim ~/Projects --all --yes
-
-# Delete one known target directory without hand-editing a saved plan.
-cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes
-
-# Trim stale deps and incremental artifacts from an active project.
-cargo-reclaim plan ~/Projects/my-crate --policy balanced --whole-target off --keep-recent-writes 4h --save-plan /tmp/my-crate-reclaim.json
-cargo-reclaim apply --plan /tmp/my-crate-reclaim.json --yes
-
-# Run one scheduler service cycle for diagnostics.
-cargo-reclaim scheduler service run --config ~/.config/cargo-reclaim/reclaim.toml --max-cycles 1 --json
-
-# Check whether the resident scheduler service is alive and what it last did.
-cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
-
-# Inspect the raw scheduler run log printed by service status.
-tail -n 20 ~/.local/state/cargo-reclaim/logs/runs.jsonl
-
-# Inspect a foreground cleanup/apply report from the `full report:` path printed after the run.
-jq '.totals, .entries[] | select(.status != "not_planned_for_deletion")' ~/.local/state/cargo-reclaim/reports/*.json
-
-# Preview platform service artifacts before installing them.
-cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler preview --platform launchd --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler preview --platform task-scheduler --config ~/.config/cargo-reclaim/reclaim.toml
-
-# Check resident scheduler status after installation.
-cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml
-cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml --json
-
-# Clean Cargo home caches through a persisted, revalidated plan.
-cargo-reclaim cargo-home report --cargo-home ~/.cargo
-cargo-reclaim cargo-home plan --cargo-home ~/.cargo --policy conservative --save-plan /tmp/cargo-home-reclaim.json
-cargo-reclaim cargo-home apply --plan /tmp/cargo-home-reclaim.json --yes
 ```
 
-## Validation And Apply Flow
+Delete one target directory whole:
 
-1. Build a dry-run plan with `scan`, `plan`, `--dry-run`, or `--validate`.
-2. Persist the plan with `--save-plan <path>` when you want a later apply step.
-3. Review or edit the saved plan with `edit-plan` if needed.
-4. Run `apply --plan <path>` to validate the saved plan against the current filesystem state.
-5. Add `--yes` only when you want the validated delete actions to run.
+```sh
+cargo-reclaim ~/Projects --target ~/Projects/old-crate/target --delete-target --yes
+```
 
-This revalidation step is the core safety boundary: cargo-reclaim refuses stale assumptions instead of deleting artifacts from an old snapshot.
+Foreground cleanup and apply runs print a summary and a `full report:` line. The file on that line holds every entry.
 
-## Policy Modes
+## Commands
 
-| Policy         | Default? | Deletes automatically in a plan?                                                                                                                                                                                                                                                                                            | Typical use                                                                |
-| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `observe`      | No       | Nothing. Cleanup-capable entries are preserved for reporting.                                                                                                                                                                                                                                                               | Inventory, dashboards, CI/reporting, or first run on an unknown machine.   |
-| `conservative` | No       | Narrow low-risk classes such as incremental and temporary artifacts.                                                                                                                                                                                                                                                        | Active projects where rebuild impact must stay minimal.                    |
-| `balanced`     | Yes      | Default removable classes: incremental, build-script caches, fingerprints, temporary artifacts, stale fingerprint-group intermediates, stale hashed deps variants, old hashed deps outputs when a recent-write keep window is configured, stale incremental sessions or unit variants, dep-info files, and object metadata. | Normal workstation cleanup and scheduled partial trimming.                 |
-| `aggressive`   | No       | Same default removable classes as `balanced`; whole-target deletion is still separate and requires explicit whole-target cleanup.                                                                                                                                                                                           | One-off deep cleanup when rebuild cost is acceptable.                      |
-| `sweep`        | No       | The `balanced` removable classes **plus** cold final binaries (`final_executable`, `final_rlib`, `final_library`, `final_wasm`) once they are older than `[planner].sweep_older_than` (default 24h). Keeps the target directory, docs, packages, and unknown files. cargo-sweep-style reclamation.                            | Disk-pressure recovery: free the bulk of an oversized target by dropping stale binaries, keeping the hot build path. |
-| `custom`       | No       | Currently follows the default removable class set used by `balanced`.                                                                                                                                                                                                                                                       | Config-driven future policy tuning while preserving current safety checks. |
+| Command                      | Purpose                                                                                  | Deletes |
+| ---------------------------- | ---------------------------------------------------------------------------------------- | ------- |
+| `cargo-reclaim ROOT ...`     | Opens the cleanup assistant. Pass `--all` or `--target` to skip it.                       | With `--yes` |
+| `cargo-reclaim list ROOT ...`| Lists target directories and sizes, largest first.                                       | No      |
+| `scan` and `plan`            | Builds a dry-run plan. `plan --save-plan <path>` saves it.                               | No      |
+| `apply --plan <path>`        | Revalidates a saved plan. Deletes with `--yes`.                                         | With `--yes` |
+| `edit-plan --plan <path>`    | Lists or selects entries in a saved plan.                                                | No      |
+| `cargo-home`                 | Reports, plans, and applies cleanup of Cargo home caches.                                | With `--yes` on `apply` |
+| `cargo-config`               | Recommends, previews, and applies Cargo build output config.                             | With `--yes` on `apply` |
+| `scheduler`                  | Previews, installs, and runs the platform service. See [Scheduler](#scheduler).          | Through the service |
 
-Protected by default in every non-whole-target policy: whole target directories, docs, packages, timings, final executables, final libraries, final `.rlib` files, final `.wasm` files, and unknown artifacts. (`sweep` additionally releases the final-binary classes once they pass the age gate.) Weak name-only target evidence requires confirmation instead of automatic deletion.
+The root form validates by default. Selection flags decide what a run covers:
 
-### Cleaning during an active build
+| Flag                          | Effect                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `--all`                       | Selects every eligible smart-trim candidate.                                |
+| `--target <path>`             | Selects one target directory. Repeat for more targets.                      |
+| `--delete-target`             | Deletes the selected target directories whole. Skips the mode page.         |
+| `--yes`                       | Deletes after validation. Without it, the run validates only.               |
+| `--dry-run` or `--validate`   | Validates only. Conflicts with `--yes`.                                     |
 
-While a `cargo`/`rustc` build is touching a target, cargo-reclaim reclaims **nothing** from it — the whole target is protected. It cannot reliably tell which artifacts the running build still needs: even a "superseded" hashed `deps` variant can be a live feature-variant the linker wants (a single crate has several concurrent hash variants under `--all-features`), and cargo will not rebuild an output its fingerprint DB considers fresh. Only cargo's own fingerprint DB is authoritative, so any mid-build deletion risks breaking the build.
+`--yes` alone does not select targets. Use `--all --yes` for bulk cleanup.
+Without a terminal, the root form needs `--all` or `--target`.
 
-Reclaim therefore happens **between builds** (no active `cargo`/`rustc` process on the target), where the full policy removable set applies by age — cargo re-plans and rebuilds anything still needed on the next build, so that reclaim is recoverable. The practical consequence: cargo-reclaim cannot shrink a target that is under continuous heavy building. For that case, use a disruptive trigger that stops the build first (see below) or run `cargo clean` in a quiet window.
+Every flag, subcommand, and config key is in the [Command reference](docs/commands.md).
 
-## Scheduler Configuration
+## Safety Model
 
-Example active-project scheduler shape:
+- Read-only commands are `scan`, `plan`, `list`, `cargo-home report`, and `cargo-config recommend`.
+- Destructive commands require `--yes`. Without it, a run validates only.
+- `apply` revalidates the saved plan against the filesystem. It skips entries that changed, vanished, became symlinks, or no longer match the saved snapshot.
+- A target with an active `cargo` or `rustc` process, or a recent write, is protected as a whole.
+- Reclaim runs between builds. Cargo rebuilds anything still needed on the next build.
+
+See [Policies and active build protection](docs/policies.md#active-build-protection) for the full rules.
+
+## Policies
+
+Pass a policy with `--policy <kind>`. The default is `balanced`.
+
+| Policy         | Default | Automatic deletes                                                                       |
+| -------------- | ------- | --------------------------------------------------------------------------------------- |
+| `observe`      | No      | Nothing. Reports only.                                                                  |
+| `conservative` | No      | `incremental` and `tmp` artifacts.                                                      |
+| `balanced`     | Yes     | The default removable classes, such as incremental, fingerprint, and deps artifacts.    |
+| `aggressive`   | No      | The same classes as `balanced`. Whole-target deletion needs this policy.                |
+| `sweep`        | No      | The `balanced` classes plus cold final binaries older than `[planner].sweep_older_than`. |
+| `custom`       | No      | The same classes as `balanced`.                                                         |
+
+Protected outputs stay in place under every policy. Examples are docs, packages, timings, and unknown files.
+`sweep` is the only policy that deletes final binaries, and only after their age gate.
+The full class lists are in [Policies](docs/policies.md).
+
+## Scheduler
+
+`scheduler install` writes the service artifacts for your platform.
+The service runs `scheduler service run`, a resident loop. The loop reads `[[background.trigger]]` blocks from a TOML config.
+Supported platforms are `systemd-user`, `launchd`, and `task-scheduler`.
+
+Example config:
 
 ```toml
 version = 1
@@ -247,117 +163,88 @@ roots = ["/home/you/Projects/my-crate"]
 
 [policy]
 mode = "balanced"
-whole_target = "off"
-allow_unattended_whole_target_delete = false
 max_target_size = "100 GiB"
 target_size_goal = "80 GiB"
 
 [planner]
 recent_write_keep_window = "4h"
-sweep_older_than = "24h"            # age gate for the `sweep` policy's final-binary removal
 
 [scheduler]
-at = "04:15"
 mode = "cleanup"
 policy = "balanced"
 allow_unattended_cleanup = true
 allow_unattended_high_policy = true
-state_dir = "/home/you/.local/state/cargo-reclaim/my-crate"
-log_dir = "/home/you/.local/state/cargo-reclaim/my-crate/logs"
-
-[policy]
-allow_unattended_whole_target_delete = true   # required by the emergency trigger below
 
 [background]
 enabled = true
-target_free_disk = "200 GiB"        # budget goal: how much a limited run reclaims
 
-# Configure any number of independent [[background.trigger]] blocks.
-# A trigger with no limiter fires on its cadence (periodic); one with a limiter
-# fires only when the limiter is breached. Each owns its policy and disruptiveness.
-
-# 1) Routine: safe balanced trim every 30m. Fully protects active builds.
 [[background.trigger]]
 every = "30m"
 
-# 2) Responsive: every 5m, if disk is low, escalate to `sweep` (reclaims cold
-#    final binaries too). Still protects active builds.
 [[background.trigger]]
 every = "5m"
 only_when_disk_free_below = "10%"
 policy = "sweep"
-
-# 3) Emergency: at 5% free, stop the builds filling the disk and cargo-clean the
-#    targets. Deliberately disruptive — a broken build beats a 100%-full crash.
-[[background.trigger]]
-every = "5m"
-only_when_disk_free_below = "5%"
-policy = "aggressive"
-whole_target = "delete"             # nuke targets (cargo-clean equivalent)
-kill_active_builds = true           # SIGTERM -> 5s -> SIGKILL the cargo/rustc under `roots`, then clean
 ```
 
-`[scheduler].at` is the anchored daily cleanup time; `[background]` is a separate resident watcher running any number of independent `[[background.trigger]]` blocks. Each trigger is built from orthogonal, per-trigger settings — do not conflate them:
+This config trims with the `balanced` policy every 30 minutes.
+Every 5 minutes, it runs the `sweep` policy when free disk space falls below 10%.
 
-- **Trigger — *when* it fires.** Its `every` cadence. Add as many triggers as you like; a trigger with no limiter is a plain periodic run.
-- **Limiter — *whether* a fired run cleans.** `only_when_disk_free_below`, `min_free_disk`, `max_target_size`. No limiter ⇒ always cleans; with a limiter ⇒ cleans only when breached. Disk limiters use a cheap free-space check; `max_target_size` scans target sizes.
-- **Policy + budget — *what* it removes and *how much*.** Its own `policy` (default `[scheduler].policy`) and the budget keys (`target_size_goal`, `target_free_disk`).
-- **Disruptiveness — *how hard* it hits active builds.** By default a trigger reclaims nothing from a target with a running build (safe). `interrupt_active_build = true` deletes in-use artifacts / whole targets during a build (the build then fails when its files vanish). `kill_active_builds = true` goes further: it terminates the `cargo`/`rustc` processes building targets under `roots` (SIGTERM, 5s grace, then SIGKILL) *before* cleaning, so the disk fill stops and there is nothing left to protect. `whole_target = "delete"` (per-trigger, requires the `aggressive` policy and `allow_unattended_whole_target_delete = true`) makes the run a full `cargo clean` of each target.
+Preview the service artifacts, then install and check the service:
 
-So the example runs a safe trim every 30 minutes; escalates to `sweep` when free space dips under 10%; and, if it ever reaches 5% free, kills the offending builds and wipes their targets rather than let the disk hit 100%.
-
-### Saved Plan Format
-
-A saved plan is a machine-revalidated document, not a hand-edited one — `edit-plan` reads and rewrites it, and `apply` revalidates it against the filesystem before deleting anything. It is written compactly, with the values that repeat across entries (directories, artifact classes, actions, policy reasons, evidence) hoisted into a `dictionaries` table that entries index into. Decoding rejects an out-of-range index rather than guessing, so a plan that cannot be reconstructed exactly is never applied. To read a plan with `jq`, resolve the indexes through `.plan.dictionaries`, or use `edit-plan --list --json`, which prints entries fully expanded.
-
-Plans written by the **background service** additionally summarize active-build skips. When a build is touching a target, the planner protects that target wholesale but records the verdict on every file inside it; those entries are never actionable, and on a busy workspace they are the overwhelming majority of the document. The service therefore writes one `active_skips` entry per target (`target`, `entry_count`, `total_bytes`, `reasons`) instead. `totals` still counts every entry the planner produced. Plans you save yourself with `--save-plan` keep every entry, so `edit-plan` can still reselect anything the planner protected.
-
-Measured on a 78,928-entry plan over a multi-project workspace:
-
-| | size |
-|---|---|
-| previous format | 59.0 MB |
-| current format, every entry kept (`--save-plan`) | 19.7 MB |
-| current format, background service audit plan | 0.67 MB |
-
-### State Retention
-
-Every background cycle writes a plan snapshot to `<state_dir>/plans/` and appends to `<log_dir>/runs.jsonl`, and each terminal `apply` writes a report to `<state_dir>/reports/`. A plan for a large workspace records every candidate path, so a single snapshot can reach hundreds of megabytes — left unbounded, a frequent trigger fills the disk that cargo-reclaim exists to free.
-
-The service therefore enforces retention budgets on its own state, pruning at startup and after every cycle. The defaults apply with no configuration:
-
-```toml
-[scheduler.retention]
-keep_plans = 32           # plan snapshots kept; 0 disables the count budget
-max_plan_age = "14d"      # age gate for plan snapshots and apply reports
-max_plans_size = "1 GiB"  # total size budget for the plans directory
-keep_reports = 32         # terminal `apply` reports kept; 0 disables the count budget
-max_log_size = "64 MiB"   # size at which runs.jsonl / scheduler.log rotate
-keep_rotated_logs = 2     # rotated generations kept (runs.jsonl.1, runs.jsonl.2)
-enabled = true            # false keeps every state file forever
+```sh
+cargo-reclaim scheduler preview --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
+cargo-reclaim scheduler install --platform systemd-user --config ~/.config/cargo-reclaim/reclaim.toml
+cargo-reclaim scheduler service status --config ~/.config/cargo-reclaim/reclaim.toml
 ```
 
-Pruning is newest-first and never removes the most recent plan, so the audit record for the last run always survives — even when it alone exceeds `max_plans_size`. Logs rotate rather than truncate, so a writer holding the old file descriptor cannot lose a record mid-line. Retention is housekeeping: if pruning fails (read-only mount, permission change) the cycle still runs and the failure is reported in `scheduler service status`.
+`scheduler install` runs when you omit `--dry-run`. Pass `--dry-run` to print the plan only.
 
-> **Deprecated (to be removed in a future release):** the flat `[background]` keys `mode`, `check_every`, `only_when_disk_free_below`, and `min_free_disk` are still accepted and normalized into a single trigger, with a warning. Migrate to `[[background.trigger]]` blocks.
+> **Warning:** `kill_active_builds = true` stops `cargo` and `rustc` processes. `whole_target = "delete"` deletes whole target directories.
+> Read [Disruptive triggers](docs/scheduler.md#disruptive-triggers) before you set either key.
 
-## Platform Notes
+The scheduler keeps its own state bounded with retention budgets. See [State retention](docs/scheduler.md#state-retention).
+The default state and log paths differ by platform. See [Default paths](docs/scheduler.md#default-paths).
 
-- Linux uses `procfs` for active-process detection when `/proc` is readable; macOS and Windows use a native process-table provider through `sysinfo`.
-- Scheduler preview, install, and uninstall support `systemd-user` on Linux, `launchd` on macOS, and `task-scheduler` on Windows.
-- The scheduler service persists state and run logs. `scheduler service status` prints the resolved `service-state.json` and `runs.jsonl` paths, may return `unknown` until the service has written state, keeps `running` when PID liveness cannot be inspected, and reports `stale` when a saved running PID is definitely dead.
-- Cargo config resolution treats `build-dir = "{workspace-root}/{workspace-path-hash}"` as unsupported, so that template is reported instead of being used as a write target.
+## Saved Plans
 
-## Common Options
+A saved plan is the output of `plan --save-plan <path>`. `apply --plan <path> --yes` deletes its entries.
 
-- `--config <path>` loads defaults from a TOML config file.
-- `--policy <kind>` selects `observe`, `conservative`, `balanced`, `aggressive`, or `custom`.
-- `--whole-target <mode>` selects `off`, `confirm`, or `delete`.
-- `--ignore <path>` reports a path as ignored during scanning.
-- `--skip <path>` prunes a path and its descendants from scanning without reporting entries below it.
-- `--follow-symlinks`, `--allow-name-only-targets`, and `--cross-filesystems` adjust scan coverage.
-- `--keep-recent-writes <dur>` preserves delete candidates that were modified recently.
-- `--keep-days <days>` is a day-count alias for recent-write preservation.
-- `--keep-size <size>` preserves delete candidates at or below the given size.
-- `--keep-rustc-hash <u64>`, `--keep-installed-toolchains`, and repeatable `--keep-toolchain <name>` preserve fingerprint grouped intermediates tied to specific rustc hashes.
-- `--json` emits a structured document instead of terminal text.
+- A saved plan expires after 24 hours. Pass `--expires-in <duration>` to change the expiry.
+- `edit-plan` selects or deselects entries. Edit plans with `edit-plan`, not by hand.
+- `apply` rejects an expired plan.
+
+See [Saved plans](docs/saved-plans.md) for the file format and the revalidation rules.
+
+## Cargo Home
+
+The `cargo-home` commands cover Cargo home cache data. They follow the same saved-plan model as target cleanup.
+
+```sh
+cargo-reclaim cargo-home report --cargo-home ~/.cargo
+cargo-reclaim cargo-home plan --cargo-home ~/.cargo --policy conservative --save-plan /tmp/cargo-home-plan.json
+cargo-reclaim cargo-home apply --plan /tmp/cargo-home-plan.json --yes
+```
+
+`cargo-home apply` validates the saved plan before it deletes anything.
+
+## Documentation
+
+| Document                                                | Covers                                                          |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| [Command reference](docs/commands.md)                   | Every subcommand, flag, and recipe.                             |
+| [Config file reference](docs/config.md)                 | Every config key, with defaults and units.                      |
+| [Scheduler](docs/scheduler.md)                          | Platform artifacts, service status, triggers, and retention.    |
+| [Policies](docs/policies.md)                            | Policy classes, protected outputs, and active build protection. |
+| [Saved plans](docs/saved-plans.md)                      | Plan creation, expiry, revalidation, and the file format.       |
+| [Discovery and cleanup](docs/discovery.md)              | Target discovery, Cargo config inputs, and partial artifact trimming. |
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and checks.
+
+Questions and design discussion happen on [Discord](https://discord.gg/jBhFk9kHPg).
+
+## License
+
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
