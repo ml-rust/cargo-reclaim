@@ -1,6 +1,6 @@
 [package]
 name = "cargo-reclaim"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Frees disk space from Cargo target directories and home caches: trims stale artifacts and keeps what the next build needs"

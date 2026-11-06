@@ -10,6 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). cargo-r
 
 ---
 
+## [0.6.1] - 2026-11-06
+
+### Changed
+
+- `README`, crate description: state what the crate does.
+
+---
+
 ## [0.6.0] - 2026-10-12
 
 ### Security
