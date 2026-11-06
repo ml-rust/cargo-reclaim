@@ -3,11 +3,12 @@ name = "cargo-reclaim"
 version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Safe Cargo cleanup for target directories, stale artifacts, and Cargo home caches"
+description = "Frees disk space from Cargo target directories and home caches: trims stale artifacts and keeps what the next build needs"
 readme = "README.md"
 documentation = "https://docs.rs/cargo-reclaim"
 license = "MIT OR Apache-2.0"
-keywords = ["cargo", "cleanup", "artifacts", "cli", "cache"]
+keywords = ["cargo", "cleanup", "disk-space", "artifacts", "cache"]
+repository = "https://github.com/ml-rust/cargo-reclaim"
 categories = ["command-line-utilities", "filesystem", "development-tools"]
 
 [lib]
