@@ -49,12 +49,20 @@ On the command line, a run validates only until you pass <code>--yes</code>.
 
 </div>
 
-cargo-reclaim trims stale artifacts in Cargo `target` directories and Cargo home caches. It revalidates a saved plan before it deletes anything.
+cargo-reclaim is a command-line tool that frees disk space from Cargo `target` directories and Cargo home caches. It trims stale artifacts and keeps the ones the next build needs, where `cargo clean` removes the whole directory. It revalidates a saved plan before it deletes anything.
 It can also run as a resident scheduler with size and disk-space triggers.
 
-## Quick Start
+It is written in Rust and needs no Python.
 
-cargo-reclaim requires Rust 1.88 or later.
+## Requirements and limits
+
+- Rust 1.88 or later to install from source.
+- The scheduler supports `systemd-user`, `launchd`, and `task-scheduler`.
+- Active build detection reads `/proc` on Linux and uses `sysinfo` on macOS and Windows.
+- Scheduler service liveness is always `unknown` on macOS and Windows.
+- The `build.build-dir` template `{workspace-root}/{workspace-path-hash}` is reported as unsupported.
+
+## Quick Start
 
 Install from crates.io:
 
