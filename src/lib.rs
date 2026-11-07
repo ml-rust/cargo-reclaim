@@ -6,6 +6,7 @@ pub mod config;
 pub mod disk;
 pub mod error;
 pub mod executor;
+mod hash;
 pub mod integration;
 pub mod inventory;
 pub mod model;

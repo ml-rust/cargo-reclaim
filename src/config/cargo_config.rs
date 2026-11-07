@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::error::{ReclaimError, ReclaimResult};
+use crate::hash::format_sha256;
 use crate::scanner::{
     CargoConfigProblem, CargoConfigUnsupported, TargetDirOverride, resolve_project_output_dirs,
 };
@@ -331,7 +332,7 @@ fn snapshot_config_file(path: &Path) -> ReclaimResult<CargoConfigFileSnapshot> {
             let digest = Sha256::digest(&contents);
             Ok(CargoConfigFileSnapshot {
                 exists: true,
-                hash: Some(format!("sha256:{digest:x}")),
+                hash: Some(format_sha256(&digest)),
                 size_bytes: Some(contents.len() as u64),
             })
         }

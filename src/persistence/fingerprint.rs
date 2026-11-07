@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::hash::format_sha256;
+
 use super::{PersistedTimestamp, PlanPersistenceError, PlanPersistenceResult};
 
 pub(crate) fn fingerprint_path(path: &Path, metadata: &Metadata) -> PlanPersistenceResult<String> {
     let mut hasher = Sha256::new();
     fingerprint_path_into(path, Path::new(""), metadata, &mut hasher)?;
-    Ok(format!("sha256:{:x}", hasher.finalize()))
+    Ok(format_sha256(&hasher.finalize()))
 }
 
 fn fingerprint_path_into(
