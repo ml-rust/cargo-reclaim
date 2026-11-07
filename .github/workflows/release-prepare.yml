@@ -125,7 +125,7 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.cross
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: ${{ matrix.target }}
       - name: Stamp version
@@ -154,7 +154,7 @@ jobs:
           Compress-Archive -Path cargo-reclaim.exe -DestinationPath "cargo-reclaim-$version-$label.zip"
           ls cargo-reclaim-*.zip
       - name: Upload artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binaries-${{ matrix.label }}
           path: |
