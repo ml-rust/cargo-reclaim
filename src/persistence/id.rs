@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::hash::format_sha256;
+
 use super::error::PlanPersistenceResult;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,7 +15,7 @@ impl PlanId {
     {
         let bytes = serde_json::to_vec(body)?;
         let digest = Sha256::digest(bytes);
-        Ok(Self(format!("sha256:{digest:x}")))
+        Ok(Self(format_sha256(&digest)))
     }
 
     pub fn as_str(&self) -> &str {
